@@ -1096,6 +1096,7 @@ private struct PendingNewChatView: View {
     @State private var createdSession: SessionSummary?
     @State private var draftMessage = ""
     @State private var didStartCreation = false
+    @State private var didRequestComposerFocus = false
     @State private var creationErrorMessage: String?
     @FocusState private var composerIsFocused: Bool
 
@@ -1133,8 +1134,12 @@ private struct PendingNewChatView: View {
                 pendingContent
             }
         }
+        .background(
+            NavigationAppearanceCompletionObserver(action: requestPendingComposerFocus)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        )
         .task {
-            requestPendingComposerFocus()
             await createSessionIfNeeded()
         }
     }
@@ -1166,9 +1171,6 @@ private struct PendingNewChatView: View {
         }
         .navigationTitle("New Chat")
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear {
-            requestPendingComposerFocus()
-        }
     }
 
     private var pendingComposer: some View {
@@ -1253,6 +1255,9 @@ private struct PendingNewChatView: View {
     }
 
     private func requestPendingComposerFocus() {
+        guard !didRequestComposerFocus else { return }
+        didRequestComposerFocus = true
+
         Task { @MainActor in
             await Task.yield()
             guard createdSession == nil else { return }
