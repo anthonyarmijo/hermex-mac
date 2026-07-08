@@ -494,6 +494,28 @@ struct ChatView: View {
         )
     }
 
+    private func transcriptMediaPreviewView(for item: TranscriptMediaPreviewItem) -> some View {
+        TranscriptMediaPreviewView(
+            server: server,
+            sessionID: transcriptMediaSessionID,
+            item: item,
+            onAPIError: onAPIError
+        )
+    }
+
+    private var transcriptMediaSessionID: String? {
+        guard let sessionID = session.sessionId?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !sessionID.isEmpty
+        else {
+            return nil
+        }
+        return sessionID
+    }
+
+    private var transcriptMediaCacheNamespace: String {
+        "\(server.absoluteString)|\(transcriptMediaSessionID ?? "local:\(session.id)")"
+    }
+
     var body: some View {
         ZStack(alignment: .bottom) {
             VStack(spacing: 0) {
@@ -672,13 +694,7 @@ struct ChatView: View {
                     restoreComposerFocusAfterPreviewIfNeeded()
                 }
             }
-            .sheet(item: $transcriptMediaPreviewItem) { item in
-                TranscriptMediaPreviewView(
-                    server: server,
-                    item: item,
-                    onAPIError: onAPIError
-                )
-            }
+            .sheet(item: $transcriptMediaPreviewItem, content: transcriptMediaPreviewView)
             .sheet(item: $activeGitSheet, content: gitSheet)
             .sheet(item: $turnDiffPresentation, content: turnDiffSheet)
             .alert(item: $gitAlert, content: gitAlertPresentation)
@@ -1119,6 +1135,7 @@ struct ChatView: View {
             loadTranscriptMediaImage: { reference in
                 await viewModel.transcriptMediaThumbnailData(for: reference)
             },
+            transcriptMediaCacheNamespace: transcriptMediaCacheNamespace,
             actionContext: { message, visibleIndex in
                 viewModel.actionContext(for: message, visibleIndex: visibleIndex)
             },
