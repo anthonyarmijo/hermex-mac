@@ -1,7 +1,15 @@
-import ActivityKit
 import Foundation
 
-struct AgentRunActivityAttributes: ActivityAttributes {
+#if targetEnvironment(macCatalyst)
+/// Keeps the shared run-state model available to chat and tests while ActivityKit
+/// itself is unavailable on Mac Catalyst.
+protocol AgentRunActivityAttributeConformance: Codable {}
+#else
+import ActivityKit
+typealias AgentRunActivityAttributeConformance = ActivityAttributes
+#endif
+
+struct AgentRunActivityAttributes: AgentRunActivityAttributeConformance {
     struct ContentState: Codable, Hashable {
         var sessionID: String
         var sessionTitle: String

@@ -1,15 +1,15 @@
-# Hermex — iOS App Project Specification
+# Hermex — Apple Platforms App Project Specification
 
-**Status:** v0.4 spec — revised pre-polish plan with a glass-forward native mobile UI direction
+**Status:** v0.5 spec — iPhone product plus Mac Catalyst daily-driver support
 **Author:** Project owner + planning assistant
-**Target:** Native iOS client for the [`nesquena/hermes-webui`](https://github.com/nesquena/hermes-webui) Python server
+**Target:** Native iOS and Mac Catalyst client for the [`nesquena/hermes-webui`](https://github.com/nesquena/hermes-webui) Python server
 **Audience:** A coding agent tasked with building the app, plus the human owner reviewing it
 
 ---
 
 ## 0. How to use this document
 
-You (the coding agent) are building a native iOS app called **Hermex** in App Store Connect. The Xcode target remains `HermesMobile`; the iPhone home-screen display name is `Hermex`. You are NOT modifying the upstream `nesquena/hermes-webui` Python server in this project. You are building a separate Swift/SwiftUI iOS application that talks to that server over HTTPS.
+You (the coding agent) are building a native Apple-platform app called **Hermex**. The Xcode target remains `HermesMobile`; the iPhone home-screen and Mac app names are `Hermex`. You are NOT modifying the upstream `nesquena/hermes-webui` Python server in this project. You are building a separate Swift/SwiftUI client that talks to that server over HTTPS.
 
 Treat each section's checkboxes as your work plan. After every milestone, update the `## Progress log` at the bottom.
 
@@ -20,7 +20,7 @@ If anything in this spec is ambiguous, **stop and ask the human owner before gue
 ## 1. Project summary
 
 ### 1.1 What we're building
-A native iOS app (SwiftUI, iOS 18+, iPhone only) that lets the user drive a self-hosted Hermes AI agent from their phone. The user runs the `hermes-webui` Python server on a machine they control and connects from the phone via Cloudflare Tunnel (or Tailscale).
+A native SwiftUI app for iPhone (iOS 18+) and Mac Catalyst (macOS 15+) that lets the user drive a self-hosted Hermes AI agent. The user runs the `hermes-webui` Python server on a machine they control and connects from the app via Cloudflare Tunnel, Tailscale, or localhost during Mac development.
 
 ### 1.2 What it is NOT
 - ❌ Not a webview wrapper around the existing browser UI.
@@ -29,15 +29,15 @@ A native iOS app (SwiftUI, iOS 18+, iPhone only) that lets the user drive a self
 
 ### 1.3 Why it exists
 The `hermes-webui` browser UI works on mobile via Cloudflare Tunnel/Tailscale, but a native client gives:
-- A real iOS app icon, lifecycle, and Keychain-backed auth.
+- A real Apple-platform app icon, lifecycle, and Keychain-backed auth.
 - Native streaming chat with proper SwiftUI rendering (no PWA quirks).
 - Offline read-only cache of recent sessions.
 - Foundation for native completion notifications and future out-of-app status surfaces.
 
 ### 1.4 Product mental model
-Think of the app as a mobile cockpit for an agent that lives somewhere else.
+Think of the app as a native cockpit for an agent that lives somewhere else.
 
-The phone is not the compute plane. The phone is the control plane and review surface: start or continue work, watch streaming progress, steer or stop a run, inspect files and outputs, recover context while away from the desktop, and avoid dangerous write/admin surfaces until the mobile UX is explicit and safe.
+The client device is not the compute plane. Hermex is the control plane and review surface: start or continue work, watch streaming progress, steer or stop a run, inspect files and outputs, recover context away from the server, and avoid dangerous write/admin surfaces until the UX is explicit and safe.
 
 The server owns execution. The app owns mobile interaction quality.
 
@@ -62,13 +62,13 @@ The server owns execution. The app owns mobile interaction quality.
 | 2 | Hosting models documented | **Cloudflare Tunnel (primary)** and **Tailscale (secondary)** |
 | 3 | Upstream strategy | **Pin to upstream tags** for v1; revisit forking later if API churn becomes painful |
 | 4 | Auth method | **Password only** for v1 (no OAuth) |
-| 5 | Target | iOS 18+, iPhone only, portrait + landscape |
-| 6 | Distribution | **TestFlight first**, App Store later |
+| 5 | Target | iOS 18+ on iPhone, portrait + landscape; macOS 15+ through Mac Catalyst |
+| 6 | Distribution | iPhone: **TestFlight first**, App Store later; Mac: universal Developer ID build, notarized before distribution |
 | 7 | Push notifications | **Skip for v1** |
 | 8 | Terminal feature | **Skip for v1** |
 | 9 | Offline behavior | **Read-only cache** of session list and recent messages |
-| 10 | App name | **Hermex** in App Store Connect; iPhone display name **Hermex**; Xcode target remains `HermesMobile` |
-| 11 | Apple Developer account | **Enrolled** — Team ID `6GYD9C9N6R`; bundle ID `com.uzairansar.hermesmobile`; SKU `hermes-mobile-ios` |
+| 10 | App name | **Hermex** in App Store Connect; iPhone and Mac display name **Hermex**; Xcode target remains `HermesMobile` |
+| 11 | Apple identifiers | iPhone bundle ID `com.anthonyarmijo.hermex`, SKU `hermes-mobile-ios`; Mac bundle ID and Keychain service `com.anthonyarmijo.hermex.mac` |
 
 ---
 
@@ -349,7 +349,7 @@ Each phase ends in a working, committable state. Run on the simulator after ever
 
 ### Phase 0 — Setup (½ day)
 - [x] Create new GitHub repo (ask owner for the name; default `hermes-mobile`).
-- [x] Initialize Xcode project: SwiftUI App, iOS 17, Swift 5.9+, name `HermesMobile`, initial placeholder bundle ID later replaced by `com.uzairansar.hermesmobile`.
+- [x] Initialize Xcode project: SwiftUI App, iOS 17, Swift 5.9+, name `HermesMobile`, bundle ID `com.anthonyarmijo.hermex`.
 - [x] Add this `PROJECT_SPEC.md` to the repo root.
 - [x] Add SwiftPM dependencies: LDSwiftEventSource, swift-markdown-ui, Splash, Highlightr, KeychainAccess.
 - [x] Add `.gitignore` (Xcode template), commit.
@@ -666,8 +666,8 @@ Each phase ends in a working, committable state. Run on the simulator after ever
 
 ### Phase 13 — TestFlight prep (½ day)
 - [x] **Owner creates Apple Developer account** ($99/yr).
-- [x] Configure signing in Xcode for Team ID `6GYD9C9N6R`.
-- [x] Create App Store Connect app record: `Hermex`, bundle ID `com.uzairansar.hermesmobile`, SKU `hermes-mobile-ios`.
+- [x] Configure signing in Xcode for Team ID `8UV3BJB6XS`.
+- [x] Create App Store Connect app record: `Hermex`, bundle ID `com.anthonyarmijo.hermex`, SKU `hermes-mobile-ios`.
 - [x] Answer export compliance: `None of the algorithms mentioned above`; repo declares `ITSAppUsesNonExemptEncryption = NO`.
 - [x] Add internal TestFlight path for the owner first.
 - [x] Document the install/release process in `DEVELOPMENT.md`.
@@ -799,7 +799,7 @@ These are useful directions, not approved v1 scope. Before implementing any item
 Stop and ask before guessing:
 
 1. **Repo name** for the new iOS project. ~~Default suggestion: `hermes-mobile`.~~ **Answered: `hermes-mobile`**.
-2. **Bundle ID** — **Answered:** `com.uzairansar.hermesmobile`.
+2. **Bundle ID** — **Answered:** `com.anthonyarmijo.hermex`.
 3. **App icon / branding** — **Answered:** owner supplied light and dark Hermes icon assets for v1; App Store Connect name is `Hermex`.
 4. **Crash reporting** — Firebase Crashlytics or skip for v1?
 5. **Privacy policy URL** — required for App Store. Owner needs to provide one (a simple GitHub Pages page is fine).

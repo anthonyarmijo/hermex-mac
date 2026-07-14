@@ -1,6 +1,7 @@
 import SwiftUI
 import SwiftData
 import UIKit
+import UniformTypeIdentifiers
 
 @MainActor
 struct SessionListView: View {
@@ -18,12 +19,18 @@ struct SessionListView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.openWindow) private var openWindow
     @State private var viewModel: SessionListViewModel
     @State private var navigationState: SessionNavigationState
     @State private var sessionPendingRename: SessionSummary?
     @State private var sessionPendingDeletion: SessionSummary?
     @State private var sessionPendingProjectCreation: SessionSummary?
     @State private var sessionExportShareItem: SessionExportShareItem?
+    @State private var sessionExportDocument = ExportedFileDocument(data: Data())
+    @State private var sessionExportContentType = UTType.data
+    @State private var sessionExportFilename = String(localized: "Hermex Session")
+    @State private var isSessionFileExporterPresented = false
+    @State private var sessionExportErrorMessage: String?
     @State private var isPresentingProjectCreation = false
     @State private var isPresentingAddServer = false
     @State private var projectPendingDeletion: ProjectSummary?
@@ -89,6 +96,17 @@ struct SessionListView: View {
 
     var body: some View {
         navigationContainer
+            .fileExporter(
+                isPresented: $isSessionFileExporterPresented,
+                document: sessionExportDocument,
+                contentType: sessionExportContentType,
+                defaultFilename: sessionExportFilename
+            ) { result in
+                if case .failure(let error) = result,
+                   (error as NSError).code != NSUserCancelledError {
+                    sessionExportErrorMessage = error.localizedDescription
+                }
+            }
             .sheet(item: $sessionExportShareItem) { item in
                 SessionExportShareSheet(fileURL: item.fileURL)
                     .presentationDetents([.medium, .large])
@@ -102,6 +120,23 @@ struct SessionListView: View {
                             at: item.fileURL.deletingLastPathComponent()
                         )
                     }
+            }
+            .alert(
+                "Session Export Failed",
+                isPresented: Binding(
+                    get: { sessionExportErrorMessage != nil },
+                    set: { isPresented in
+                        if !isPresented {
+                            sessionExportErrorMessage = nil
+                        }
+                    }
+                )
+            ) {
+                Button("OK") {
+                    sessionExportErrorMessage = nil
+                }
+            } message: {
+                Text(sessionExportErrorMessage ?? "")
             }
             .sheet(item: $sessionPendingRename) { session in
                 SessionRenameSheet(
@@ -493,6 +528,7 @@ struct SessionListView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .help("Search Sessions (⌘F)")
             .accessibilityLabel(searchChromeIsExpanded ? "Focus session search" : "Search sessions")
             .accessibilityHint("Shows the session search field.")
             .accessibilityHidden(searchChromeIsExpanded)
@@ -552,7 +588,7 @@ struct SessionListView: View {
             if searchChromeIsExpanded {
                 closeSearch()
             } else {
-                navigationState.select(.settings(nil))
+                openSettings()
             }
         } label: {
             ZStack {
@@ -578,6 +614,7 @@ struct SessionListView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .help(searchChromeIsExpanded ? "Close Search" : "Settings (⌘,)")
         .accessibilityLabel(searchChromeIsExpanded ? "Close search" : "Settings")
         .accessibilityHint(
             searchChromeIsExpanded
@@ -599,7 +636,7 @@ struct SessionListView: View {
                         authManager.switchActiveServer(to: account)
                     },
                     addServer: { isPresentingAddServer = true },
-                    manageServers: { navigationState.select(.settings(.servers)) }
+                    manageServers: { openSettings(scrollTo: .servers) }
                 )
             }
         }
@@ -636,6 +673,7 @@ struct SessionListView: View {
             )
         }
         .buttonStyle(SessionListFloatingChatButtonStyle())
+        .help("New Chat (⌘N)")
         .disabled(viewModel.isViewingCachedData || navigationState.isCreatingNewChat)
         .opacity(viewModel.isViewingCachedData ? 0.45 : 1)
         .accessibilityLabel("New Session")
@@ -893,6 +931,15 @@ struct SessionListView: View {
         searchFieldIsFocused = true
     }
 
+    private func openSettings(scrollTo target: SettingsScrollAnchor? = nil) {
+        if PlatformCapabilities.supportsDedicatedSettingsWindow {
+            HermexSettingsWindowModel.shared.request(scrollTo: target)
+            openWindow(id: HermexSceneID.settings, value: HermexSceneID.settingsValue)
+        } else {
+            navigationState.select(.settings(target))
+        }
+    }
+
     private var sceneActions: HermexSceneActions {
         HermexSceneActions(
             canCreateNewChat: !viewModel.isViewingCachedData && !navigationState.isCreatingNewChat,
@@ -1062,7 +1109,28 @@ struct SessionListView: View {
         handleLastError()
 
         if let fileURL {
-            sessionExportShareItem = SessionExportShareItem(fileURL: fileURL)
+            if PlatformCapabilities.usesNativeSessionFileExporter {
+                prepareNativeSessionExport(from: fileURL)
+            } else {
+                sessionExportShareItem = SessionExportShareItem(fileURL: fileURL)
+            }
+        }
+    }
+
+    private func prepareNativeSessionExport(from fileURL: URL) {
+        defer {
+            try? FileManager.default.removeItem(at: fileURL.deletingLastPathComponent())
+        }
+
+        do {
+            sessionExportDocument = ExportedFileDocument(data: try Data(contentsOf: fileURL))
+            sessionExportContentType = UTType(filenameExtension: fileURL.pathExtension) ?? .data
+            sessionExportFilename = fileURL.lastPathComponent.isEmpty
+                ? String(localized: "Hermex Session")
+                : fileURL.lastPathComponent
+            isSessionFileExporterPresented = true
+        } catch {
+            sessionExportErrorMessage = error.localizedDescription
         }
     }
 

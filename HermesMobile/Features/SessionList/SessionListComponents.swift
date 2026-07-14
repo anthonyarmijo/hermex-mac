@@ -470,6 +470,9 @@ struct SessionInteractiveRow: View {
                 : Color.clear,
             in: RoundedRectangle(cornerRadius: 12, style: .continuous)
         )
+        #if targetEnvironment(macCatalyst)
+        .hoverEffect(.highlight)
+        #endif
         .transition(SessionListMotion.sessionRowTransition(reduceMotion: reduceMotion))
         .swipeActions(edge: .leading, allowsFullSwipe: false) {
             sessionLeadingSwipeActions(for: session)

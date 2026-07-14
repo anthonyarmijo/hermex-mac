@@ -4,10 +4,18 @@ import XCTest
 @testable import HermesMobile
 
 final class ComposerVoiceDraftComposerTests: XCTestCase {
-    func testComposerSendKeyboardCommandIsDiscoverableCommandReturn() {
+    func testComposerSendKeyboardCommandsMatchPlatformConventions() {
         XCTAssertEqual(ComposerKeyboardCommand.title, "Send Message")
         XCTAssertEqual(ComposerKeyboardCommand.input, "\r")
-        XCTAssertEqual(ComposerKeyboardCommand.modifierFlags, .command)
+        #if targetEnvironment(macCatalyst)
+        XCTAssertEqual(ComposerKeyboardCommand.modifierFlags, [[], .command])
+        XCTAssertTrue(ComposerKeyboardCommand.wantsPriorityOverSystemBehavior(for: []))
+        #else
+        XCTAssertEqual(ComposerKeyboardCommand.modifierFlags, [.command])
+        XCTAssertFalse(ComposerKeyboardCommand.wantsPriorityOverSystemBehavior(for: []))
+        #endif
+        XCTAssertFalse(ComposerKeyboardCommand.wantsPriorityOverSystemBehavior(for: .command))
+        XCTAssertFalse(ComposerKeyboardCommand.wantsPriorityOverSystemBehavior(for: .shift))
     }
 
     func testComposedDraftUsesTranscriptWhenDraftIsEmpty() {

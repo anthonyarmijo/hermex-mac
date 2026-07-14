@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+developer_dir="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
+developer_id="${DEVELOPER_ID_APPLICATION:-Developer ID Application}"
+development_team="${DEVELOPMENT_TEAM:-}"
+provisioning_profile="${MAC_PROVISIONING_PROFILE_SPECIFIER:-}"
+
+if [[ -z "$development_team" ]]; then
+  echo "Set DEVELOPMENT_TEAM to the Team ID that owns the Developer ID certificate." >&2
+  exit 2
+fi
+
+if [[ -z "$provisioning_profile" ]]; then
+  echo "Set MAC_PROVISIONING_PROFILE_SPECIFIER to the Developer ID profile that authorizes the Mac app's Keychain entitlement." >&2
+  exit 2
+fi
+
+run_id="$(date -u +%Y%m%dT%H%M%SZ)"
+release_root="${HERMEX_MAC_RELEASE_DIR:-$repo_root/.build/macos-release/$run_id}"
+archive_path="$release_root/Hermex.xcarchive"
+export_path="$release_root/export"
+export_options_path="$release_root/MacDeveloperIDExportOptions.plist"
+
+mkdir -p "$release_root" "$export_path"
+
+signing_arguments=(
+  CODE_SIGN_STYLE=Manual
+  CODE_SIGN_IDENTITY="$developer_id"
+  DEVELOPMENT_TEAM="$development_team"
+)
+
+signing_arguments+=(HERMEX_MAC_PROVISIONING_PROFILE_SPECIFIER="$provisioning_profile")
+
+DEVELOPER_DIR="$developer_dir" xcodebuild \
+	-quiet \
+	-project "$repo_root/HermesMobile.xcodeproj" \
+  -scheme HermesMobile \
+  -configuration Release \
+  -destination "generic/platform=macOS,variant=Mac Catalyst" \
+  -archivePath "$archive_path" \
+  "${signing_arguments[@]}" \
+  archive
+
+archive_app_path="$archive_path/Products/Applications/Hermex.app"
+archive_info_plist="$archive_app_path/Contents/Info.plist"
+
+if [[ ! -f "$archive_info_plist" ]]; then
+  echo "Archive is missing the expected Hermex.app Info.plist." >&2
+  exit 1
+fi
+
+bundle_identifier="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$archive_info_plist")"
+cp "$repo_root/Config/MacDeveloperIDExportOptions.plist" "$export_options_path"
+/usr/libexec/PlistBuddy -c "Add :teamID string $development_team" "$export_options_path"
+/usr/libexec/PlistBuddy -c 'Add :provisioningProfiles dict' "$export_options_path"
+/usr/libexec/PlistBuddy -c "Add :provisioningProfiles:$bundle_identifier string $provisioning_profile" "$export_options_path"
+
+DEVELOPER_DIR="$developer_dir" xcodebuild \
+	-quiet \
+	-exportArchive \
+  -archivePath "$archive_path" \
+  -exportPath "$export_path" \
+  -exportOptionsPlist "$export_options_path"
+
+app_path="$export_path/Hermex.app"
+embedded_profile="$app_path/Contents/embedded.provisionprofile"
+entitlements_path="$release_root/Hermex.entitlements.plist"
+
+if [[ ! -f "$embedded_profile" ]]; then
+  echo "Exported app is missing Contents/embedded.provisionprofile; Keychain access will fail." >&2
+  echo "Install a Developer ID provisioning profile for com.anthonyarmijo.hermex.mac and set MAC_PROVISIONING_PROFILE_SPECIFIER if Xcode cannot select it." >&2
+  exit 1
+fi
+
+codesign -d --entitlements :- "$app_path" > "$entitlements_path" 2>/dev/null
+keychain_access_group="$(/usr/libexec/PlistBuddy -c 'Print :keychain-access-groups:0' "$entitlements_path" 2>/dev/null || true)"
+
+if [[ -z "$keychain_access_group" || "$keychain_access_group" == *"\$("* ]]; then
+  echo "Exported app has no resolved Keychain access group; refusing to produce an unusable release." >&2
+  exit 1
+fi
+
+echo "Archive: $archive_path"
+echo "Export:  $app_path"
+echo "Keychain access group: $keychain_access_group"

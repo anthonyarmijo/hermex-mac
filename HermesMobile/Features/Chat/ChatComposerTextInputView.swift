@@ -241,13 +241,18 @@ private struct ComposerTextView: UIViewRepresentable {
         }
 
         override var keyCommands: [UIKeyCommand]? {
-            let sendCommand = UIKeyCommand(
-                title: ComposerKeyboardCommand.title,
-                action: #selector(sendMessageFromKeyboard),
-                input: ComposerKeyboardCommand.input,
-                modifierFlags: ComposerKeyboardCommand.modifierFlags
-            )
-            return (super.keyCommands ?? []) + [sendCommand]
+            let sendCommands = ComposerKeyboardCommand.modifierFlags.map { modifierFlags in
+                let command = UIKeyCommand(
+                    title: ComposerKeyboardCommand.title,
+                    action: #selector(sendMessageFromKeyboard),
+                    input: ComposerKeyboardCommand.input,
+                    modifierFlags: modifierFlags
+                )
+                command.wantsPriorityOverSystemBehavior =
+                    ComposerKeyboardCommand.wantsPriorityOverSystemBehavior(for: modifierFlags)
+                return command
+            }
+            return (super.keyCommands ?? []) + sendCommands
         }
 
         override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
@@ -326,5 +331,11 @@ private struct ComposerTextView: UIViewRepresentable {
 enum ComposerKeyboardCommand {
     static let title = String(localized: "Send Message")
     static let input = "\r"
-    static let modifierFlags: UIKeyModifierFlags = .command
+    static let modifierFlags: [UIKeyModifierFlags] = PlatformCapabilities.isMacCatalyst
+        ? [[], .command]
+        : [.command]
+
+    static func wantsPriorityOverSystemBehavior(for modifierFlags: UIKeyModifierFlags) -> Bool {
+        PlatformCapabilities.isMacCatalyst && modifierFlags.isEmpty
+    }
 }

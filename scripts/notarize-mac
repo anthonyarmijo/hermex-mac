@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $# -ne 1 ]]; then
+  echo "Usage: NOTARYTOOL_KEYCHAIN_PROFILE=<profile> scripts/notarize-mac /path/to/Hermex.app" >&2
+  exit 2
+fi
+
+app_path="$1"
+notary_profile="${NOTARYTOOL_KEYCHAIN_PROFILE:-}"
+
+if [[ -z "$notary_profile" ]]; then
+  echo "Set NOTARYTOOL_KEYCHAIN_PROFILE to a profile created with 'notarytool store-credentials'." >&2
+  exit 2
+fi
+
+if [[ ! -d "$app_path" ]]; then
+  echo "App bundle not found: $app_path" >&2
+  exit 2
+fi
+
+archive_path="${app_path%.*}.notarization.zip"
+
+ditto -c -k --keepParent "$app_path" "$archive_path"
+xcrun notarytool submit "$archive_path" --keychain-profile "$notary_profile" --wait
+xcrun stapler staple "$app_path"
+xcrun stapler validate "$app_path"
+spctl --assess --type execute --verbose=4 "$app_path"

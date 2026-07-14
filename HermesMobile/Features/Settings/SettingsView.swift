@@ -136,19 +136,23 @@ struct SettingsView: View {
 
                     SettingsFootnote(String(localized: "Apply your header color to these primary buttons."))
 
-                    SettingsDivider()
+                    if PlatformCapabilities.supportsAlternateAppIcons {
+                        SettingsDivider()
 
-                    AppIconSettingsSection()
+                        AppIconSettingsSection()
+                    }
                 }
 
                 SettingsCard(title: String(localized: "Interaction")) {
-                    SettingsToggleRow(
-                        title: String(localized: "Haptic Feedback"),
-                        systemImage: "iphone.radiowaves.left.and.right",
-                        isOn: $isHapticsEnabled
-                    )
+                    if PlatformCapabilities.supportsHaptics {
+                        SettingsToggleRow(
+                            title: String(localized: "Haptic Feedback"),
+                            systemImage: "iphone.radiowaves.left.and.right",
+                            isOn: $isHapticsEnabled
+                        )
 
-                    SettingsDivider()
+                        SettingsDivider()
+                    }
 
                     SettingsToggleRow(
                         title: String(localized: "Response Complete Alerts"),
@@ -262,15 +266,17 @@ struct SettingsView: View {
 
                     SettingsFootnote(String(localized: "Hides the appended file-path line in your sent messages. Attachments still appear as previews, and the server still receives the paths."))
 
-                    SettingsDivider()
+                    if PlatformCapabilities.supportsLiveActivities {
+                        SettingsDivider()
 
-                    SettingsToggleRow(
-                        title: String(localized: "Live Activity Excerpts"),
-                        systemImage: "lock",
-                        isOn: $showsLiveActivityResponseExcerpts
-                    )
+                        SettingsToggleRow(
+                            title: String(localized: "Live Activity Excerpts"),
+                            systemImage: "lock",
+                            isOn: $showsLiveActivityResponseExcerpts
+                        )
 
-                    SettingsFootnote(String(localized: "Shows short response text on the Lock Screen and Dynamic Island."))
+                        SettingsFootnote(String(localized: "Shows short response text on the Lock Screen and Dynamic Island."))
+                    }
                 }
 
                 SettingsCard(title: String(localized: "Sessions")) {

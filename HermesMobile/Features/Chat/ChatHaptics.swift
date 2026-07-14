@@ -55,6 +55,8 @@ enum ChatHaptics {
     }
 
     private static func perform(_ feedback: ChatHapticFeedback) {
+        guard PlatformCapabilities.supportsHaptics else { return }
+
         switch feedback {
         case .lightImpact:
             UIImpactFeedbackGenerator(style: .light).impactOccurred()

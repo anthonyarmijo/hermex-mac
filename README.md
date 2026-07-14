@@ -4,11 +4,12 @@
 
 # Hermex
 
-**Control your self-hosted [Hermes](https://github.com/nesquena/hermes-webui) agent from your iPhone.**
+**Control your self-hosted [Hermes](https://github.com/nesquena/hermes-webui) agent from your iPhone or Mac.**
 
-Your server. Your iPhone. No middleman.
+Your server. Your devices. No middleman.
 
 [![iOS 18+](https://img.shields.io/badge/iOS-18%2B-000000?logo=apple&logoColor=white)](https://apps.apple.com/app/hermex/id6767006319)
+[![macOS 15+](https://img.shields.io/badge/macOS-15%2B-000000?logo=apple&logoColor=white)](DEVELOPMENT.md#mac-catalyst-validation-and-developer-id-release)
 [![Swift](https://img.shields.io/badge/Swift-5.9%2B-F05138?logo=swift&logoColor=white)](https://swift.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-brightgreen.svg)](LICENSE)
 [![Follow on X](https://img.shields.io/badge/Follow-%40uzairansar-000000?logo=x&logoColor=white)](https://x.com/uzairansar)
@@ -24,11 +25,11 @@ Your server. Your iPhone. No middleman.
 
 </div>
 
-Hermex is a native SwiftUI iPhone app for driving a self-hosted [hermes-webui](https://github.com/nesquena/hermes-webui) server — a mobile cockpit for an AI agent that lives on a machine **you** control. The phone is the control plane, not the compute plane: the agent, its tools, and your data stay on your own hardware.
+Hermex is a native SwiftUI client for iPhone and Mac that drives a self-hosted [hermes-webui](https://github.com/nesquena/hermes-webui) server — a cockpit for an AI agent that lives on a machine **you** control. The app is the control plane, not the compute plane: the agent, its tools, and your data stay on your own hardware.
 
 - **Free.** No subscriptions, no in-app purchases.
 - **Private.** No analytics, no tracking, no third-party relay — the app talks only to your server.
-- **Native.** Real SwiftUI, built for iOS 18+, not a web wrapper.
+- **Native.** Real SwiftUI, built for iOS 18+ and macOS 15+, not a web wrapper.
 
 ## Features
 
@@ -37,7 +38,7 @@ Hermex is a native SwiftUI iPhone app for driving a self-hosted [hermes-webui](h
 - **Sessions** — browse, search, and resume every conversation on your server; cached sessions stay readable offline.
 - **Pick your models** — switch between any model or provider your server is configured for, with recents and favorites.
 - **Profiles & projects** — switch agent profiles and organize sessions into projects.
-- **Tasks** — view and edit your agent's scheduled cron jobs from your phone.
+- **Tasks** — view and edit your agent's scheduled cron jobs from the app.
 - **Skills** — browse and search the agent's installed skills.
 - **Workspace browser** — explore your server's file system from the app.
 - **Memory & Insights** — read-only panels for agent memory and usage analytics.
@@ -59,16 +60,16 @@ More screenshots at [hermexapp.com](https://hermexapp.com).
 Hermex is a client only — it does not ship with, host, or provision a backend. You bring your own [hermes-webui](https://github.com/nesquena/hermes-webui) server (a third-party, MIT-licensed open-source project) running on a machine you control. Setup takes about 15 minutes:
 
 1. **Run the server.** Install and start `hermes-webui` on macOS, Linux, or Windows/WSL2 (Python 3.11+). Set `HERMES_WEBUI_PASSWORD`.
-2. **Make it reachable from your phone** (see options below).
-3. **Connect.** [Download Hermex](https://apps.apple.com/app/hermex/id6767006319), enter your server URL (e.g. `https://hermes.yourdomain.com`) and password, and you're in.
+2. **Make it reachable from your device** (see options below).
+3. **Connect.** Install the [iPhone App Store build](https://apps.apple.com/app/hermex/id6767006319), or build the Mac app from source, then enter your server URL (e.g. `https://hermes.yourdomain.com`) and password.
 
 Self-hosting the server, securing it, and keeping it reachable are your responsibility.
 
 ### Making the server reachable
 
 - **HTTPS via a tunnel or reverse proxy (recommended).** Expose the server through Cloudflare Tunnel or any reverse proxy that terminates real TLS at a hostname you own. Real HTTPS keeps iOS App Transport Security happy with no exceptions. On a publicly reachable hostname the password is your only app-level defense — set a strong one.
-- **Tailscale.** Run the server bound to all interfaces with a password, install Tailscale on both the server and the iPhone, and connect to `http://<tailnet-ip>:8787`. The app allows plain HTTP only for Tailscale's `100.64.0.0/10` device range.
-- **Simulator-only local testing** can use `http://localhost:8787` when the server runs on the same Mac.
+- **Tailscale.** Run the server bound to all interfaces with a password, install Tailscale on both the server and the client device, and connect to `http://<tailnet-ip>:8787`. The app allows plain HTTP only for Tailscale's `100.64.0.0/10` device range.
+- **Local development** can use `http://localhost:8787` from the iOS simulator or Mac app when the server runs on the same Mac.
 
 ### Troubleshooting the connection
 
@@ -81,7 +82,7 @@ If connection testing fails, check these first:
 
 ## Building from source
 
-Prefer the [App Store build](https://apps.apple.com/app/hermex/id6767006319) unless you're developing. To build yourself you need Xcode 26 or newer (iOS 18 SDK) and an iPhone or simulator on iOS 18+.
+Prefer the [iPhone App Store build](https://apps.apple.com/app/hermex/id6767006319) unless you're developing. To build yourself you need Xcode 26 or newer and either an iPhone/simulator on iOS 18+ or a Mac on macOS 15+.
 
 Clone the repo, open `HermesMobile.xcodeproj`, and run the `HermesMobile` scheme on an iPhone simulator (the Xcode target is `HermesMobile`; the app's display name is `Hermex`). Dependencies are resolved automatically via Swift Package Manager.
 
@@ -93,6 +94,13 @@ xcodebuild -project HermesMobile.xcodeproj -scheme HermesMobile -destination 'pl
 
 ```zsh
 xcodebuild test -project HermesMobile.xcodeproj -scheme HermesMobile -destination 'platform=iOS Simulator,name=iPhone 17'
+```
+
+For the Mac Catalyst app:
+
+```zsh
+xcodebuild -project HermesMobile.xcodeproj -scheme HermesMobile -destination 'platform=macOS,variant=Mac Catalyst' build
+xcodebuild test -project HermesMobile.xcodeproj -scheme HermesMobile -destination 'platform=macOS,arch=arm64,variant=Mac Catalyst'
 ```
 
 If that simulator is not installed, list available devices and choose a nearby iPhone simulator:

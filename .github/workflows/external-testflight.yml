@@ -40,7 +40,7 @@ jobs:
       EXPORT_OPTIONS_PLIST: ci/ExternalTestFlightExportOptions.plist
       PROJECT_PATH: HermesMobile.xcodeproj
       SCHEME: HermesMobile
-      TEAM_ID: 6GYD9C9N6R
+      TEAM_ID: 8UV3BJB6XS
 
     steps:
       - name: Check manual gate
@@ -122,7 +122,7 @@ jobs:
 
       - name: Select build number
         env:
-          BUNDLE_ID: com.uzairansar.hermesmobile
+          BUNDLE_ID: com.anthonyarmijo.hermex
           REQUESTED_BUILD_NUMBER: ${{ inputs.build_number }}
         run: |
           set -euo pipefail
