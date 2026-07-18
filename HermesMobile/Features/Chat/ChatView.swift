@@ -339,7 +339,9 @@ struct ChatView: View {
         let restoredDraft = SessionDraftPersistence.load(for: session.sessionId, server: server)
         let resolvedDraft = restoredDraft ?? initialDraft
         _draftMessage = State(initialValue: resolvedDraft)
-        SessionDraftPersistence.save(resolvedDraft, for: session.sessionId, server: server)
+        if restoredDraft == nil, !initialDraft.isEmpty {
+            SessionDraftPersistence.save(initialDraft, for: session.sessionId, server: server)
+        }
         _initialAttachments = State(initialValue: initialAttachments)
         _viewModel = State(initialValue: ChatViewModel(
             session: session,
