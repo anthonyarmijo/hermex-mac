@@ -100,7 +100,7 @@ final class AppIntentNewChatInProfileTests: XCTestCase {
 
     @MainActor
     func testIntentQueuesTheProfileDeepLink() async throws {
-        var intent = NewChatInProfileIntent()
+        let intent = NewChatInProfileIntent()
         intent.profile = ProfileEntity(id: "dev", name: "dev", subtitle: nil)
         _ = try await intent.perform()
         XCTAssertEqual(

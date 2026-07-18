@@ -82,6 +82,10 @@ if [[ -z "$keychain_access_group" || "$keychain_access_group" == *"\$("* ]]; the
   exit 1
 fi
 
+DEVELOPMENT_TEAM="$development_team" \
+HERMEX_MAC_BUNDLE_IDENTIFIER="$bundle_identifier" \
+  "$repo_root/scripts/verify-mac-app" "$app_path"
+
 echo "Archive: $archive_path"
 echo "Export:  $app_path"
 echo "Keychain access group: $keychain_access_group"

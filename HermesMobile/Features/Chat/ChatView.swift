@@ -1622,7 +1622,7 @@ struct ChatView: View {
 
         for url in fileURLs {
             do {
-                let file = try loadPastedFile(from: url, suggestedName: nil)
+                let file = try PastedAttachmentLoader.loadFile(from: url, suggestedName: nil)
                 await viewModel.uploadAttachment(data: file.data, filename: file.filename)
             } catch {
                 viewModel.setUploadAttachmentError(error.localizedDescription)
@@ -1682,7 +1682,11 @@ struct ChatView: View {
                 continue
             }
 
-            await viewModel.uploadAttachment(data: data, filename: pastedImageFilename(), previewData: data)
+            await viewModel.uploadAttachment(
+                data: data,
+                filename: PastedAttachmentLoader.imageFilename(),
+                previewData: data
+            )
         }
     }
 
@@ -1696,13 +1700,13 @@ struct ChatView: View {
                     return
                 }
 
-                guard let url = pastedFileURL(from: item) else {
+                guard let url = PastedAttachmentLoader.fileURL(from: item) else {
                     continuation.resume(throwing: PastedFileError.unreadableURL)
                     return
                 }
 
                 do {
-                    let file = try loadPastedFile(from: url, suggestedName: suggestedName)
+                    let file = try PastedAttachmentLoader.loadFile(from: url, suggestedName: suggestedName)
                     continuation.resume(returning: file)
                 } catch {
                     continuation.resume(throwing: error)
@@ -1721,40 +1725,12 @@ struct ChatView: View {
 
         for url in fileURLs {
             do {
-                let file = try loadPastedFile(from: url, suggestedName: nil)
+                let file = try PastedAttachmentLoader.loadFile(from: url, suggestedName: nil)
                 await viewModel.uploadAttachment(data: file.data, filename: file.filename)
             } catch {
                 viewModel.setUploadAttachmentError(error.localizedDescription)
             }
         }
-    }
-
-    private func loadPastedFile(from url: URL, suggestedName: String?) throws -> PastedFile {
-        let didStartAccessing = url.startAccessingSecurityScopedResource()
-        defer {
-            if didStartAccessing {
-                url.stopAccessingSecurityScopedResource()
-            }
-        }
-
-        try validateAttachmentSize(for: url)
-        let data = try Data(contentsOf: url)
-        let filename = url.lastPathComponent.isEmpty
-            ? suggestedName ?? "pasted-file"
-            : url.lastPathComponent
-        return PastedFile(data: data, filename: filename)
-    }
-
-    private func validateAttachmentSize(for url: URL) throws {
-        let values = try url.resourceValues(forKeys: [.fileSizeKey])
-        guard let size = values.fileSize,
-              size > PendingAttachment.maximumUploadBytes
-        else {
-            return
-        }
-
-        let filename = url.lastPathComponent.isEmpty ? String(localized: "Selected file") : url.lastPathComponent
-        throw PastedFileError.fileTooLarge(filename: filename)
     }
 
     private func loadPastedImage(from provider: NSItemProvider) async throws -> PastedFile {
@@ -1779,37 +1755,11 @@ struct ChatView: View {
                 continuation.resume(
                     returning: PastedFile(
                         data: data,
-                        filename: pastedImageFilename(suggestedName: suggestedName)
+                        filename: PastedAttachmentLoader.imageFilename(suggestedName: suggestedName)
                     )
                 )
             }
         }
-    }
-
-    private func pastedImageFilename(suggestedName: String? = nil) -> String {
-        if let suggestedName,
-           !suggestedName.isEmpty,
-           !URL(fileURLWithPath: suggestedName).pathExtension.isEmpty {
-            return suggestedName
-        }
-
-        return "image_\(Int(Date().timeIntervalSince1970))_\(UUID().uuidString.prefix(4)).jpg"
-    }
-
-    private func pastedFileURL(from item: NSSecureCoding?) -> URL? {
-        if let url = item as? URL {
-            return url
-        }
-
-        if let data = item as? Data {
-            return URL(dataRepresentation: data, relativeTo: nil)
-        }
-
-        if let string = item as? String {
-            return URL(string: string) ?? URL(fileURLWithPath: string)
-        }
-
-        return nil
     }
 
     private func handleScenePhaseChange(_ phase: ScenePhase) {
@@ -2331,12 +2281,76 @@ enum ChatToolbarSubtitleResolver {
     }
 }
 
-private struct PastedFile {
+enum PastedAttachmentLoader {
+    nonisolated static func fileURL(from item: NSSecureCoding?) -> URL? {
+        let url: URL?
+        if let pastedURL = item as? URL {
+            url = pastedURL
+        } else if let data = item as? Data {
+            url = URL(dataRepresentation: data, relativeTo: nil)
+        } else if let string = item as? String, !string.isEmpty {
+            if let parsedURL = URL(string: string), parsedURL.scheme != nil {
+                url = parsedURL
+            } else {
+                url = URL(fileURLWithPath: string)
+            }
+        } else {
+            url = nil
+        }
+
+        guard let url, url.isFileURL else { return nil }
+        return url
+    }
+
+    nonisolated static func loadFile(from url: URL, suggestedName: String?) throws -> PastedFile {
+        guard url.isFileURL else {
+            throw PastedFileError.unreadableURL
+        }
+
+        let didStartAccessing = url.startAccessingSecurityScopedResource()
+        defer {
+            if didStartAccessing {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        try validateAttachmentSize(for: url)
+        let data = try Data(contentsOf: url)
+        let filename = url.lastPathComponent.isEmpty
+            ? suggestedName ?? "pasted-file"
+            : url.lastPathComponent
+        return PastedFile(data: data, filename: filename)
+    }
+
+    nonisolated static func imageFilename(suggestedName: String? = nil) -> String {
+        if let suggestedName,
+           !suggestedName.isEmpty,
+           !URL(fileURLWithPath: suggestedName).pathExtension.isEmpty {
+            return suggestedName
+        }
+
+        return "image_\(Int(Date().timeIntervalSince1970))_\(UUID().uuidString.prefix(4)).jpg"
+    }
+
+    private nonisolated static func validateAttachmentSize(for url: URL) throws {
+        let values = try url.resourceValues(forKeys: [.fileSizeKey])
+        guard let size = values.fileSize,
+              size > PendingAttachment.maximumUploadBytes
+        else {
+            return
+        }
+
+        let filename = url.lastPathComponent.isEmpty ? String(localized: "Selected file") : url.lastPathComponent
+        throw PastedFileError.fileTooLarge(filename: filename)
+    }
+}
+
+struct PastedFile: Equatable, Sendable {
     let data: Data
     let filename: String
 }
 
-private enum PastedFileError: LocalizedError {
+enum PastedFileError: LocalizedError, Sendable {
     case unreadableURL
     case unreadableImage
     case fileTooLarge(filename: String)

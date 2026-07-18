@@ -8,6 +8,11 @@ APP_IDENTIFIER_SUFFIX =
 APP_BUNDLE_IDENTIFIER = com.anthonyarmijo.hermex$(APP_IDENTIFIER_SUFFIX)
 APP_GROUP_IDENTIFIER = group.com.anthonyarmijo.hermex$(APP_IDENTIFIER_SUFFIX)
 
+// SE-0418 lets Swift infer Sendable for key-path literals that capture only
+// Sendable values. Keep this target-scoped so package dependencies retain
+// their own language-feature settings.
+SWIFT_UPCOMING_FEATURE_INFER_SENDABLE_FROM_CAPTURES = YES
+
 // Optional per-machine overrides. This include must stay last: later
 // assignments win, so Local.xcconfig values override the defaults above.
 #include? "Local.xcconfig"

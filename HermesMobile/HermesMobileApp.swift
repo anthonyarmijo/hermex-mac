@@ -75,6 +75,7 @@ struct HermexCommands: Commands {
 #if targetEnvironment(macCatalyst)
 private struct MacSettingsWindowRoot: View {
     @Bindable var authManager: AuthManager
+    @Bindable var interfacePreferences: MacInterfacePreferences
     @AppStorage(AppTheme.storageKey) private var appThemeRawValue = AppTheme.system.rawValue
     @State private var windowModel = HermexSettingsWindowModel.shared
 
@@ -103,6 +104,10 @@ private struct MacSettingsWindowRoot: View {
             }
         }
         .preferredColorScheme(AppTheme.storedValue(appThemeRawValue).colorScheme)
+        .dynamicTypeSize(interfacePreferences.size.dynamicTypeSize)
+        .environment(\.sizeCategory, interfacePreferences.size.contentSizeCategory)
+        .environment(\.macInterfaceScale, interfacePreferences.size.layoutScale)
+        .environment(interfacePreferences)
         .frame(
             minWidth: MacWindowSizingPolicy.settingsMinimumSize.width,
             idealWidth: 720,
@@ -232,6 +237,9 @@ private struct MacWindowTitle: UIViewRepresentable {
 struct HermesMobileApp: App {
     @State private var authManager = AuthManager()
     @AppStorage(AppTheme.storageKey) private var appThemeRawValue = AppTheme.system.rawValue
+    #if targetEnvironment(macCatalyst)
+    @State private var macInterfacePreferences = MacInterfacePreferences.shared
+    #endif
 
     var body: some Scene {
         WindowGroup {
@@ -243,10 +251,20 @@ struct HermesMobileApp: App {
                 NavigationStack {
                     StreamingLabView()
                 }
+                #if targetEnvironment(macCatalyst)
+                .dynamicTypeSize(macInterfacePreferences.size.dynamicTypeSize)
+                .environment(\.sizeCategory, macInterfacePreferences.size.contentSizeCategory)
+                .environment(\.macInterfaceScale, macInterfacePreferences.size.layoutScale)
+                .environment(macInterfacePreferences)
+                #endif
             } else {
                 ContentView(authManager: authManager)
                     .preferredColorScheme(AppTheme.storedValue(appThemeRawValue).colorScheme)
                     #if targetEnvironment(macCatalyst)
+                    .dynamicTypeSize(macInterfacePreferences.size.dynamicTypeSize)
+                    .environment(\.sizeCategory, macInterfacePreferences.size.contentSizeCategory)
+                    .environment(\.macInterfaceScale, macInterfacePreferences.size.layoutScale)
+                    .environment(macInterfacePreferences)
                     .frame(
                         minWidth: MacWindowSizingPolicy.mainMinimumSize.width,
                         maxWidth: .infinity,
@@ -264,6 +282,10 @@ struct HermesMobileApp: App {
             ContentView(authManager: authManager)
                 .preferredColorScheme(AppTheme.storedValue(appThemeRawValue).colorScheme)
                 #if targetEnvironment(macCatalyst)
+                .dynamicTypeSize(macInterfacePreferences.size.dynamicTypeSize)
+                .environment(\.sizeCategory, macInterfacePreferences.size.contentSizeCategory)
+                .environment(\.macInterfaceScale, macInterfacePreferences.size.layoutScale)
+                .environment(macInterfacePreferences)
                 .frame(
                     minWidth: MacWindowSizingPolicy.mainMinimumSize.width,
                     maxWidth: .infinity,
@@ -294,7 +316,10 @@ struct HermesMobileApp: App {
             id: HermexSceneID.settings,
             for: String.self
         ) { _ in
-            MacSettingsWindowRoot(authManager: authManager)
+            MacSettingsWindowRoot(
+                authManager: authManager,
+                interfacePreferences: macInterfacePreferences
+            )
         }
         .modelContainer(for: [CachedSession.self, CachedMessage.self])
         .defaultSize(width: 720, height: 760)

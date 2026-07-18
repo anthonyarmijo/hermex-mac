@@ -200,7 +200,7 @@ MAC_PROVISIONING_PROFILE_SPECIFIER='<developer-id-profile-name>' \
 scripts/archive-mac
 ```
 
-The output defaults to a timestamped directory under `.build/macos-release/`. Set `HERMEX_MAC_RELEASE_DIR` to choose another directory or `DEVELOPER_ID_APPLICATION` to select a specific signing identity. The archive enables Hardened Runtime and includes the sandbox entitlements required for outbound networking, user-selected files, microphone input, Photos access, and Keychain persistence. The script rejects exports whose signature lacks a resolved Keychain access group or whose bundle lacks the provisioning profile that authorizes it.
+The output defaults to a timestamped directory under `.build/macos-release/`. Set `HERMEX_MAC_RELEASE_DIR` to choose another directory or `DEVELOPER_ID_APPLICATION` to select a specific signing identity. The archive enables Hardened Runtime and includes the sandbox entitlements required for outbound networking, user-selected files, microphone input, Photos access, and Keychain persistence. Before succeeding, the workflow runs `scripts/verify-mac-app` to validate the Developer ID signature and timestamp, universal arm64/x86_64 executable, macOS 15 deployment target, privacy descriptions, sandbox capabilities, resolved Keychain group, and matching embedded provisioning profile. The notarization script runs the same local verification before submitting the app.
 
 Notarization uploads the app to Apple and therefore is a separate, explicit maintainer step. After storing credentials with `notarytool store-credentials`, run:
 

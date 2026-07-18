@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $# -ne 1 ]]; then
+  echo "Usage: scripts/verify-mac-app /path/to/Hermex.app" >&2
+  exit 2
+fi
+
+app_path="${1%/}"
+expected_bundle_identifier="${HERMEX_MAC_BUNDLE_IDENTIFIER:-com.anthonyarmijo.hermex.mac}"
+expected_minimum_system_version="${HERMEX_MAC_MINIMUM_SYSTEM_VERSION:-15.0}"
+
+fail() {
+  echo "Mac release verification failed: $*" >&2
+  exit 1
+}
+
+plist_value() {
+  local plist_path="$1"
+  local key_path="$2"
+  /usr/libexec/PlistBuddy -c "Print :$key_path" "$plist_path" 2>/dev/null
+}
+
+require_plist_string() {
+  local plist_path="$1"
+  local key_path="$2"
+  local value
+  value="$(plist_value "$plist_path" "$key_path" || true)"
+  [[ -n "$value" ]] || fail "$key_path is missing or empty in $plist_path"
+  printf '%s' "$value"
+}
+
+require_true_entitlement() {
+  local key="$1"
+  local value
+  value="$(plist_value "$entitlements_path" "$key" || true)"
+  [[ "$value" == "true" ]] || fail "the signed app is missing required entitlement $key"
+}
+
+[[ -d "$app_path" ]] || fail "app bundle not found: $app_path"
+
+info_plist="$app_path/Contents/Info.plist"
+embedded_profile="$app_path/Contents/embedded.provisionprofile"
+[[ -f "$info_plist" ]] || fail "Contents/Info.plist is missing"
+[[ -f "$embedded_profile" ]] || fail "Contents/embedded.provisionprofile is missing"
+
+executable_name="$(require_plist_string "$info_plist" CFBundleExecutable)"
+executable_path="$app_path/Contents/MacOS/$executable_name"
+[[ -f "$executable_path" ]] || fail "main executable is missing: $executable_path"
+
+bundle_identifier="$(require_plist_string "$info_plist" CFBundleIdentifier)"
+[[ "$bundle_identifier" == "$expected_bundle_identifier" ]] \
+  || fail "bundle identifier is $bundle_identifier; expected $expected_bundle_identifier"
+
+minimum_system_version="$(require_plist_string "$info_plist" LSMinimumSystemVersion)"
+[[ "$minimum_system_version" == "$expected_minimum_system_version" ]] \
+  || fail "LSMinimumSystemVersion is $minimum_system_version; expected $expected_minimum_system_version"
+
+category="$(require_plist_string "$info_plist" LSApplicationCategoryType)"
+[[ "$category" == "public.app-category.productivity" ]] \
+  || fail "LSApplicationCategoryType is $category; expected public.app-category.productivity"
+
+require_plist_string "$info_plist" NSMicrophoneUsageDescription >/dev/null
+require_plist_string "$info_plist" NSSpeechRecognitionUsageDescription >/dev/null
+
+codesign --verify --deep --strict --verbose=2 "$app_path"
+codesign_details="$(codesign -dvvv "$app_path" 2>&1)"
+grep -q '^Authority=Developer ID Application:' <<<"$codesign_details" \
+  || fail "the app is not signed with a Developer ID Application identity"
+grep -Eq '^CodeDirectory .*flags=.*\(runtime\)' <<<"$codesign_details" \
+  || fail "Hardened Runtime is not enabled"
+grep -q '^Timestamp=' <<<"$codesign_details" \
+  || fail "the Developer ID signature has no secure timestamp"
+
+signature_team="$(sed -n 's/^TeamIdentifier=//p' <<<"$codesign_details" | head -n 1)"
+[[ -n "$signature_team" ]] || fail "the signature has no TeamIdentifier"
+expected_team="${DEVELOPMENT_TEAM:-$signature_team}"
+[[ "$signature_team" == "$expected_team" ]] \
+  || fail "signature TeamIdentifier is $signature_team; expected $expected_team"
+
+architectures="$(lipo -archs "$executable_path")"
+case " $architectures " in
+  *" arm64 "*) ;;
+  *) fail "main executable is missing the arm64 slice (found: $architectures)" ;;
+esac
+case " $architectures " in
+  *" x86_64 "*) ;;
+  *) fail "main executable is missing the x86_64 slice (found: $architectures)" ;;
+esac
+
+entitlements_path="$(mktemp -t hermex-entitlements.XXXXXX)"
+profile_path="$(mktemp -t hermex-profile.XXXXXX)"
+cleanup() {
+  rm -f "$entitlements_path" "$profile_path"
+}
+trap cleanup EXIT
+
+codesign -d --entitlements :- "$app_path" > "$entitlements_path" 2>/dev/null
+require_true_entitlement com.apple.security.app-sandbox
+require_true_entitlement com.apple.security.network.client
+require_true_entitlement com.apple.security.files.user-selected.read-write
+require_true_entitlement com.apple.security.device.audio-input
+require_true_entitlement com.apple.security.personal-information.photos-library
+
+get_task_allow="$(plist_value "$entitlements_path" get-task-allow || true)"
+[[ "$get_task_allow" != "true" ]] || fail "get-task-allow must be disabled in a release export"
+
+expected_application_identifier="$expected_team.$bundle_identifier"
+application_identifier="$(require_plist_string "$entitlements_path" application-identifier)"
+[[ "$application_identifier" == "$expected_application_identifier" ]] \
+  || fail "application-identifier is $application_identifier; expected $expected_application_identifier"
+
+keychain_access_group="$(require_plist_string "$entitlements_path" keychain-access-groups:0)"
+[[ "$keychain_access_group" == "$expected_application_identifier" ]] \
+  || fail "Keychain access group is $keychain_access_group; expected $expected_application_identifier"
+
+security cms -D -i "$embedded_profile" > "$profile_path" 2>/dev/null \
+  || fail "embedded provisioning profile could not be decoded"
+profile_team="$(require_plist_string "$profile_path" TeamIdentifier:0)"
+[[ "$profile_team" == "$expected_team" ]] \
+  || fail "profile TeamIdentifier is $profile_team; expected $expected_team"
+profile_application_identifier="$(require_plist_string "$profile_path" Entitlements:application-identifier)"
+[[ "$profile_application_identifier" == "$expected_application_identifier" ]] \
+  || fail "profile application-identifier is $profile_application_identifier; expected $expected_application_identifier"
+profile_keychain_access_group="$(require_plist_string "$profile_path" Entitlements:keychain-access-groups:0)"
+[[ "$profile_keychain_access_group" == "$expected_application_identifier" \
+  || "$profile_keychain_access_group" == "$expected_team.*" ]] \
+  || fail "profile Keychain group $profile_keychain_access_group does not authorize $keychain_access_group"
+provisions_all_devices="$(plist_value "$profile_path" ProvisionsAllDevices || true)"
+[[ "$provisions_all_devices" == "true" ]] \
+  || fail "embedded profile is not a Developer ID distribution profile"
+
+echo "Verified Mac release app:"
+echo "  App:              $app_path"
+echo "  Bundle ID:        $bundle_identifier"
+echo "  Team ID:          $expected_team"
+echo "  Architectures:    $architectures"
+echo "  Minimum macOS:    $minimum_system_version"
+echo "  Hardened Runtime: enabled"
+echo "  App Sandbox:      enabled"
+echo "  Keychain group:   $keychain_access_group"

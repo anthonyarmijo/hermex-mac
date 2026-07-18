@@ -20,6 +20,7 @@ struct SessionListView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.macInterfaceScale) private var macInterfaceScale
     @State private var viewModel: SessionListViewModel
     @State private var navigationState: SessionNavigationState
     @State private var sessionPendingRename: SessionSummary?
@@ -494,7 +495,7 @@ struct SessionListView: View {
     private var header: some View {
         HStack(alignment: .center, spacing: searchChromeIsExpanded ? 0 : 16) {
             HermesHeaderLogo(selectedColor: selectedHeaderLogoColor)
-                .frame(width: searchChromeIsExpanded ? 0 : 160, alignment: .leading)
+                .frame(width: searchChromeIsExpanded ? 0 : 160 * macInterfaceScale, alignment: .leading)
                 .opacity(searchChromeIsExpanded ? 0 : 1)
                 .clipped()
                 .accessibilityHidden(searchChromeIsExpanded)

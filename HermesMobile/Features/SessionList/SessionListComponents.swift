@@ -1093,15 +1093,16 @@ private struct SidebarDisclosureChevron: View {
 struct SidebarUtilityIcon: View {
     let assetImage: String
     var tint: Color = .primary
+    @Environment(\.macInterfaceScale) private var macInterfaceScale
 
     var body: some View {
         Image(assetImage)
             .renderingMode(.template)
             .resizable()
             .scaledToFit()
-            .frame(width: 21, height: 21)
+            .frame(width: 21 * macInterfaceScale, height: 21 * macInterfaceScale)
             .foregroundStyle(tint)
-            .frame(width: 28)
+            .frame(width: 28 * macInterfaceScale)
             .accessibilityHidden(true)
     }
 }

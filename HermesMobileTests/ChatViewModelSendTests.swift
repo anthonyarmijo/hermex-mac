@@ -1615,6 +1615,12 @@ final class ChatViewModelSendTests: XCTestCase {
         }
 
         viewModel.cleanupPollingTasks()
+
+        // Cancellation is cooperative: a mock request that already entered its
+        // handler may finish once. Let that in-flight work settle, then prove no
+        // polling task schedules another request across several intervals.
+        try await Task.sleep(nanoseconds: 150_000_000)
+
         let approvalCountAfterCleanup = approvalPendingRequests.count
         let clarificationCountAfterCleanup = clarificationPendingRequests.count
         let backgroundCountAfterCleanup = backgroundStatusRequests.count

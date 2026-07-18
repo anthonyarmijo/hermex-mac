@@ -58,6 +58,9 @@ struct SettingsView: View {
     @State private var notificationPermissionStatus: UNAuthorizationStatus?
     @State private var notificationStatusMessage: String?
     @AppStorage(AppTheme.storageKey) private var appThemeRawValue = AppTheme.system.rawValue
+    #if targetEnvironment(macCatalyst)
+    @Environment(MacInterfacePreferences.self) private var macInterfacePreferences
+    #endif
     @AppStorage(AppHaptics.isEnabledKey) private var isHapticsEnabled = true
     @AppStorage(ResponseCompletionNotifications.isEnabledKey) private var isResponseCompletionNotificationsEnabled = false
     @AppStorage(ResponseCompletionNotifications.hasRequestedPermissionKey) private var hasRequestedResponseCompletionNotificationPermission = false
@@ -84,6 +87,9 @@ struct SettingsView: View {
     @AppStorage(SessionIdentitySettings.initialsKey) private var identityInitials = ""
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
+    #if targetEnvironment(macCatalyst)
+    @Environment(\.macInterfaceScale) private var macInterfaceScale
+    #endif
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -118,6 +124,25 @@ struct SettingsView: View {
                             Text(theme.title).tag(theme.rawValue)
                         }
                     }
+
+                    #if targetEnvironment(macCatalyst)
+                    SettingsDivider()
+
+                    SettingsPickerRow(
+                        title: String(localized: "Interface Size"),
+                        systemImage: "textformat.size",
+                        selection: Binding(
+                            get: { macInterfacePreferences.size },
+                            set: { macInterfacePreferences.size = $0 }
+                        )
+                    ) {
+                        ForEach(MacInterfaceSize.allCases) { size in
+                            Text(size.title).tag(size)
+                        }
+                    }
+
+                    SettingsFootnote(String(localized: "Changes text, controls, sidebar items, and Hermex branding across Mac windows."))
+                    #endif
 
                     SettingsDivider()
 
@@ -602,6 +627,9 @@ struct SettingsView: View {
             }
         }
         }
+        #if targetEnvironment(macCatalyst)
+        .modifier(MacSettingsInterfaceScaleModifier(scale: macInterfaceScale))
+        #endif
     }
 
     @ViewBuilder
@@ -1533,6 +1561,27 @@ private struct SettingsRowLabel: View {
     }
 }
 
+#if targetEnvironment(macCatalyst)
+/// Catalyst does not resize this UIKit-backed Settings hierarchy when only its
+/// Dynamic Type environment changes. Scale both the rendered page and the size
+/// proposed to it so controls grow while wrapping and scrolling remain correct.
+private struct MacSettingsInterfaceScaleModifier: ViewModifier {
+    let scale: CGFloat
+
+    func body(content: Content) -> some View {
+        GeometryReader { proxy in
+            content
+                .frame(
+                    width: proxy.size.width / scale,
+                    height: proxy.size.height / scale,
+                    alignment: .topLeading
+                )
+                .scaleEffect(scale, anchor: .topLeading)
+        }
+    }
+}
+#endif
+
 private struct SettingsFootnote: View {
     let text: String
 
@@ -2280,4 +2329,8 @@ struct AddServerView: View {
     NavigationStack {
         SettingsView(authManager: AuthManager(), server: URL(staticString: "https://webui.example.test"))
     }
+    #if targetEnvironment(macCatalyst)
+    .environment(MacInterfacePreferences.shared)
+    .environment(\.macInterfaceScale, MacInterfaceSize.defaultValue.layoutScale)
+    #endif
 }

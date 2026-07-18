@@ -26,9 +26,9 @@ final class ComposerVoiceNoteRecorder {
 
     /// Hard cap on a single clip. AAC mono at ~32 kbps stays far under the 20 MB
     /// upload limit even at five minutes (~1.2 MB), so this bounds UX, not size.
-    static let maximumDuration: TimeInterval = 5 * 60
+    nonisolated static let maximumDuration: TimeInterval = 5 * 60
     /// Clips shorter than this are treated as accidental taps and discarded.
-    static let minimumDuration: TimeInterval = 0.5
+    nonisolated static let minimumDuration: TimeInterval = 0.5
 
     private(set) var state: State = .idle
     private(set) var elapsed: TimeInterval = 0
@@ -57,12 +57,16 @@ final class ComposerVoiceNoteRecorder {
     var isRequestingPermission: Bool { state == .requestingPermission }
     var hasReachedMaximumDuration: Bool { elapsed >= Self.maximumDuration }
 
-    static let recordingSettings: [String: Any] = [
-        AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
-        AVSampleRateKey: 44_100.0,
-        AVNumberOfChannelsKey: 1,
-        AVEncoderAudioQualityKey: AVAudioQuality.medium.rawValue
-    ]
+    /// A computed value avoids sharing the non-Sendable `[String: Any]` across
+    /// actor boundaries while keeping recorder construction deterministic.
+    nonisolated static var recordingSettings: [String: Any] {
+        [
+            AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+            AVSampleRateKey: 44_100.0,
+            AVNumberOfChannelsKey: 1,
+            AVEncoderAudioQualityKey: AVAudioQuality.medium.rawValue
+        ]
+    }
 
     // MARK: - Lifecycle
 
