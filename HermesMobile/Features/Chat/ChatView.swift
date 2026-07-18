@@ -336,7 +336,10 @@ struct ChatView: View {
         self.onAPIError = onAPIError
         self.loadsInitialMessages = loadsInitialMessages
         self.autoStartsVoiceInput = autoStartsVoiceInput
-        _draftMessage = State(initialValue: initialDraft)
+        let restoredDraft = SessionDraftPersistence.load(for: session.sessionId, server: server)
+        let resolvedDraft = restoredDraft ?? initialDraft
+        _draftMessage = State(initialValue: resolvedDraft)
+        SessionDraftPersistence.save(resolvedDraft, for: session.sessionId, server: server)
         _initialAttachments = State(initialValue: initialAttachments)
         _viewModel = State(initialValue: ChatViewModel(
             session: session,
@@ -356,7 +359,7 @@ struct ChatView: View {
     // "unable to type-check in reasonable time" limit).
     private var messageComposer: some View {
         MessageComposerView(
-            draftMessage: $draftMessage,
+            draftMessage: persistedDraftMessage,
             isFocused: $composerIsFocused,
             isSending: viewModel.isStartingChat || viewModel.isSendingVoiceNote,
             isCompressingSession: viewModel.isCompressingSession,
@@ -1460,11 +1463,11 @@ struct ChatView: View {
 
         prepareTranscriptForExplicitSend()
 
-        draftMessage = ""
+        setDraftMessage("")
 
         let didStart = await viewModel.sendMessage(submittedDraft, modelContext: modelContext)
         if !didStart, draftMessage.isEmpty {
-            draftMessage = submittedDraft
+            setDraftMessage(submittedDraft)
         }
 
         return didStart
@@ -1487,13 +1490,13 @@ struct ChatView: View {
                     viewModel.appendLocalAssistantMessage(message)
                 }
             }
-            draftMessage = ""
+            setDraftMessage("")
         case .openedSession(let session):
             forkedSession = session
-            draftMessage = ""
+            setDraftMessage("")
         case .unsupported(let friendlyMessage):
             viewModel.setSendErrorMessage(friendlyMessage)
-            draftMessage = ""
+            setDraftMessage("")
         case .needsSubArg:
             viewModel.setSendErrorMessage(String(localized: "Choose a slash command or continue typing."))
         case .sendAsMessage:
@@ -2145,6 +2148,18 @@ struct ChatView: View {
         }
 
         return String(localized: "Switch to \(profile.displayName) and start a new session. This keeps the current transcript on its original profile.")
+    }
+
+    private var persistedDraftMessage: Binding<String> {
+        Binding(
+            get: { draftMessage },
+            set: { setDraftMessage($0) }
+        )
+    }
+
+    private func setDraftMessage(_ newDraft: String) {
+        draftMessage = newDraft
+        SessionDraftPersistence.save(newDraft, for: session.sessionId, server: server)
     }
 
     private func transcriptMessagesAfter(_ context: MessageActionContext) -> Int {

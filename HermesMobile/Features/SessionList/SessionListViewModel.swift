@@ -518,9 +518,15 @@ final class SessionListViewModel {
         guard beginSessionMutation(sessionId) else { return false }
         defer { endSessionMutation(sessionId) }
 
-        return await mutate(modelContext: modelContext, animation: animation) {
+        let didDelete = await mutate(modelContext: modelContext, animation: animation) {
             try await sessionMutator.delete(sessionID: sessionId)
         }
+
+        if didDelete {
+            SessionDraftPersistence.remove(for: sessionId, server: server)
+        }
+
+        return didDelete
     }
 
     func isMutating(_ session: SessionSummary) -> Bool {

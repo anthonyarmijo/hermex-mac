@@ -291,9 +291,12 @@ struct SessionListView: View {
                 NavigationStack {
                     regularWidthDetail
                 }
+                // Reset only the detail navigation path when a sidebar root is
+                // selected. Applying this identity to the entire split view also
+                // recreated the sidebar List and snapped it back to the top.
+                .id(navigationState.rootRevision)
             }
             .navigationSplitViewStyle(.balanced)
-            .id(navigationState.rootRevision)
         } else {
             NavigationStack {
                 sessionListSurface

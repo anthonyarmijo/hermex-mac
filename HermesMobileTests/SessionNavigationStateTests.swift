@@ -165,3 +165,75 @@ final class SessionNavigationStateTests: XCTestCase {
         )
     }
 }
+
+final class SessionDraftPersistenceTests: XCTestCase {
+    private var suiteName: String!
+    private var defaults: UserDefaults!
+
+    override func setUp() {
+        super.setUp()
+        suiteName = "SessionDraftPersistenceTests.\(UUID().uuidString)"
+        defaults = UserDefaults(suiteName: suiteName)
+        defaults.removePersistentDomain(forName: suiteName)
+    }
+
+    override func tearDown() {
+        defaults.removePersistentDomain(forName: suiteName)
+        defaults = nil
+        suiteName = nil
+        super.tearDown()
+    }
+
+    func testDraftRoundTripsExactlyAcrossDefaultsReload() throws {
+        let server = try XCTUnwrap(URL(string: "https://first.example.com"))
+        let draft = "  First line\n\nSecond line with trailing space  "
+
+        SessionDraftPersistence.save(draft, for: " session-1 ", server: server, defaults: defaults)
+
+        let reloadedDefaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        XCTAssertEqual(
+            SessionDraftPersistence.load(for: "session-1", server: server, defaults: reloadedDefaults),
+            draft
+        )
+    }
+
+    func testEmptyDraftRemovesPersistedValue() throws {
+        let server = try XCTUnwrap(URL(string: "https://first.example.com"))
+        SessionDraftPersistence.save("Keep this", for: "session-1", server: server, defaults: defaults)
+
+        SessionDraftPersistence.save("", for: "session-1", server: server, defaults: defaults)
+
+        XCTAssertNil(SessionDraftPersistence.load(for: "session-1", server: server, defaults: defaults))
+    }
+
+    func testDraftsAreIsolatedByServerAndSession() throws {
+        let firstServer = try XCTUnwrap(URL(string: "https://first.example.com"))
+        let secondServer = try XCTUnwrap(URL(string: "https://second.example.com"))
+
+        SessionDraftPersistence.save("First", for: "session-1", server: firstServer, defaults: defaults)
+        SessionDraftPersistence.save("Second", for: "session-2", server: firstServer, defaults: defaults)
+        SessionDraftPersistence.save("Other server", for: "session-1", server: secondServer, defaults: defaults)
+
+        XCTAssertEqual(SessionDraftPersistence.load(for: "session-1", server: firstServer, defaults: defaults), "First")
+        XCTAssertEqual(SessionDraftPersistence.load(for: "session-2", server: firstServer, defaults: defaults), "Second")
+        XCTAssertEqual(
+            SessionDraftPersistence.load(for: "session-1", server: secondServer, defaults: defaults),
+            "Other server"
+        )
+    }
+
+    func testRemovingServerDraftsDoesNotTouchAnotherServer() throws {
+        let removedServer = try XCTUnwrap(URL(string: "https://removed.example.com"))
+        let retainedServer = try XCTUnwrap(URL(string: "https://retained.example.com"))
+        SessionDraftPersistence.save("Remove", for: "session-1", server: removedServer, defaults: defaults)
+        SessionDraftPersistence.save("Retain", for: "session-1", server: retainedServer, defaults: defaults)
+
+        SessionDraftPersistence.removeAll(for: removedServer, defaults: defaults)
+
+        XCTAssertNil(SessionDraftPersistence.load(for: "session-1", server: removedServer, defaults: defaults))
+        XCTAssertEqual(
+            SessionDraftPersistence.load(for: "session-1", server: retainedServer, defaults: defaults),
+            "Retain"
+        )
+    }
+}
