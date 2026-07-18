@@ -1091,7 +1091,8 @@ struct MessageComposerView: View {
     /// otherwise stops and sends the clip.
     @MainActor
     private func finishVoiceNote(translationHeight: CGFloat) {
-        let shouldCancel = ComposerVoiceNoteGesture.isCancelArmed(dragTranslationHeight: translationHeight)
+        let shouldCancel = PlatformCapabilities.supportsSlideToCancelVoiceNotes
+            && ComposerVoiceNoteGesture.isCancelArmed(dragTranslationHeight: translationHeight)
         voiceNoteCancelArmed = false
 
         guard !shouldCancel else {

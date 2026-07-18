@@ -380,7 +380,9 @@ struct SettingsView: View {
                         .accessibilityLabel("Open Hermex Settings")
                     }
 
-                    SettingsFootnote(String(localized: "Run Hermex actions like New Chat from Siri, Spotlight, the Lock Screen, or the iPhone Action button. Open Hermex Settings to manage its Siri & Search options. To assign an action to the Action button, open the iOS Settings app, choose Action Button, then Shortcut, and pick a Hermex action."))
+                    if PlatformCapabilities.showsIOSActionButtonGuidance {
+                        SettingsFootnote(String(localized: "Run Hermex actions like New Chat from Siri, Spotlight, the Lock Screen, or the iPhone Action button. Open Hermex Settings to manage its Siri & Search options. To assign an action to the Action button, open the iOS Settings app, choose Action Button, then Shortcut, and pick a Hermex action."))
+                    }
                 }
 
                 serversCard
@@ -1214,16 +1216,7 @@ struct SettingsView: View {
     }
 
     private func notificationPermissionLabel(_ status: UNAuthorizationStatus) -> String {
-        switch status {
-        case .authorized, .provisional, .ephemeral:
-            return String(localized: "iOS notifications allowed.")
-        case .notDetermined:
-            return String(localized: "iOS permission not requested.")
-        case .denied:
-            return String(localized: "iOS notifications disabled.")
-        @unknown default:
-            return String(localized: "Notifications unavailable.")
-        }
+        ResponseNotificationPermissionLabel.text(for: status)
     }
 }
 
@@ -2322,6 +2315,30 @@ struct AddServerView: View {
             initials: finalInitials,
             headerLogoColorHex: colorHex
         )
+    }
+}
+
+enum ResponseNotificationPermissionLabel {
+    static func text(
+        for status: UNAuthorizationStatus,
+        isMacCatalyst: Bool = PlatformCapabilities.isMacCatalyst
+    ) -> String {
+        let iOSLabel: String
+        switch status {
+        case .authorized, .provisional, .ephemeral:
+            iOSLabel = String(localized: "iOS notifications allowed.")
+        case .notDetermined:
+            iOSLabel = String(localized: "iOS permission not requested.")
+        case .denied:
+            iOSLabel = String(localized: "iOS notifications disabled.")
+        @unknown default:
+            return String(localized: "Notifications unavailable.")
+        }
+
+        guard isMacCatalyst else { return iOSLabel }
+        // Apple's platform names remain literal across the shipped translations,
+        // so reuse the complete iOS localization and adapt only its platform name.
+        return iOSLabel.replacingOccurrences(of: "iOS", with: "Mac")
     }
 }
 

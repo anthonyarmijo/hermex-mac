@@ -1,4 +1,5 @@
 import XCTest
+import UserNotifications
 @testable import HermesMobile
 
 final class PlatformCapabilitiesTests: XCTestCase {
@@ -17,6 +18,8 @@ final class PlatformCapabilitiesTests: XCTestCase {
         XCTAssertFalse(PlatformCapabilities.supportsAlternateAppIcons)
         XCTAssertFalse(PlatformCapabilities.supportsLiveActivities)
         XCTAssertFalse(PlatformCapabilities.supportsIOSShareExtension)
+        XCTAssertFalse(PlatformCapabilities.showsIOSActionButtonGuidance)
+        XCTAssertFalse(PlatformCapabilities.supportsSlideToCancelVoiceNotes)
         #else
         XCTAssertFalse(PlatformCapabilities.isMacCatalyst)
         XCTAssertFalse(PlatformCapabilities.supportsDedicatedSettingsWindow)
@@ -26,7 +29,37 @@ final class PlatformCapabilitiesTests: XCTestCase {
         XCTAssertTrue(PlatformCapabilities.supportsAlternateAppIcons)
         XCTAssertTrue(PlatformCapabilities.supportsLiveActivities)
         XCTAssertTrue(PlatformCapabilities.supportsIOSShareExtension)
+        XCTAssertTrue(PlatformCapabilities.showsIOSActionButtonGuidance)
+        XCTAssertTrue(PlatformCapabilities.supportsSlideToCancelVoiceNotes)
         #endif
+    }
+
+    func testResponseNotificationPermissionLabelsUseTheRequestedPlatform() {
+        XCTAssertEqual(
+            ResponseNotificationPermissionLabel.text(for: .authorized, isMacCatalyst: true),
+            "Mac notifications allowed."
+        )
+        XCTAssertEqual(
+            ResponseNotificationPermissionLabel.text(for: .notDetermined, isMacCatalyst: true),
+            "Mac permission not requested."
+        )
+        XCTAssertEqual(
+            ResponseNotificationPermissionLabel.text(for: .denied, isMacCatalyst: true),
+            "Mac notifications disabled."
+        )
+
+        XCTAssertEqual(
+            ResponseNotificationPermissionLabel.text(for: .authorized, isMacCatalyst: false),
+            "iOS notifications allowed."
+        )
+        XCTAssertEqual(
+            ResponseNotificationPermissionLabel.text(for: .notDetermined, isMacCatalyst: false),
+            "iOS permission not requested."
+        )
+        XCTAssertEqual(
+            ResponseNotificationPermissionLabel.text(for: .denied, isMacCatalyst: false),
+            "iOS notifications disabled."
+        )
     }
 
     #if targetEnvironment(macCatalyst)

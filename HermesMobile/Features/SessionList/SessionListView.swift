@@ -1403,6 +1403,17 @@ private struct PendingNewChatView: View {
                     session: createdSession,
                     server: server,
                     onAPIError: onAPIError,
+                    onMessageSubmitted: {
+                        viewModel.markCreatedSessionAsStarted(
+                            sessionID: createdSession.sessionId,
+                            modelContext: modelContext
+                        )
+                    },
+                    onResponseCompleted: {
+                        Task {
+                            await viewModel.load(modelContext: modelContext, animation: .default)
+                        }
+                    },
                     initialDraft: draftMessage,
                     initialAttachments: initialAttachments,
                     loadsInitialMessages: false,

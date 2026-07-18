@@ -241,6 +241,19 @@ private struct ComposerTextView: UIViewRepresentable {
         }
 
         override var keyCommands: [UIKeyCommand]? {
+            var newlineCommands: [UIKeyCommand] = []
+            if let modifierFlags = ComposerKeyboardCommand.newlineModifierFlags {
+                let command = UIKeyCommand(
+                    title: ComposerKeyboardCommand.newlineTitle,
+                    action: #selector(insertNewlineFromKeyboard),
+                    input: ComposerKeyboardCommand.input,
+                    modifierFlags: modifierFlags
+                )
+                command.wantsPriorityOverSystemBehavior =
+                    ComposerKeyboardCommand.newlineWantsPriorityOverSystemBehavior
+                newlineCommands.append(command)
+            }
+
             let sendCommands = ComposerKeyboardCommand.modifierFlags.map { modifierFlags in
                 let command = UIKeyCommand(
                     title: ComposerKeyboardCommand.title,
@@ -252,12 +265,19 @@ private struct ComposerTextView: UIViewRepresentable {
                     ComposerKeyboardCommand.wantsPriorityOverSystemBehavior(for: modifierFlags)
                 return command
             }
-            return (super.keyCommands ?? []) + sendCommands
+            // Catalyst can match the unmodified Return command when Shift is also
+            // held. Register the exact Shift+Return command first so a requested
+            // line break never falls through to the send action.
+            return (super.keyCommands ?? []) + newlineCommands + sendCommands
         }
 
         override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
             if action == #selector(sendMessageFromKeyboard) {
                 return isKeyboardSendEnabled
+            }
+
+            if action == #selector(insertNewlineFromKeyboard) {
+                return isEditable
             }
 
             if action == #selector(paste(_:)), hasPasteboardContent {
@@ -270,6 +290,11 @@ private struct ComposerTextView: UIViewRepresentable {
         @objc private func sendMessageFromKeyboard() {
             guard isKeyboardSendEnabled else { return }
             onKeyboardSend()
+        }
+
+        @objc private func insertNewlineFromKeyboard() {
+            guard isEditable else { return }
+            insertText("\n")
         }
 
         override func paste(_ sender: Any?) {
@@ -330,10 +355,17 @@ private struct ComposerTextView: UIViewRepresentable {
 
 enum ComposerKeyboardCommand {
     static let title = String(localized: "Send Message")
+    static let newlineTitle = String(localized: "Insert Line Break")
     static let input = "\r"
     static let modifierFlags: [UIKeyModifierFlags] = PlatformCapabilities.isMacCatalyst
         ? [[], .command]
         : [.command]
+    static let newlineModifierFlags: UIKeyModifierFlags? = PlatformCapabilities.isMacCatalyst
+        ? .shift
+        : nil
+    static var newlineWantsPriorityOverSystemBehavior: Bool {
+        PlatformCapabilities.isMacCatalyst
+    }
 
     static func wantsPriorityOverSystemBehavior(for modifierFlags: UIKeyModifierFlags) -> Bool {
         PlatformCapabilities.isMacCatalyst && modifierFlags.isEmpty

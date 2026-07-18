@@ -6,12 +6,17 @@ import XCTest
 final class ComposerVoiceDraftComposerTests: XCTestCase {
     func testComposerSendKeyboardCommandsMatchPlatformConventions() {
         XCTAssertEqual(ComposerKeyboardCommand.title, "Send Message")
+        XCTAssertEqual(ComposerKeyboardCommand.newlineTitle, "Insert Line Break")
         XCTAssertEqual(ComposerKeyboardCommand.input, "\r")
         #if targetEnvironment(macCatalyst)
         XCTAssertEqual(ComposerKeyboardCommand.modifierFlags, [[], .command])
+        XCTAssertEqual(ComposerKeyboardCommand.newlineModifierFlags, .shift)
+        XCTAssertTrue(ComposerKeyboardCommand.newlineWantsPriorityOverSystemBehavior)
         XCTAssertTrue(ComposerKeyboardCommand.wantsPriorityOverSystemBehavior(for: []))
         #else
         XCTAssertEqual(ComposerKeyboardCommand.modifierFlags, [.command])
+        XCTAssertNil(ComposerKeyboardCommand.newlineModifierFlags)
+        XCTAssertFalse(ComposerKeyboardCommand.newlineWantsPriorityOverSystemBehavior)
         XCTAssertFalse(ComposerKeyboardCommand.wantsPriorityOverSystemBehavior(for: []))
         #endif
         XCTAssertFalse(ComposerKeyboardCommand.wantsPriorityOverSystemBehavior(for: .command))

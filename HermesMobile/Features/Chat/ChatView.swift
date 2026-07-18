@@ -275,6 +275,8 @@ struct ChatView: View {
     let session: SessionSummary
     let server: URL
     let onAPIError: (Error) -> Void
+    let onMessageSubmitted: () -> Void
+    let onResponseCompleted: () -> Void
     let loadsInitialMessages: Bool
     /// When true, the composer auto-starts voice dictation on appear — set by the
     /// "New Chat with Voice" App Intent (#338). Defaults to false for normal opens.
@@ -326,6 +328,8 @@ struct ChatView: View {
         session: SessionSummary,
         server: URL,
         onAPIError: @escaping (Error) -> Void,
+        onMessageSubmitted: @escaping () -> Void = {},
+        onResponseCompleted: @escaping () -> Void = {},
         initialDraft: String = "",
         initialAttachments: [SharedAttachmentImport] = [],
         loadsInitialMessages: Bool = true,
@@ -334,6 +338,8 @@ struct ChatView: View {
         self.session = session
         self.server = server
         self.onAPIError = onAPIError
+        self.onMessageSubmitted = onMessageSubmitted
+        self.onResponseCompleted = onResponseCompleted
         self.loadsInitialMessages = loadsInitialMessages
         self.autoStartsVoiceInput = autoStartsVoiceInput
         let restoredDraft = SessionDraftPersistence.load(for: session.sessionId, server: server)
@@ -648,6 +654,7 @@ struct ChatView: View {
             }
             .onChange(of: viewModel.responseCompletionHapticTrigger) {
                 guard viewModel.responseCompletionHapticTrigger > 0 else { return }
+                onResponseCompleted()
                 handleResponseCompletionSideEffects()
             }
             .toolbar {
@@ -1427,6 +1434,7 @@ struct ChatView: View {
         }
 
         if didStart {
+            onMessageSubmitted()
             ChatHaptics.messageSent(isEnabled: isHapticsEnabled)
             if shouldRestoreFocusAfterSend {
                 requestComposerFocusIfPossible()
@@ -1450,6 +1458,7 @@ struct ChatView: View {
         )
 
         if didSend {
+            onMessageSubmitted()
             ChatHaptics.messageSent(isEnabled: isHapticsEnabled)
         }
 

@@ -10,6 +10,8 @@ enum PlatformCapabilities {
     static let supportsAlternateAppIcons = false
     static let supportsLiveActivities = false
     static let supportsIOSShareExtension = false
+    static let showsIOSActionButtonGuidance = false
+    static let supportsSlideToCancelVoiceNotes = false
     #else
     static let isMacCatalyst = false
     static let supportsDedicatedSettingsWindow = false
@@ -19,5 +21,7 @@ enum PlatformCapabilities {
     static let supportsAlternateAppIcons = true
     static let supportsLiveActivities = true
     static let supportsIOSShareExtension = true
+    static let showsIOSActionButtonGuidance = true
+    static let supportsSlideToCancelVoiceNotes = true
     #endif
 }

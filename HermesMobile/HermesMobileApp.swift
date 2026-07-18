@@ -50,9 +50,9 @@ struct HermexCommands: Commands {
             }
             .keyboardShortcut("n", modifiers: .command)
             .disabled(actions?.canCreateNewChat != true)
-        }
 
-        CommandGroup(after: .newItem) {
+            Divider()
+
             Button("Search Sessions") {
                 actions?.searchSessions()
             }

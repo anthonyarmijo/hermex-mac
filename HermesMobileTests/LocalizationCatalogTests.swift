@@ -107,4 +107,47 @@ final class LocalizationCatalogTests: XCTestCase {
             }
         }
     }
+
+    func testNotificationPermissionTranslationsKeepAReplaceablePlatformName() throws {
+        let data = try Data(contentsOf: catalogURL())
+        let root = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let strings = try XCTUnwrap(root["strings"] as? [String: Any])
+        let platformSpecificKeys = [
+            "iOS notifications allowed.",
+            "iOS permission not requested.",
+            "iOS notifications disabled."
+        ]
+
+        for key in platformSpecificKeys {
+            XCTAssertEqual(
+                key.components(separatedBy: "iOS").count - 1,
+                1,
+                "The source key must contain exactly one replaceable iOS platform name."
+            )
+
+            let entry = try XCTUnwrap(strings[key] as? [String: Any], key)
+            let localizations = try XCTUnwrap(entry["localizations"] as? [String: Any], key)
+
+            for language in Self.shippedLanguages {
+                let localization = try XCTUnwrap(
+                    localizations[language] as? [String: Any],
+                    "[\(language)] \(key)"
+                )
+                let stringUnit = try XCTUnwrap(
+                    localization["stringUnit"] as? [String: Any],
+                    "[\(language)] \(key)"
+                )
+                let value = try XCTUnwrap(
+                    stringUnit["value"] as? String,
+                    "[\(language)] \(key)"
+                )
+
+                XCTAssertEqual(
+                    value.components(separatedBy: "iOS").count - 1,
+                    1,
+                    "[\(language)] \(key) must contain exactly one platform name so Catalyst can substitute Mac."
+                )
+            }
+        }
+    }
 }

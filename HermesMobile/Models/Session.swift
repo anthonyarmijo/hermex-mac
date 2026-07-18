@@ -330,6 +330,47 @@ struct SessionSummary: Decodable, Equatable, Hashable, Identifiable {
             matchType: matchType
         )
     }
+
+    /// Returns a sidebar-safe local summary after this session has accepted its
+    /// first user message. The authoritative title and counts still come from the
+    /// server on the next refresh; these minimum counts keep a just-created chat
+    /// visible in the meantime instead of treating it as an abandoned placeholder.
+    func markingUserMessageSubmitted(at timestamp: Double = Date().timeIntervalSince1970) -> SessionSummary {
+        SessionSummary(
+            sessionId: sessionId,
+            title: title,
+            workspace: workspace,
+            model: model,
+            modelProvider: modelProvider,
+            messageCount: max(messageCount ?? 0, 1),
+            createdAt: createdAt,
+            updatedAt: timestamp,
+            lastMessageAt: timestamp,
+            pinned: pinned,
+            archived: archived,
+            projectId: projectId,
+            profile: profile,
+            inputTokens: inputTokens,
+            outputTokens: outputTokens,
+            estimatedCost: estimatedCost,
+            activeStreamId: activeStreamId,
+            isStreaming: isStreaming,
+            isCliSession: isCliSession,
+            userMessageCount: max(userMessageCount ?? 0, 1),
+            hasPendingUserMessage: hasPendingUserMessage,
+            pendingStartedAt: pendingStartedAt,
+            worktreePath: worktreePath,
+            sourceTag: sourceTag,
+            rawSource: rawSource,
+            sessionSource: sessionSource,
+            sourceLabel: sourceLabel,
+            parentSessionId: parentSessionId,
+            relationshipType: relationshipType,
+            readOnly: readOnly,
+            isReadOnly: isReadOnly,
+            matchType: matchType
+        )
+    }
 }
 
 extension SessionSummary {

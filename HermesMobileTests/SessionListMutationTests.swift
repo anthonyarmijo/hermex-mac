@@ -298,7 +298,7 @@ final class SessionListMutationTests: XCTestCase {
     }
 
     @MainActor
-    func testCreateSessionReturnsEmptyPlaceholderWithoutInsertingIntoSessionList() async throws {
+    func testCreateSessionKeepsEmptyPlaceholderVisibleWithoutCachingIt() async throws {
         let context = try makeContext()
         let serverURL = try XCTUnwrap(URL(string: "https://example.test"))
         var requestedPaths: [String] = []
@@ -347,12 +347,60 @@ final class SessionListMutationTests: XCTestCase {
         let created = await viewModel.createSession(modelContext: context)
 
         XCTAssertEqual(created?.sessionId, "new-123")
-        XCTAssertTrue(viewModel.sessions.isEmpty)
+        XCTAssertEqual(viewModel.sessions.compactMap(\.sessionId), ["new-123"])
+        XCTAssertTrue(try XCTUnwrap(viewModel.sessions.first).isEmptySidebarPlaceholder)
         XCTAssertTrue(try CacheStore.cachedSessions(serverURL: serverURL, in: context).isEmpty)
         XCTAssertEqual(requestedPaths, ["/api/workspaces", "/api/session/new"])
         XCTAssertFalse(viewModel.isCreatingSession)
         XCTAssertNil(viewModel.actionErrorMessage)
         XCTAssertNil(viewModel.lastError)
+    }
+
+    @MainActor
+    func testFirstSubmissionPromotesAndCachesCreatedPlaceholder() async throws {
+        let context = try makeContext()
+        let serverURL = try XCTUnwrap(URL(string: "https://example.test"))
+        let viewModel = try makeViewModel { request in
+            switch request.url?.path {
+            case "/api/workspaces":
+                return apiTestJSONResponse("""
+                {"workspaces": [{"path": "/tmp/workspace"}], "last": "/tmp/workspace"}
+                """, for: request)
+            case "/api/session/new":
+                return apiTestJSONResponse("""
+                {
+                  "session": {
+                    "session_id": "voice-chat-123",
+                    "title": "Untitled Session",
+                    "workspace": "/tmp/workspace",
+                    "archived": false
+                  }
+                }
+                """, for: request)
+            default:
+                XCTFail("Unexpected request path: \(request.url?.path ?? "nil")")
+                throw URLError(.badURL)
+            }
+        }
+
+        let created = await viewModel.createSession(modelContext: context)
+        XCTAssertTrue(try XCTUnwrap(created).isEmptySidebarPlaceholder)
+
+        viewModel.markCreatedSessionAsStarted(
+            sessionID: created?.sessionId,
+            modelContext: context
+        )
+        viewModel.removeEmptySidebarPlaceholders()
+
+        let retained = try XCTUnwrap(viewModel.sessions.first)
+        XCTAssertEqual(retained.sessionId, "voice-chat-123")
+        XCTAssertEqual(retained.messageCount, 1)
+        XCTAssertEqual(retained.userMessageCount, 1)
+        XCTAssertFalse(retained.isEmptySidebarPlaceholder)
+        XCTAssertEqual(
+            try CacheStore.cachedSessions(serverURL: serverURL, in: context).compactMap(\.sessionId),
+            ["voice-chat-123"]
+        )
     }
 
     @MainActor
