@@ -257,6 +257,16 @@ struct HermesMobileApp: App {
                 .environment(\.macInterfaceScale, macInterfacePreferences.size.layoutScale)
                 .environment(macInterfacePreferences)
                 #endif
+            } else if ProcessInfo.processInfo.arguments.contains("--kanban-lab") {
+                NavigationStack {
+                    KanbanLabView()
+                }
+                #if targetEnvironment(macCatalyst)
+                .dynamicTypeSize(macInterfacePreferences.size.dynamicTypeSize)
+                .environment(\.sizeCategory, macInterfacePreferences.size.contentSizeCategory)
+                .environment(\.macInterfaceScale, macInterfacePreferences.size.layoutScale)
+                .environment(macInterfacePreferences)
+                #endif
             } else {
                 ContentView(authManager: authManager)
                     .preferredColorScheme(AppTheme.storedValue(appThemeRawValue).colorScheme)
