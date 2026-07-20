@@ -78,7 +78,7 @@ final class APIClientSkillEndpointTests: APIClientTestCase {
             let components = URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false)
             let query = Dictionary(uniqueKeysWithValues: (components?.queryItems ?? []).map { ($0.name, $0.value) })
             XCTAssertEqual(query["name"], "swift-refactor")
-            XCTAssertNil(query["file"])
+            XCTAssertFalse(query.keys.contains("file"))
             XCTAssertEqual(request.httpMethod, "GET")
 
             return apiTestJSONResponse("""

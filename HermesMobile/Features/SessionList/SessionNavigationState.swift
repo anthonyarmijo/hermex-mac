@@ -1,6 +1,7 @@
 import Foundation
 
 enum SessionNavigationDestination: Hashable, Identifiable {
+    case home
     case session(SessionSummary)
     case newChat(PendingNewChatRoute)
     case utility(SessionListUtilityDestination)
@@ -37,6 +38,12 @@ struct SessionNavigationState: Equatable {
         newChatSessionID = nil
         destination = .session(session)
         remember(session)
+    }
+
+    mutating func selectHome() {
+        rootRevision += 1
+        newChatSessionID = nil
+        destination = .home
     }
 
     mutating func select(_ route: PendingNewChatRoute) {
@@ -124,5 +131,76 @@ enum SessionNavigationPersistence {
         } else {
             defaults.removeObject(forKey: key)
         }
+    }
+}
+
+/// Durable, device-local composer text keyed to one server session. Drafts are
+/// deliberately independent of the seven-day offline transcript cache: they are
+/// user-authored working state and remain until sent, cleared, or explicitly
+/// removed with their session/server.
+enum SessionDraftPersistence {
+    private static let keyPrefix = "sessionDraft."
+
+    static func load(
+        for sessionID: String?,
+        server: URL,
+        defaults: UserDefaults = .standard
+    ) -> String? {
+        guard let key = key(for: sessionID, server: server) else { return nil }
+        guard let draft = defaults.string(forKey: key), !draft.isEmpty else { return nil }
+        return draft
+    }
+
+    static func save(
+        _ draft: String,
+        for sessionID: String?,
+        server: URL,
+        defaults: UserDefaults = .standard
+    ) {
+        guard let key = key(for: sessionID, server: server) else { return }
+
+        if draft.isEmpty {
+            defaults.removeObject(forKey: key)
+        } else {
+            defaults.set(draft, forKey: key)
+        }
+    }
+
+    static func remove(
+        for sessionID: String?,
+        server: URL,
+        defaults: UserDefaults = .standard
+    ) {
+        guard let key = key(for: sessionID, server: server) else { return }
+        defaults.removeObject(forKey: key)
+    }
+
+    static func removeAll(
+        for server: URL,
+        defaults: UserDefaults = .standard
+    ) {
+        let prefix = serverKeyPrefix(for: server)
+        for key in defaults.dictionaryRepresentation().keys where key.hasPrefix(prefix) {
+            defaults.removeObject(forKey: key)
+        }
+    }
+
+    private static func key(for sessionID: String?, server: URL) -> String? {
+        guard let sessionID = normalized(sessionID) else { return nil }
+        return serverKeyPrefix(for: server) + encoded(sessionID)
+    }
+
+    private static func serverKeyPrefix(for server: URL) -> String {
+        keyPrefix + encoded(server.absoluteString) + ".session."
+    }
+
+    private static func normalized(_ sessionID: String?) -> String? {
+        guard let sessionID else { return nil }
+        let trimmed = sessionID.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func encoded(_ component: String) -> String {
+        Data(component.utf8).base64EncodedString()
     }
 }

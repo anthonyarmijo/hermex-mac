@@ -1,0 +1,319 @@
+# Maintainer-only: produces a universal Developer ID-signed, notarized Mac DMG
+# and uploads it to a draft GitHub Release. Publishing remains a manual action.
+
+name: Mac Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag (for example mac-v1.0.0)."
+        required: true
+        type: string
+      confirm_release:
+        description: "Type RELEASE_MAC to confirm the signing/notarization run."
+        required: true
+        type: string
+
+run-name: "Draft Mac release ${{ inputs.tag }}"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mac-release
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate Tagged Mac Build
+    runs-on: macos-26
+    timeout-minutes: 90
+
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+      CONFIRM_RELEASE: ${{ inputs.confirm_release }}
+      PROJECT_PATH: HermesMobile.xcodeproj
+      SCHEME: HermesMobile
+
+    steps:
+      - name: Check manual gate
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF_NAME}" != "master" ]]; then
+            echo "Dispatch Mac releases from master. Current ref: ${GITHUB_REF_NAME}" >&2
+            exit 1
+          fi
+          if [[ "${CONFIRM_RELEASE}" != "RELEASE_MAC" ]]; then
+            echo "Re-run with confirm_release set to RELEASE_MAC." >&2
+            exit 1
+          fi
+          if [[ ! "${RELEASE_TAG}" =~ ^mac-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tag must match mac-vX.Y.Z." >&2
+            exit 1
+          fi
+
+      - name: Check out the release tag
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.tag }}
+
+      - name: Verify tag and version
+        run: |
+          set -euo pipefail
+          git show-ref --verify --quiet "refs/tags/${RELEASE_TAG}" || {
+            echo "Tag does not exist: ${RELEASE_TAG}" >&2
+            exit 1
+          }
+          git fetch origin master:refs/remotes/origin/master
+          tag_commit="$(git rev-parse "${RELEASE_TAG}^{commit}")"
+          master_commit="$(git rev-parse refs/remotes/origin/master)"
+          if [[ "${tag_commit}" != "${master_commit}" ]]; then
+            echo "${RELEASE_TAG} points to ${tag_commit}; current master is ${master_commit}." >&2
+            exit 1
+          fi
+
+          expected_version="${RELEASE_TAG#mac-v}"
+          resolved_version="$(
+            xcodebuild \
+              -project "${PROJECT_PATH}" \
+              -scheme "${SCHEME}" \
+              -configuration Release \
+              -destination "platform=macOS,arch=arm64,variant=Mac Catalyst" \
+              -showBuildSettings 2>/dev/null |
+              awk -F'= ' '/^[[:space:]]*MARKETING_VERSION =/ { print $2; exit }'
+          )"
+          if [[ "${resolved_version}" != "${expected_version}" ]]; then
+            echo "Tag version ${expected_version} does not match Mac MARKETING_VERSION ${resolved_version}." >&2
+            exit 1
+          fi
+          echo "RELEASE_VERSION=${resolved_version}" >> "${GITHUB_ENV}"
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Run Mac Catalyst tests
+        run: |
+          set -euo pipefail
+          xcodebuild test \
+            -project "${PROJECT_PATH}" \
+            -scheme "${SCHEME}" \
+            -destination "platform=macOS,arch=arm64,variant=Mac Catalyst" \
+            -derivedDataPath "${RUNNER_TEMP}/DerivedData-Mac-Validation" \
+            -resultBundlePath "${RUNNER_TEMP}/MacReleaseTests.xcresult" \
+            -enableCodeCoverage NO \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Upload test results on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mac-release-test-results
+          path: ${{ runner.temp }}/MacReleaseTests.xcresult
+          if-no-files-found: ignore
+
+  release:
+    name: Sign, Notarize, and Draft Release
+    needs: validate
+    runs-on: macos-26
+    timeout-minutes: 90
+    environment: mac-release
+    permissions:
+      contents: write
+
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+      PROJECT_PATH: HermesMobile.xcodeproj
+      SCHEME: HermesMobile
+      DEVELOPMENT_TEAM: ${{ vars.MAC_DEVELOPMENT_TEAM }}
+      DEVELOPER_ID_APPLICATION: ${{ vars.MAC_DEVELOPER_ID_APPLICATION }}
+      MAC_PROVISIONING_PROFILE_SPECIFIER: ${{ vars.MAC_PROVISIONING_PROFILE_SPECIFIER }}
+      MAC_DEVELOPER_ID_P12_BASE64: ${{ secrets.MAC_DEVELOPER_ID_P12_BASE64 }}
+      MAC_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.MAC_DEVELOPER_ID_P12_PASSWORD }}
+      MAC_PROVISIONING_PROFILE_BASE64: ${{ secrets.MAC_PROVISIONING_PROFILE_BASE64 }}
+      APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+      APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+      APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Check out the release tag
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.tag }}
+
+      - name: Check required release configuration
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in \
+            DEVELOPMENT_TEAM \
+            DEVELOPER_ID_APPLICATION \
+            MAC_PROVISIONING_PROFILE_SPECIFIER \
+            MAC_DEVELOPER_ID_P12_BASE64 \
+            MAC_DEVELOPER_ID_P12_PASSWORD \
+            MAC_PROVISIONING_PROFILE_BASE64 \
+            APP_STORE_CONNECT_KEY_ID \
+            APP_STORE_CONNECT_ISSUER_ID \
+            APP_STORE_CONNECT_PRIVATE_KEY; do
+            if [[ -z "${!name}" ]]; then
+              echo "Missing required mac-release variable or secret: ${name}" >&2
+              missing=1
+            fi
+          done
+          exit "${missing}"
+
+      - name: Resolve release metadata
+        run: |
+          set -euo pipefail
+          release_version="${RELEASE_TAG#mac-v}"
+          build_number="$(
+            xcodebuild \
+              -project "${PROJECT_PATH}" \
+              -scheme "${SCHEME}" \
+              -configuration Release \
+              -destination "platform=macOS,arch=arm64,variant=Mac Catalyst" \
+              -showBuildSettings 2>/dev/null |
+              awk -F'= ' '/^[[:space:]]*CURRENT_PROJECT_VERSION =/ { print $2; exit }'
+          )"
+          if [[ -z "${build_number}" || ! "${build_number}" =~ ^[0-9]+$ ]]; then
+            echo "Mac CURRENT_PROJECT_VERSION must be a non-empty integer." >&2
+            exit 1
+          fi
+          {
+            echo "RELEASE_VERSION=${release_version}"
+            echo "BUILD_NUMBER=${build_number}"
+            echo "RELEASE_ROOT=${RUNNER_TEMP}/mac-release"
+            echo "DIST_DIR=${RUNNER_TEMP}/mac-release/dist"
+            echo "DMG_NAME=Hermex-${release_version}-macOS-universal.dmg"
+            echo "CHECKSUM_NAME=Hermex-${release_version}-SHA256.txt"
+            echo "HERMEX_MAC_RELEASE_DIR=${RUNNER_TEMP}/mac-release"
+            echo "HERMEX_MAC_MARKETING_VERSION=${release_version}"
+            echo "HERMEX_MAC_BUILD_NUMBER=${build_number}"
+          } >> "${GITHUB_ENV}"
+
+      - name: Install Developer ID identity and profile
+        run: |
+          set -euo pipefail
+          p12_path="${RUNNER_TEMP}/Hermex-Developer-ID.p12"
+          profile_path="${RUNNER_TEMP}/Hermex-Mac.provisionprofile"
+          profile_plist="${RUNNER_TEMP}/Hermex-Mac-profile.plist"
+          keychain_path="${RUNNER_TEMP}/hermex-release.keychain-db"
+          keychain_password="$(openssl rand -hex 24)"
+
+          printf '%s' "${MAC_DEVELOPER_ID_P12_BASE64}" | /usr/bin/base64 -D > "${p12_path}"
+          printf '%s' "${MAC_PROVISIONING_PROFILE_BASE64}" | /usr/bin/base64 -D > "${profile_path}"
+
+          security create-keychain -p "${keychain_password}" "${keychain_path}"
+          security set-keychain-settings -lut 21600 "${keychain_path}"
+          security unlock-keychain -p "${keychain_password}" "${keychain_path}"
+          security import "${p12_path}" \
+            -k "${keychain_path}" \
+            -P "${MAC_DEVELOPER_ID_P12_PASSWORD}" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s \
+            -k "${keychain_password}" \
+            "${keychain_path}"
+          security list-keychains -d user -s \
+            "${keychain_path}" \
+            "${HOME}/Library/Keychains/login.keychain-db"
+
+          security cms -D -i "${profile_path}" > "${profile_plist}"
+          profile_uuid="$(/usr/libexec/PlistBuddy -c 'Print :UUID' "${profile_plist}")"
+          profile_directory="${HOME}/Library/MobileDevice/Provisioning Profiles"
+          installed_profile="${profile_directory}/${profile_uuid}.provisionprofile"
+          mkdir -p "${profile_directory}"
+          cp "${profile_path}" "${installed_profile}"
+
+          {
+            echo "RELEASE_KEYCHAIN_PATH=${keychain_path}"
+            echo "RELEASE_P12_PATH=${p12_path}"
+            echo "RELEASE_PROFILE_SOURCE=${profile_path}"
+            echo "RELEASE_PROFILE_PLIST=${profile_plist}"
+            echo "RELEASE_PROFILE_DESTINATION=${installed_profile}"
+          } >> "${GITHUB_ENV}"
+
+      - name: Write App Store Connect key
+        run: |
+          set -euo pipefail
+          key_path="${RUNNER_TEMP}/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8"
+          if [[ "${APP_STORE_CONNECT_PRIVATE_KEY}" == *"\\n"* ]]; then
+            printf '%s' "${APP_STORE_CONNECT_PRIVATE_KEY}" | perl -pe 's/\\n/\n/g' > "${key_path}"
+          else
+            printf '%s' "${APP_STORE_CONNECT_PRIVATE_KEY}" > "${key_path}"
+          fi
+          chmod 600 "${key_path}"
+          echo "APP_STORE_CONNECT_KEY_PATH=${key_path}" >> "${GITHUB_ENV}"
+
+      - name: Archive and export universal Mac app
+        run: scripts/archive-mac
+
+      - name: Notarize and staple app
+        run: scripts/notarize-mac "${RELEASE_ROOT}/export/Hermex.app"
+
+      - name: Package, notarize, and verify DMG
+        run: |
+          set -euo pipefail
+          mkdir -p "${DIST_DIR}"
+          dmg_path="${DIST_DIR}/${DMG_NAME}"
+          scripts/package-mac-dmg "${RELEASE_ROOT}/export/Hermex.app" "${dmg_path}"
+          scripts/notarize-mac "${dmg_path}"
+          scripts/verify-mac-dmg --notarized "${dmg_path}"
+          (
+            cd "${DIST_DIR}"
+            shasum -a 256 "${DMG_NAME}" > "${CHECKSUM_NAME}"
+          )
+
+      - name: Upload release candidates
+        uses: actions/upload-artifact@v7
+        with:
+          name: hermex-mac-${{ env.RELEASE_VERSION }}
+          path: |
+            ${{ env.DIST_DIR }}/${{ env.DMG_NAME }}
+            ${{ env.DIST_DIR }}/${{ env.CHECKSUM_NAME }}
+          if-no-files-found: error
+
+      - name: Create draft GitHub Release
+        run: |
+          set -euo pipefail
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "A GitHub Release already exists for ${RELEASE_TAG}; refusing to replace it." >&2
+            exit 1
+          fi
+
+          release_notes="$(printf '%s\n\n%s\n\n%s\n' \
+            'Hermex for Mac is a macOS-focused fork of the original Hermex iPhone client.' \
+            'Download the DMG, drag Hermex to Applications, and connect it to your self-hosted hermes-webui server. Requires macOS 15 or later; includes Apple silicon and Intel slices.' \
+            'Updates are manual in this release. Verify the download with the attached SHA-256 file.')"
+
+          gh release create "${RELEASE_TAG}" \
+            "${DIST_DIR}/${DMG_NAME}" \
+            "${DIST_DIR}/${CHECKSUM_NAME}" \
+            --draft \
+            --verify-tag \
+            --title "Hermex for Mac ${RELEASE_VERSION}" \
+            --notes "${release_notes}" \
+            --generate-notes
+
+      - name: Clean temporary signing material
+        if: always()
+        run: |
+          set +e
+          if [[ -n "${RELEASE_KEYCHAIN_PATH:-}" && -f "${RELEASE_KEYCHAIN_PATH}" ]]; then
+            security delete-keychain "${RELEASE_KEYCHAIN_PATH}"
+          fi
+          for path in \
+            "${RELEASE_P12_PATH:-}" \
+            "${RELEASE_PROFILE_SOURCE:-}" \
+            "${RELEASE_PROFILE_PLIST:-}" \
+            "${RELEASE_PROFILE_DESTINATION:-}" \
+            "${APP_STORE_CONNECT_KEY_PATH:-}"; do
+            if [[ -n "${path}" && -f "${path}" ]]; then
+              rm -f "${path}"
+            fi
+          done

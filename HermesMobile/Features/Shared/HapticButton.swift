@@ -21,6 +21,8 @@ enum HapticButtonHaptics {
     }
 
     static func perform(_ style: HapticButtonFeedbackStyle) {
+        guard PlatformCapabilities.supportsHaptics else { return }
+
         switch style {
         case .light:
             UIImpactFeedbackGenerator(style: .light).impactOccurred()

@@ -107,4 +107,100 @@ final class LocalizationCatalogTests: XCTestCase {
             }
         }
     }
+
+    func testNotificationPermissionTranslationsKeepAReplaceablePlatformName() throws {
+        let data = try Data(contentsOf: catalogURL())
+        let root = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let strings = try XCTUnwrap(root["strings"] as? [String: Any])
+        let platformSpecificKeys = [
+            "iOS notifications allowed.",
+            "iOS permission not requested.",
+            "iOS notifications disabled."
+        ]
+
+        for key in platformSpecificKeys {
+            XCTAssertEqual(
+                key.components(separatedBy: "iOS").count - 1,
+                1,
+                "The source key must contain exactly one replaceable iOS platform name."
+            )
+
+            let entry = try XCTUnwrap(strings[key] as? [String: Any], key)
+            let localizations = try XCTUnwrap(entry["localizations"] as? [String: Any], key)
+
+            for language in Self.shippedLanguages {
+                let localization = try XCTUnwrap(
+                    localizations[language] as? [String: Any],
+                    "[\(language)] \(key)"
+                )
+                let stringUnit = try XCTUnwrap(
+                    localization["stringUnit"] as? [String: Any],
+                    "[\(language)] \(key)"
+                )
+                let value = try XCTUnwrap(
+                    stringUnit["value"] as? String,
+                    "[\(language)] \(key)"
+                )
+
+                XCTAssertEqual(
+                    value.components(separatedBy: "iOS").count - 1,
+                    1,
+                    "[\(language)] \(key) must contain exactly one platform name so Catalyst can substitute Mac."
+                )
+            }
+        }
+    }
+
+    func testKanbanCardDetailCopyIsLocalizedInEveryShippedLanguage() throws {
+        let data = try Data(contentsOf: catalogURL())
+        let root = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let strings = try XCTUnwrap(root["strings"] as? [String: Any])
+        let detailKeys = [
+            "Card ID", "Comment", "Comment cannot be blank.", "Created", "Dependencies",
+            "Description", "Dispatch Runs", "Events", "Maximum Runtime", "Metadata",
+            "Operational History", "Operational Metadata", "Outcome Uncertain", "Priority",
+            "Run ID", "Updated", "Worker ID", "Worker Log",
+            "This Board no longer exists. Return to Kanban to choose another Board.",
+            "This Card no longer exists on this Board. The Board has been refreshed."
+        ]
+
+        for key in detailKeys {
+            let entry = try XCTUnwrap(strings[key] as? [String: Any], key)
+            let localizations = try XCTUnwrap(entry["localizations"] as? [String: Any], key)
+            for language in Self.shippedLanguages {
+                let localization = try XCTUnwrap(
+                    localizations[language] as? [String: Any],
+                    "[\(language)] \(key)"
+                )
+                XCTAssertTrue(hasNonEmptyValue(localization), "[\(language)] \(key) is empty")
+            }
+        }
+    }
+
+    func testKanbanCardEditorCopyIsLocalizedInEveryShippedLanguage() throws {
+        let data = try Data(contentsOf: catalogURL())
+        let root = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let strings = try XCTUnwrap(root["strings"] as? [String: Any])
+        let editorKeys = [
+            "Edit Card", "New Card", "Title", "Title is required.", "Assignment", "Execution",
+            "Prerequisite", "Create Ready, Unassigned Card?", "Reload Server Version",
+            "Move Card Out of Running?", "Moving this Card out of Running may clear its claim and worker state.",
+            "Review and Overwrite", "This Card changed on the server after the editor opened. Your draft has been preserved.",
+            "Workspace, Skills, Maximum Runtime, and Prerequisite are set when the Card is created and cannot be edited here."
+        ]
+
+        for key in editorKeys {
+            let entry = try XCTUnwrap(strings[key] as? [String: Any], key)
+            let localizations = try XCTUnwrap(entry["localizations"] as? [String: Any], key)
+            for language in Self.shippedLanguages {
+                let localization = try XCTUnwrap(
+                    localizations[language] as? [String: Any],
+                    "[\(language)] \(key)"
+                )
+                XCTAssertTrue(hasNonEmptyValue(localization), "[\(language)] \(key) is empty")
+                let translatedValue = (localization["stringUnit"] as? [String: Any])?["value"] as? String
+                XCTAssertNotEqual(translatedValue, key, "[\(language)] \(key) still uses the English source value")
+            }
+        }
+    }
 }

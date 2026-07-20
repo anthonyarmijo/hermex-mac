@@ -19,7 +19,8 @@ struct ComposerVoiceStatusView: View {
 
 /// The composer mic. A quick **tap** toggles on-device dictation (unchanged); a
 /// **press-and-hold** records a server-transcribed voice note, releasing to send
-/// and sliding up to cancel. Both paths run through a single
+/// and, on touch platforms, sliding up to cancel. Mac Catalyst always finishes
+/// on pointer release and provides a separate Cancel control. Both paths run through a single
 /// `DragGesture(minimumDistance: 0)`: touch-down schedules a `DispatchWorkItem`
 /// after the hold threshold, and a release before it fires cancels the item and
 /// counts as a tap → dictation. See `pressGesture` for why timing beats composing
@@ -35,20 +36,34 @@ struct ComposerVoiceControlButton: View {
     let onRecordingEnd: (CGFloat) -> Void
 
     @State private var isPressing = false
+    @State private var isHovering = false
     @State private var didTriggerRecording = false
     @State private var holdWorkItem: DispatchWorkItem?
 
     var body: some View {
-        Image(systemName: symbolName)
-            .font(.system(size: 18, weight: .regular))
-            .frame(width: 28, height: 28)
-            .chatMinimumHitTarget(in: Circle())
-            .foregroundStyle(isListening || isRecordingVoiceNote ? Color.red : color)
-            .scaleEffect(isRecordingVoiceNote ? 1.3 : 1)
-            .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isRecordingVoiceNote)
-            .contentShape(Circle())
+        HStack(spacing: 7) {
+            if showsPointerHint {
+                Text(pointerHint)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+            }
+
+            Image(systemName: symbolName)
+                .font(.system(size: 18, weight: .regular))
+                .frame(width: 28, height: 28)
+                .chatMinimumHitTarget(in: Circle())
+                .foregroundStyle(isListening || isRecordingVoiceNote ? Color.red : color)
+                .scaleEffect(isRecordingVoiceNote ? 1.3 : 1)
+                .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isRecordingVoiceNote)
+        }
+            .contentShape(Rectangle())
             .opacity(isDisabled && !isRecordingVoiceNote ? 0.4 : 1)
             .gesture(pressGesture)
+            .onHover { isHovering = $0 }
+            .animation(.easeInOut(duration: 0.16), value: showsPointerHint)
+            .help("Click to dictate. Hold to record a voice note, then release to finish.")
             .accessibilityLabel(accessibilityLabel)
             .accessibilityAddTraits(.isButton)
             .accessibilityAction {
@@ -63,6 +78,19 @@ struct ComposerVoiceControlButton: View {
                 // recording bar then exposes "Stop and send" / "Cancel" actions.
                 onRecordingStart()
             }
+    }
+
+    private var showsPointerHint: Bool {
+        PlatformCapabilities.isMacCatalyst
+            && !isListening
+            && !isRecordingVoiceNote
+            && (isHovering || isPressing)
+    }
+
+    private var pointerHint: String {
+        isPressing
+            ? String(localized: "Keep holding to record...")
+            : String(localized: "Click: dictate · Hold: voice note")
     }
 
     private var symbolName: String {
@@ -88,7 +116,7 @@ struct ComposerVoiceControlButton: View {
                     isPressing = true
                     scheduleRecordingStart()
                 }
-                if isRecordingVoiceNote {
+                if isRecordingVoiceNote, PlatformCapabilities.supportsSlideToCancelVoiceNotes {
                     onRecordingDragChanged(value.translation.height)
                 }
             }
@@ -99,7 +127,11 @@ struct ComposerVoiceControlButton: View {
                 didTriggerRecording = false
 
                 if triggered {
-                    onRecordingEnd(value.translation.height)
+                    onRecordingEnd(
+                        PlatformCapabilities.supportsSlideToCancelVoiceNotes
+                            ? value.translation.height
+                            : 0
+                    )
                 } else if !isDisabled {
                     onTap()
                 }
@@ -126,8 +158,8 @@ struct ComposerVoiceControlButton: View {
 }
 
 /// Telegram-style indicator shown above the composer while a voice note records:
-/// a pulsing red dot, an `m:ss` timer, and a slide-to-cancel hint that turns red
-/// once the cancel threshold is armed. Exposes explicit VoiceOver actions because
+/// a pulsing red dot, an `m:ss` timer, and platform-appropriate finish/cancel
+/// guidance. Exposes explicit VoiceOver actions because
 /// the hold-to-talk gesture isn't reachable with VoiceOver on.
 struct ComposerVoiceRecordingBar: View {
     let elapsed: TimeInterval
@@ -148,14 +180,24 @@ struct ComposerVoiceRecordingBar: View {
 
             Spacer(minLength: 8)
 
-            Label(
-                isCancelArmed
-                    ? String(localized: "Release to cancel")
-                    : String(localized: "Slide up to cancel"),
-                systemImage: isCancelArmed ? "xmark.circle.fill" : "chevron.up"
-            )
-            .font(.caption)
-            .foregroundStyle(isCancelArmed ? Color.red : Color.secondary)
+            if PlatformCapabilities.supportsSlideToCancelVoiceNotes {
+                Label(
+                    isCancelArmed
+                        ? String(localized: "Release to cancel")
+                        : String(localized: "Slide up to cancel"),
+                    systemImage: isCancelArmed ? "xmark.circle.fill" : "chevron.up"
+                )
+                .font(.caption)
+                .foregroundStyle(isCancelArmed ? Color.red : Color.secondary)
+            } else {
+                Label("Release to finish voice note", systemImage: "hand.point.up.left.fill")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+
+                Button("Cancel", action: onCancel)
+                    .buttonStyle(.borderless)
+                    .font(.caption.weight(.semibold))
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)

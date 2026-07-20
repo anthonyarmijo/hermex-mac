@@ -9,7 +9,8 @@ struct AppIconSettingsSection: View {
     @State private var isAppIconPickerExpanded = false
 
     var body: some View {
-        if UIApplication.shared.supportsAlternateIcons {
+        if PlatformCapabilities.supportsAlternateAppIcons,
+           UIApplication.shared.supportsAlternateIcons {
             VStack(alignment: .leading, spacing: 12) {
                 DisclosureGroup(isExpanded: $isAppIconPickerExpanded) {
                     appIconChoices

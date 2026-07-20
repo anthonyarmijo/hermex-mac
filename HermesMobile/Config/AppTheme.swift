@@ -41,6 +41,106 @@ enum AppTheme: String, CaseIterable, Identifiable {
     }
 }
 
+/// App-specific sizing for the Mac interface. Semantic fonts consume the
+/// Dynamic Type size while fixed-size artwork and Markdown consume `layoutScale`.
+/// Keeping both values here makes each choice visibly distinct without changing
+/// the iPhone or iPad presentation.
+enum MacInterfaceSize: String, CaseIterable, Identifiable {
+    case standard
+    case large
+    case extraLarge
+
+    static let storageKey = "appearance.macInterfaceSize"
+    static let defaultValue: MacInterfaceSize = .large
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .standard:
+            String(localized: "Standard")
+        case .large:
+            String(localized: "Large")
+        case .extraLarge:
+            String(localized: "Extra Large")
+        }
+    }
+
+    var dynamicTypeSize: DynamicTypeSize {
+        switch self {
+        case .standard:
+            .large
+        case .large:
+            .xLarge
+        case .extraLarge:
+            .xxxLarge
+        }
+    }
+
+    /// Catalyst still has UIKit-backed controls that read the older content-size
+    /// category instead of SwiftUI's `dynamicTypeSize` environment value.
+    var contentSizeCategory: ContentSizeCategory {
+        switch self {
+        case .standard:
+            .large
+        case .large:
+            .extraLarge
+        case .extraLarge:
+            .extraExtraExtraLarge
+        }
+    }
+
+    var layoutScale: CGFloat {
+        switch self {
+        case .standard:
+            1
+        case .large:
+            1.12
+        case .extraLarge:
+            1.28
+        }
+    }
+
+    static func storedValue(_ rawValue: String) -> MacInterfaceSize {
+        MacInterfaceSize(rawValue: rawValue) ?? defaultValue
+    }
+}
+
+/// A single observable preference shared by the main and Settings scenes.
+/// `@AppStorage` values in separate Catalyst scenes persist correctly but do
+/// not reliably invalidate the other scene, which made the picker appear inert.
+@MainActor
+@Observable
+final class MacInterfacePreferences {
+    static let shared = MacInterfacePreferences()
+
+    private let defaults: UserDefaults
+    var size: MacInterfaceSize {
+        didSet {
+            defaults.set(size.rawValue, forKey: MacInterfaceSize.storageKey)
+        }
+    }
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        size = MacInterfaceSize.storedValue(
+            defaults.string(forKey: MacInterfaceSize.storageKey)
+                ?? MacInterfaceSize.defaultValue.rawValue
+        )
+    }
+}
+
+private struct MacInterfaceScaleKey: EnvironmentKey {
+    static let defaultValue: CGFloat = 1
+}
+
+extension EnvironmentValues {
+    var macInterfaceScale: CGFloat {
+        get { self[MacInterfaceScaleKey.self] }
+        set { self[MacInterfaceScaleKey.self] = newValue }
+    }
+}
+
 struct HeaderLogoColorPreset: Identifiable, Equatable {
     let name: String
     let hex: String

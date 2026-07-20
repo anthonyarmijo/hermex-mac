@@ -22,6 +22,7 @@ struct ChatTranscriptView: View {
     let isRespondingToClarification: Bool
     let clarificationErrorMessage: String?
     let hidesRunStatusAccessibility: Bool
+    let keepsComposerFocusedOnInteraction: Bool
     let showsThinkingAndToolCards: Bool
     let showsAssistantTypingIndicator: Bool
     let showsScrollToBottomButton: Bool
@@ -120,6 +121,16 @@ struct ChatTranscriptView: View {
                             contentWidth: contentWidth
                         )
                     }
+                    .defaultScrollAnchor(
+                        ChatScrollPolicy.initialTranscriptAnchor,
+                        for: .initialOffset
+                    )
+                    .defaultScrollAnchor(
+                        ChatScrollPolicy.sizeChangeAnchor(
+                            shouldFollowLatestMessage: shouldFollowLatestMessage
+                        ),
+                        for: .sizeChanges
+                    )
                     .frame(width: viewportWidth)
                     .refreshable {
                         if hasOlderMessages {
@@ -128,7 +139,9 @@ struct ChatTranscriptView: View {
                             await onLoadMessages()
                         }
                     }
-                    .scrollDismissesKeyboard(.interactively)
+                    .scrollDismissesKeyboard(
+                        keepsComposerFocusedOnInteraction ? .never : .interactively
+                    )
                     .safeAreaInset(edge: .bottom, spacing: 0) {
                         Color.clear
                             .frame(height: transcriptBottomInsetHeight)
@@ -154,9 +167,6 @@ struct ChatTranscriptView: View {
                 }
                 .animation(ChatMotion.quickState(reduceMotion: reduceMotion), value: showsScrollToBottomButton)
                 .background(Color(.systemBackground))
-                .onAppear {
-                    onScrollToLatestContent(proxy, false)
-                }
                 .onChange(of: messages.count) {
                     guard shouldFollowLatestMessage else { return }
 

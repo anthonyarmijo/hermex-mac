@@ -89,7 +89,7 @@ class TestFlightBuildNumberSelectorTest < Minitest::Test
         {
           "id" => "app-123",
           "attributes" => {
-            "bundleId" => "com.uzairansar.hermesmobile"
+            "bundleId" => "com.anthonyarmijo.hermex"
           }
         }
       ]
@@ -97,11 +97,11 @@ class TestFlightBuildNumberSelectorTest < Minitest::Test
 
     assert_equal(
       "app-123",
-      selector.send(:app_id_for_bundle_id, "com.uzairansar.hermesmobile")
+      selector.send(:app_id_for_bundle_id, "com.anthonyarmijo.hermex")
     )
 
     assert_equal("/v1/apps", captured.first.first)
-    assert_equal("com.uzairansar.hermesmobile", captured.first.last.fetch("filter[bundleId]"))
+    assert_equal("com.anthonyarmijo.hermex", captured.first.last.fetch("filter[bundleId]"))
     refute_includes(captured.first.last.keys, "filter[platform]")
   end
 

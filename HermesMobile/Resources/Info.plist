@@ -33,6 +33,10 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+#ifdef HERMEX_MACCATALYST
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.productivity</string>
+#endif
 	<key>HermesAppGroupIdentifier</key>
 	<string>$(APP_GROUP_IDENTIFIER)</string>
 	<key>HermesKeychainService</key>
@@ -58,14 +62,20 @@
 	<string>Hermex needs photo library access to attach images to chat messages.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>Hermex needs permission to save exported workspace images to Photos.</string>
+#ifndef HERMEX_MACCATALYST
 	<key>NSSupportsLiveActivities</key>
 	<true/>
+#endif
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Hermex uses speech recognition to turn dictated audio into editable draft text.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
+		#ifdef HERMEX_MACCATALYST
+		<true/>
+		#else
 		<false/>
+		#endif
 	</dict>
 	<key>UIBackgroundModes</key>
 	<array>

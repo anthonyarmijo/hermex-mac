@@ -1,6 +1,9 @@
-import ActivityKit
 import Foundation
 import OSLog
+
+#if !targetEnvironment(macCatalyst)
+import ActivityKit
+#endif
 
 private let liveActivityReconcilerLogger = Logger(
     subsystem: Bundle.main.bundleIdentifier ?? "HermesMobile",
@@ -55,6 +58,41 @@ extension AgentLiveActivityManaging {
     func endOrphanedActivity(streamID: String, status: AgentRunActivityStatus, activity: String) async -> Bool { false }
 }
 
+#if targetEnvironment(macCatalyst)
+/// Catalyst has no ActivityKit runtime. Keeping the platform decision behind the
+/// existing protocol lets chat and stream coordination remain fully shared.
+@MainActor
+final class AgentLiveActivityManager: AgentLiveActivityManaging {
+    static let shared = AgentLiveActivityManager()
+
+    private(set) var activeConnectedStreamID: String?
+
+    init(minimumUpdateInterval: TimeInterval = 1.5) {
+        _ = minimumUpdateInterval
+    }
+
+    func start(sessionID: String, sessionTitle: String, streamID: String?) {
+        _ = sessionID
+        _ = sessionTitle
+        activeConnectedStreamID = AgentLiveActivityReusePolicy.normalizedStreamID(streamID)
+    }
+
+    func update(_ event: AgentLiveActivityEvent) {
+        _ = event
+    }
+
+    func markStale() {
+        activeConnectedStreamID = nil
+    }
+
+    func end(status: AgentRunActivityStatus, activity: String, errorSummary: String? = nil) {
+        _ = status
+        _ = activity
+        _ = errorSummary
+        activeConnectedStreamID = nil
+    }
+}
+#else
 @MainActor
 final class AgentLiveActivityManager: AgentLiveActivityManaging {
     static let shared = AgentLiveActivityManager()
@@ -511,6 +549,7 @@ final class AgentLiveActivityManager: AgentLiveActivityManaging {
         reset()
     }
 }
+#endif
 
 // MARK: - Orphaned Live Activity reconciliation (#246)
 

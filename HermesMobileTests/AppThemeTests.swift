@@ -14,6 +14,41 @@ final class AppThemeTests: XCTestCase {
         XCTAssertEqual(AppTheme.dark.colorScheme, .dark)
     }
 
+    func testMacInterfaceSizeDefaultsToSlightlyLargerPresentation() {
+        XCTAssertEqual(MacInterfaceSize.defaultValue, .large)
+        XCTAssertEqual(MacInterfaceSize.standard.dynamicTypeSize, .large)
+        XCTAssertEqual(MacInterfaceSize.large.dynamicTypeSize, .xLarge)
+        XCTAssertEqual(MacInterfaceSize.extraLarge.dynamicTypeSize, .xxxLarge)
+        XCTAssertEqual(MacInterfaceSize.standard.contentSizeCategory, .large)
+        XCTAssertEqual(MacInterfaceSize.large.contentSizeCategory, .extraLarge)
+        XCTAssertEqual(MacInterfaceSize.extraLarge.contentSizeCategory, .extraExtraExtraLarge)
+        XCTAssertEqual(MacInterfaceSize.standard.layoutScale, 1)
+        XCTAssertEqual(MacInterfaceSize.large.layoutScale, 1.12)
+        XCTAssertEqual(MacInterfaceSize.extraLarge.layoutScale, 1.28)
+    }
+
+    func testMacInterfaceSizeStoredValueFallsBackToLarge() {
+        XCTAssertEqual(MacInterfaceSize.storedValue("standard"), .standard)
+        XCTAssertEqual(MacInterfaceSize.storedValue("unexpected"), .large)
+    }
+
+    @MainActor
+    func testMacInterfacePreferencesPersistChangesImmediately() {
+        let suiteName = "MacInterfacePreferencesTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(MacInterfaceSize.standard.rawValue, forKey: MacInterfaceSize.storageKey)
+
+        let preferences = MacInterfacePreferences(defaults: defaults)
+        XCTAssertEqual(preferences.size, .standard)
+
+        preferences.size = .extraLarge
+        XCTAssertEqual(
+            defaults.string(forKey: MacInterfaceSize.storageKey),
+            MacInterfaceSize.extraLarge.rawValue
+        )
+    }
+
     func testHeaderLogoColorNormalizesStoredHexValues() {
         XCTAssertEqual(HeaderLogoColor.normalizedHex("#5b7cff"), "#5B7CFF")
         XCTAssertEqual(HeaderLogoColor.normalizedHex(" ff3b30 "), "#FF3B30")

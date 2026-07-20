@@ -372,6 +372,7 @@ final class AuthManager {
     private func clearLocalArtifacts(for server: URL) {
         try? keychain.delete(.customHeaders, scope: server.absoluteString)
         clearSessionCookies(for: server)
+        SessionDraftPersistence.removeAll(for: server)
     }
 
     /// Tells the server to end the session, but never lets an unreachable or

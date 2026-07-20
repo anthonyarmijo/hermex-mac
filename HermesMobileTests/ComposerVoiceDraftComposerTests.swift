@@ -4,10 +4,52 @@ import XCTest
 @testable import HermesMobile
 
 final class ComposerVoiceDraftComposerTests: XCTestCase {
-    func testComposerSendKeyboardCommandIsDiscoverableCommandReturn() {
+    func testComposerSendKeyboardCommandsMatchPlatformConventions() {
         XCTAssertEqual(ComposerKeyboardCommand.title, "Send Message")
+        XCTAssertEqual(ComposerKeyboardCommand.newlineTitle, "Insert Line Break")
         XCTAssertEqual(ComposerKeyboardCommand.input, "\r")
-        XCTAssertEqual(ComposerKeyboardCommand.modifierFlags, .command)
+        #if targetEnvironment(macCatalyst)
+        XCTAssertEqual(ComposerKeyboardCommand.modifierFlags, [[], .command])
+        XCTAssertEqual(ComposerKeyboardCommand.newlineModifierFlags, .shift)
+        XCTAssertTrue(ComposerKeyboardCommand.newlineWantsPriorityOverSystemBehavior)
+        XCTAssertTrue(ComposerKeyboardCommand.wantsPriorityOverSystemBehavior(for: []))
+        #else
+        XCTAssertEqual(ComposerKeyboardCommand.modifierFlags, [.command])
+        XCTAssertNil(ComposerKeyboardCommand.newlineModifierFlags)
+        XCTAssertFalse(ComposerKeyboardCommand.newlineWantsPriorityOverSystemBehavior)
+        XCTAssertFalse(ComposerKeyboardCommand.wantsPriorityOverSystemBehavior(for: []))
+        #endif
+        XCTAssertFalse(ComposerKeyboardCommand.wantsPriorityOverSystemBehavior(for: .command))
+        XCTAssertFalse(ComposerKeyboardCommand.wantsPriorityOverSystemBehavior(for: .shift))
+    }
+
+    func testComposerFocusPolicyKeepsExistingMacChatsLive() {
+        XCTAssertTrue(ComposerFocusPolicy.shouldAutoFocusOnAppearance(hasMessages: true, isMacCatalyst: true))
+        XCTAssertTrue(ComposerFocusPolicy.keepsFocusDuringTranscriptInteraction(isMacCatalyst: true))
+        XCTAssertTrue(
+            ComposerFocusPolicy.shouldRestoreAfterTemporaryInput(
+                wasComposerFocused: false,
+                isMacCatalyst: true
+            )
+        )
+    }
+
+    func testComposerFocusPolicyPreservesMobileDismissalBehavior() {
+        XCTAssertFalse(ComposerFocusPolicy.shouldAutoFocusOnAppearance(hasMessages: true, isMacCatalyst: false))
+        XCTAssertTrue(ComposerFocusPolicy.shouldAutoFocusOnAppearance(hasMessages: false, isMacCatalyst: false))
+        XCTAssertFalse(ComposerFocusPolicy.keepsFocusDuringTranscriptInteraction(isMacCatalyst: false))
+        XCTAssertFalse(
+            ComposerFocusPolicy.shouldRestoreAfterTemporaryInput(
+                wasComposerFocused: false,
+                isMacCatalyst: false
+            )
+        )
+        XCTAssertTrue(
+            ComposerFocusPolicy.shouldRestoreAfterTemporaryInput(
+                wasComposerFocused: true,
+                isMacCatalyst: false
+            )
+        )
     }
 
     func testComposedDraftUsesTranscriptWhenDraftIsEmpty() {

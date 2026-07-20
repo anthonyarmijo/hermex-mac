@@ -1,15 +1,15 @@
-# Hermex — iOS App Project Specification
+# Hermex — Apple Platforms App Project Specification
 
-**Status:** v0.4 spec — revised pre-polish plan with a glass-forward native mobile UI direction
+**Status:** v0.5 spec — iPhone product plus Mac Catalyst daily-driver support
 **Author:** Project owner + planning assistant
-**Target:** Native iOS client for the [`nesquena/hermes-webui`](https://github.com/nesquena/hermes-webui) Python server
+**Target:** Native iOS and Mac Catalyst client for the [`nesquena/hermes-webui`](https://github.com/nesquena/hermes-webui) Python server
 **Audience:** A coding agent tasked with building the app, plus the human owner reviewing it
 
 ---
 
 ## 0. How to use this document
 
-You (the coding agent) are building a native iOS app called **Hermex** in App Store Connect. The Xcode target remains `HermesMobile`; the iPhone home-screen display name is `Hermex`. You are NOT modifying the upstream `nesquena/hermes-webui` Python server in this project. You are building a separate Swift/SwiftUI iOS application that talks to that server over HTTPS.
+You (the coding agent) are building a native Apple-platform app called **Hermex**. The Xcode target remains `HermesMobile`; the iPhone home-screen and Mac app names are `Hermex`. You are NOT modifying the upstream `nesquena/hermes-webui` Python server in this project. You are building a separate Swift/SwiftUI client that talks to that server over HTTPS.
 
 Treat each section's checkboxes as your work plan. After every milestone, update the `## Progress log` at the bottom.
 
@@ -20,7 +20,7 @@ If anything in this spec is ambiguous, **stop and ask the human owner before gue
 ## 1. Project summary
 
 ### 1.1 What we're building
-A native iOS app (SwiftUI, iOS 18+, iPhone only) that lets the user drive a self-hosted Hermes AI agent from their phone. The user runs the `hermes-webui` Python server on a machine they control and connects from the phone via Cloudflare Tunnel (or Tailscale).
+A native SwiftUI app for iPhone (iOS 18+) and Mac Catalyst (macOS 15+) that lets the user drive a self-hosted Hermes AI agent. The user runs the `hermes-webui` Python server on a machine they control and connects from the app via Cloudflare Tunnel, Tailscale, or localhost during Mac development.
 
 ### 1.2 What it is NOT
 - ❌ Not a webview wrapper around the existing browser UI.
@@ -29,15 +29,15 @@ A native iOS app (SwiftUI, iOS 18+, iPhone only) that lets the user drive a self
 
 ### 1.3 Why it exists
 The `hermes-webui` browser UI works on mobile via Cloudflare Tunnel/Tailscale, but a native client gives:
-- A real iOS app icon, lifecycle, and Keychain-backed auth.
+- A real Apple-platform app icon, lifecycle, and Keychain-backed auth.
 - Native streaming chat with proper SwiftUI rendering (no PWA quirks).
 - Offline read-only cache of recent sessions.
 - Foundation for native completion notifications and future out-of-app status surfaces.
 
 ### 1.4 Product mental model
-Think of the app as a mobile cockpit for an agent that lives somewhere else.
+Think of the app as a native cockpit for an agent that lives somewhere else.
 
-The phone is not the compute plane. The phone is the control plane and review surface: start or continue work, watch streaming progress, steer or stop a run, inspect files and outputs, recover context while away from the desktop, and avoid dangerous write/admin surfaces until the mobile UX is explicit and safe.
+The client device is not the compute plane. Hermex is the control plane and review surface: start or continue work, watch streaming progress, steer or stop a run, inspect files and outputs, recover context away from the server, and avoid dangerous write/admin surfaces until the UX is explicit and safe.
 
 The server owns execution. The app owns mobile interaction quality.
 
@@ -62,13 +62,13 @@ The server owns execution. The app owns mobile interaction quality.
 | 2 | Hosting models documented | **Cloudflare Tunnel (primary)** and **Tailscale (secondary)** |
 | 3 | Upstream strategy | **Pin to upstream tags** for v1; revisit forking later if API churn becomes painful |
 | 4 | Auth method | **Password only** for v1 (no OAuth) |
-| 5 | Target | iOS 18+, iPhone only, portrait + landscape |
-| 6 | Distribution | **TestFlight first**, App Store later |
+| 5 | Target | iOS 18+ on iPhone, portrait + landscape; macOS 15+ through Mac Catalyst |
+| 6 | Distribution | iPhone: **TestFlight first**, App Store later; Mac: universal Developer ID build, notarized before distribution |
 | 7 | Push notifications | **Skip for v1** |
 | 8 | Terminal feature | **Skip for v1** |
 | 9 | Offline behavior | **Read-only cache** of session list and recent messages |
-| 10 | App name | **Hermex** in App Store Connect; iPhone display name **Hermex**; Xcode target remains `HermesMobile` |
-| 11 | Apple Developer account | **Enrolled** — Team ID `6GYD9C9N6R`; bundle ID `com.uzairansar.hermesmobile`; SKU `hermes-mobile-ios` |
+| 10 | App name | **Hermex** in App Store Connect; iPhone and Mac display name **Hermex**; Xcode target remains `HermesMobile` |
+| 11 | Apple identifiers | iPhone bundle ID `com.anthonyarmijo.hermex`, SKU `hermes-mobile-ios`; Mac bundle ID and Keychain service `com.anthonyarmijo.hermex.mac` |
 
 ---
 
@@ -349,7 +349,7 @@ Each phase ends in a working, committable state. Run on the simulator after ever
 
 ### Phase 0 — Setup (½ day)
 - [x] Create new GitHub repo (ask owner for the name; default `hermes-mobile`).
-- [x] Initialize Xcode project: SwiftUI App, iOS 17, Swift 5.9+, name `HermesMobile`, initial placeholder bundle ID later replaced by `com.uzairansar.hermesmobile`.
+- [x] Initialize Xcode project: SwiftUI App, iOS 17, Swift 5.9+, name `HermesMobile`, bundle ID `com.anthonyarmijo.hermex`.
 - [x] Add this `PROJECT_SPEC.md` to the repo root.
 - [x] Add SwiftPM dependencies: LDSwiftEventSource, swift-markdown-ui, Splash, Highlightr, KeychainAccess.
 - [x] Add `.gitignore` (Xcode template), commit.
@@ -666,8 +666,8 @@ Each phase ends in a working, committable state. Run on the simulator after ever
 
 ### Phase 13 — TestFlight prep (½ day)
 - [x] **Owner creates Apple Developer account** ($99/yr).
-- [x] Configure signing in Xcode for Team ID `6GYD9C9N6R`.
-- [x] Create App Store Connect app record: `Hermex`, bundle ID `com.uzairansar.hermesmobile`, SKU `hermes-mobile-ios`.
+- [x] Configure signing in Xcode for Team ID `8UV3BJB6XS`.
+- [x] Create App Store Connect app record: `Hermex`, bundle ID `com.anthonyarmijo.hermex`, SKU `hermes-mobile-ios`.
 - [x] Answer export compliance: `None of the algorithms mentioned above`; repo declares `ITSAppUsesNonExemptEncryption = NO`.
 - [x] Add internal TestFlight path for the owner first.
 - [x] Document the install/release process in `DEVELOPMENT.md`.
@@ -799,7 +799,7 @@ These are useful directions, not approved v1 scope. Before implementing any item
 Stop and ask before guessing:
 
 1. **Repo name** for the new iOS project. ~~Default suggestion: `hermes-mobile`.~~ **Answered: `hermes-mobile`**.
-2. **Bundle ID** — **Answered:** `com.uzairansar.hermesmobile`.
+2. **Bundle ID** — **Answered:** `com.anthonyarmijo.hermex`.
 3. **App icon / branding** — **Answered:** owner supplied light and dark Hermes icon assets for v1; App Store Connect name is `Hermex`.
 4. **Crash reporting** — Firebase Crashlytics or skip for v1?
 5. **Privacy policy URL** — required for App Store. Owner needs to provide one (a simple GitHub Pages page is fine).
@@ -841,3 +841,263 @@ APP_VERSION / APP_BUILD:
   read MARKETING_VERSION / CURRENT_PROJECT_VERSION from
   `HermesMobile.xcodeproj/project.pbxproj`.
 ```
+
+---
+
+## 17. Kanban implementation specification
+
+### 17.1 Scope and authority
+
+Hermex will provide native iPhone functional parity with every user-facing Kanban
+capability in the verified Hermes WebUI baseline. Visual parity is not required. The
+native interaction model, accessibility behavior, and safety boundaries in this
+section are normative even where they differ from the desktop WebUI.
+
+The compatibility baseline is the maintainer's authenticated running WebUI at commit
+`d4e80b45498a914ce67e6b976145804638a46caf`. Its `api/kanban_bridge.py` is byte-for-byte
+identical to pinned upstream commit
+`2f3e42dc649e6d2bae572a0655681d9bb212c78d`. The official Hermes Bridge API
+documentation intentionally omits Kanban internals, so Hermex makes no version-range
+promise for this feature. Compatibility is capability-based and must be revalidated
+after a material upstream bridge change.
+
+The canonical rationale and evidence are:
+
+- [Inventory the upstream Kanban domain and API contract](https://github.com/uzairansaruzi/hermex/issues/140)
+- [Map Kanban integration constraints in Hermex](https://github.com/uzairansaruzi/hermex/issues/141)
+- [Verify authenticated Kanban wire responses on the running server](https://github.com/uzairansaruzi/hermex/issues/146)
+- [Choose Hermex's Kanban domain vocabulary](https://github.com/uzairansaruzi/hermex/issues/148)
+- [Choose Hermex's Kanban compatibility boundary](https://github.com/uzairansaruzi/hermex/issues/147)
+- [Choose Kanban mutation, conflict, and failure semantics](https://github.com/uzairansaruzi/hermex/issues/143)
+- [Choose the native iPhone Kanban interaction model](https://github.com/uzairansaruzi/hermex/issues/142)
+
+Use the Kanban vocabulary in root `CONTEXT.md`. In particular, upstream `task` and
+`task_id` remain network-boundary names; user-facing and Swift domain names use Card
+and a `Kanban` qualifier.
+
+### 17.2 Compatibility handshake and capability boundaries
+
+Before showing live Kanban data, Hermex must perform this non-mutating handshake:
+
+1. `GET /api/kanban/config`
+2. `GET /api/kanban/boards`
+3. `GET /api/kanban/board?board=<server-reported-current-slug>`
+
+Every upstream wire-model property is optional, unknown fields are ignored, and
+decoding is followed by capability-specific semantic validation. Hermex must not
+infer missing Board identity, current Board, Card identity, Card Status, dependency
+direction, or mutation outcome. An unknown Status remains visible as an unsupported
+server value and disables mutations for that Card.
+
+Failure of the core read contract makes Kanban unavailable but does not hide its
+normal navigation entry after release. Authentication, network reachability, server
+failure, and incompatible-contract states remain distinguishable and offer Retry.
+SSE failure degrades to event polling. A missing or incompatible write disables only
+that capability for the current server session when browsing remains safe. Partial
+compatibility is disclosed persistently and unavailable controls explain why.
+
+Capability probes must never mutate state, Preview Dispatch, or Run Dispatcher. They
+must never try speculative paths, renamed fields, or alternate payload shapes.
+
+### 17.3 Verified HTTP surface
+
+All requests use the existing authenticated `URLSession` cookie jar and configured
+custom proxy headers. Native requests do not add `Authorization`, `Origin`, or
+`Referer`. JSON routes are expected to return `application/json`; SSE is expected to
+return `text/event-stream`. Each implementation slice must re-check its exact request
+and response shape against the running server, then the latest official API docs, then
+the pinned upstream source, in the precedence required by `AGENTS.md`.
+
+| Capability | Verified method and path | Required contract notes |
+|---|---|---|
+| Configuration | `GET /api/kanban/config` | Columns, Profiles/counts, defaults, grouping/archive/Markdown flags, and `read_only`. Hermex reads but never writes the server-global grouping setting. |
+| Boards | `GET /api/kanban/boards` | Board metadata/counts, `current`, and `read_only`. Never surface `db_path` in normal UI or logs. |
+| Board snapshot | `GET /api/kanban/board` | `board`, Profile/tenant/archive filters, and optional event cursor; full `changed:true` or minimal `changed:false` envelope. |
+| Stats and Profiles | `GET /api/kanban/stats`, `GET /api/kanban/assignees` | Stats tolerate the older minimal shape. WebUI-parity UI uses total and per-Status counts. |
+| Events | `GET /api/kanban/events`, `GET /api/kanban/events/stream` | Cursor-based polling and SSE resume. SSE begins with `hello`, then `events`; reconnect when Board changes. |
+| Card detail | `GET /api/kanban/tasks/{id}` | Card, comments, events, prerequisite/dependent links, Dispatch Runs, and `read_only`. |
+| Worker log | `GET /api/kanban/tasks/{id}/log` | Tail is a byte limit; show log content only in an explicit Card operational-history surface. |
+| Create Card | `POST /api/kanban/tasks` | Required title; supported native fields are body, initial Triage/To Do/Ready Status, priority, Assigned Profile, tenant, workspace kind/path, skills, maximum runtime, one initial Prerequisite, idempotency key, and Board. |
+| Edit Card | `PATCH /api/kanban/tasks/{id}` | Title, body, tenant, priority, Assigned Profile, and permitted Status transition. Create-only fields remain visibly non-editable. Do not use the legacy `/patch` alias. |
+| Comments | `POST /api/kanban/tasks/{id}/comments` | Nonblank body; no edit/delete support. |
+| Block/Unblock | `POST /api/kanban/tasks/{id}/block`, `POST /api/kanban/tasks/{id}/unblock` | Preserve the structured server verbs and refusal errors. |
+| Dependencies | `POST /api/kanban/links`, `POST /api/kanban/links/delete` | Exact direction is Prerequisite `parent_id` to Dependent `child_id`. |
+| Bulk Actions | `POST /api/kanban/tasks/bulk` | Nonempty IDs with Archive, Status, Assigned Profile, or priority. HTTP 200 can contain per-Card failures and is never treated as atomic success. |
+| Dispatcher | `POST /api/kanban/dispatch` | `board`, `dry_run`, and `max` are query parameters; Board in JSON is ineffective. Hermex always uses maximum eight. |
+| Create Board | `POST /api/kanban/boards` | Slug plus name/description/icon/color. Hermex does not automatically make the new Board active. |
+| Edit/Archive Board | `PATCH /api/kanban/boards/{slug}`, `DELETE /api/kanban/boards/{slug}` | Slug is immutable. Archive uses DELETE without hard-delete query. Default Board cannot be archived. |
+| Make Active Board | `POST /api/kanban/boards/{slug}/switch` | Confirm because it changes shared server state visible to other Hermes clients. |
+
+Kanban Card assignment is scoped entirely to the Kanban contract. The assigned value
+is transported only in the Kanban `assignee` field, and assignment choices come from
+the Kanban config, Board snapshot, and assignee-history responses above. Creating,
+editing, filtering, or bulk-assigning Cards must never call `/api/profile/switch`,
+change the active chat Profile cookie, or source assignment state from that client-wide
+chat-profile selection.
+
+Hermex deliberately does not expose backend-only hard deletion, archived-Board
+enumeration/restoration, the global `PATCH /api/kanban/config` grouping mutation, the
+legacy Card patch alias, or unsupported task attachments. A single-title quick-create
+control is not required: New Card opens the complete native editor and preserves the
+full user capability.
+
+### 17.4 Native information architecture and interaction model
+
+Kanban is a distinct `SessionListUtilityDestination` constructed with the active
+server URL and centralized authentication-error handling. Browsing a Board is local
+to Hermex and never changes the server's active Board. Profile grouping is also a
+local presentation choice. Any persisted Board/filter/Status preference must be keyed
+by server; initial implementation may keep all Kanban navigation state transient.
+
+The selected interaction model is **Status Focus**:
+
+- a horizontally scrollable Status selector with counts;
+- one Status at a time as a vertical Card list;
+- Board switching in the header;
+- explicit search, Profile/tenant/archive/only-mine filters, and clear-filter state;
+- visible non-drag Move actions; drag may supplement but never replace them;
+- Select Cards mode with named Bulk Actions and a persistent selection count;
+- Card detail/editor navigation using native lists, forms, sheets, and toolbars;
+- adaptive monochrome utility controls, reserving meaningful color for Status;
+- Profile lanes available as a local grouping without mutating server configuration.
+
+Card summaries preserve ID, priority, tenant, title, Markdown-aware body preview,
+Assigned Profile/Unassigned, comment/dependency counts, age, and the verified WebUI
+staleness thresholds: Running at 10 minutes/1 hour, Ready at 1 hour, and Blocked at
+1 hour/24 hours. Running is visible but is never offered as a direct destination.
+
+Card detail preserves Markdown description, metadata, comments, events,
+Prerequisites/Dependents, Dispatch Runs, and explicitly requested worker-log content.
+Operational values such as filesystem paths, claim identifiers, worker identifiers,
+and raw payloads must not leak through generic errors, analytics, or logging.
+
+### 17.5 Mutation, concurrency, and recovery rules
+
+Ordinary reversible Card mutations are optimistic, show an Updating state, and are
+serialized per Card. Unrelated Cards may mutate concurrently. Board-wide operations
+(Bulk Actions, Archive Board, Make Active Board, and Run Dispatcher) prevent
+overlapping writes on the same Board. Server state is always authoritative.
+
+SSE, polling, and refresh snapshots must not overwrite a pending optimistic mutation.
+When a response contains sufficient authoritative state, apply it; otherwise refetch
+the affected Card or Board. There is no revision token or conflict guarantee.
+
+If a Card changed after its editor opened, preserve the draft and block ordinary Save.
+Offer Reload Server Version (confirm before discarding the draft) or Review and
+Overwrite. This is best-effort detection and must not be described as a guarantee.
+
+Require confirmation for:
+
+- Run Dispatcher, warning that it may start workers and consume API budget;
+- Archive Board, warning that Hermex cannot restore it in-app;
+- Archive Cards as a Bulk Action;
+- creating a Ready, Unassigned Card;
+- every transition out of Running, warning that claim/worker state may be cleared;
+- Make Active Board, warning that the change is shared with other Hermes clients.
+
+Do not require confirmation for ordinary edits, Preview Dispatch, ordinary Status
+changes, or a single Archive Card. After a successful single-Card archive, offer
+short-lived Undo to the immediately previous Status using the same reconciliation
+rules. Archived Cards remain available through an explicit filter.
+
+Reads may retry automatically. Writes and Run Dispatcher are never blindly retried.
+After timeout, disconnect, or malformed mutation response, show Checking Result and
+refetch canonical state. Report success if the intended result is present, offer Try
+Again if absent, or report Outcome Uncertain and require another refresh if still
+unknowable. Retrying Card creation reuses the original idempotency key.
+
+Bulk Actions are non-atomic. Refetch every selected Card before reporting results,
+keep successes committed, identify each Card needing attention, retain failed Cards
+as selected, and enable Retry Failed only after reconciliation. Never retry the whole
+original selection automatically.
+
+### 17.6 Live updates, offline behavior, and Dispatcher
+
+SSE is primary while Kanban is visible. Coalesce event bursts before refetching
+affected Board/Card state. After repeated stream failures, use 30-second event polling
+and show a subtle persistent **Live updates delayed** notice. Pull-to-refresh performs
+a full reload and retries SSE. Suspend live refresh in the background and reconcile
+immediately on foreground.
+
+When connectivity drops, preserve the in-memory snapshot, mark it
+**Offline—showing previously loaded data**, mark loaded detail stale, and disable all
+mutations, shared-state controls, and Dispatcher actions. Do not persist Kanban data
+for offline use in the initial implementation. Reconcile fully before re-enabling
+writes after reconnection.
+
+Preview Dispatch is advisory, timestamped, and may become stale. It is not required
+before Run Dispatcher. Preview and Run are single-flight per Board. Run Dispatcher
+uses maximum eight, is never automatically retried, and presents a persistent result
+summary after refetching the Board. Integration/manual testing must never run billable
+workers or mutate the maintainer's real Boards.
+
+### 17.7 Accessibility, localization, and error presentation
+
+Every slice owns its accessibility and localization; these are not final-pass cleanup.
+Support all shipped languages, plural Card counts, Dynamic Type without fixed Card
+heights, VoiceOver summaries and actions, 44-point practical hit targets, keyboard
+operation where applicable, Reduce Motion, light/dark appearance, and meaningful focus
+retention after move, archive, filtering, refresh, mutation failure, and editor
+dismissal. Movement, selection, and every Bulk Action must work without drag.
+
+Errors remain attached to the affected action or screen until resolved. Validation
+errors stay with their fields. Missing entities trigger reconciliation with explicit
+copy. Authentication uses the existing per-server login flow. Generic transport/server
+errors preserve known data and offer contextual Retry. Normal UI never exposes raw
+payloads, server filesystem paths, claim/worker identifiers, or operational logs via
+generic error text.
+
+### 17.8 Delivery, testing, and activation gates
+
+Incomplete Kanban must remain hidden from normal navigation on `master`. Intermediate
+slices are reachable only in Debug builds through `--kanban-lab`, following the
+existing Streaming Lab launch-argument pattern. The final parity slice removes the
+temporary gate and adds the normal Kanban utility destination only after all blockers
+and release evidence pass.
+
+Each slice must include:
+
+- exact endpoint method/path/query/body tests for the surface it adds;
+- minimal-envelope, unknown-field, unknown-Status, malformed-response, and semantic
+  validation tests appropriate to that capability;
+- view-model tests for stale responses, mutation serialization, reconciliation,
+  partial/ambiguous outcomes, and server isolation where applicable;
+- localized copy and accessibility semantics for every new UI state;
+- its focused XCTest suites, then the full XCTest suite before review;
+- a signed Debug simulator build and launch when UI changes.
+
+The dependency-ordered implementation slices are:
+
+1. hidden compatibility shell and Debug Kanban Lab;
+2. read-only Status Focus Board browsing;
+3. live updates and offline reconciliation;
+4. Card detail, comments, and operational history;
+5. Card creation and editing;
+6. Card workflow, dependency, and archive mutations;
+7. accessible selection and Bulk Actions;
+8. Board management and shared active-Board controls;
+9. Preview Dispatch and Run Dispatcher;
+10. final parity validation and normal-navigation activation.
+
+Owner validation is a required pre-publication gate for slices 2, 7, 9, and 10. The
+final gate also requires automated contract coverage for every supported request and
+response, mutation/Dispatcher request testing against an isolated seeded reference
+server without launching billable workers, authenticated read-only smoke testing on
+the maintainer's running server, the full XCTest suite, a signed simulator scenario
+pass, and owner validation of the complete experience on the release-test iPhone.
+
+The final manual scenario pass covers at minimum:
+
+- compatible, incompatible, authentication, offline, and partial-capability entry;
+- single/default and multi-Board switching without silently changing server state;
+- dense, empty, filtered-empty, loading, and error Board states;
+- every Status, unknown Status, local Profile grouping, search, and all filters;
+- Card create/edit, Ready-Unassigned warning, conflict choices, and creation retry;
+- explicit non-drag moves, Running exit, Block/Unblock, Complete, Archive, and Undo;
+- comments, Prerequisites/Dependents, Dispatch Runs, and worker-log access;
+- selection and each Bulk Action, including partial failure and Retry Failed;
+- Board create/edit/archive and confirmed Make Active Board;
+- Preview Dispatch, confirmed Run Dispatcher, stale preview, and persistent results;
+- SSE refresh, polling fallback, background/foreground reconciliation, and reconnect;
+- VoiceOver, accessibility Dynamic Type, Reduce Motion, light/dark appearance, and
+  focus retention across the mutation and navigation cases above.

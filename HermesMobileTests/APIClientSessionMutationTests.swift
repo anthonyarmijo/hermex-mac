@@ -204,7 +204,7 @@ final class APIClientSessionMutationTests: APIClientTestCase {
             let query = Dictionary(uniqueKeysWithValues: (components?.queryItems ?? []).map { ($0.name, $0.value) })
             XCTAssertEqual(query["session_id"], "copy123")
             XCTAssertEqual(query["messages"], "0")
-            XCTAssertNil(query["msg_limit"])
+            XCTAssertFalse(query.keys.contains("msg_limit"))
 
             return apiTestJSONResponse("""
             {

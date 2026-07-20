@@ -54,7 +54,7 @@ final class APIClientSessionDetailTests: APIClientTestCase {
             XCTAssertEqual(query["session_id"], "abc123")
             XCTAssertEqual(query["msg_limit"], "50")
             XCTAssertEqual(query["expand_renderable"], "1")
-            XCTAssertNil(query["msg_before"])
+            XCTAssertFalse(query.keys.contains("msg_before"))
 
             return apiTestJSONResponse("""
             { "session": { "session_id": "abc123" } }
@@ -74,7 +74,7 @@ final class APIClientSessionDetailTests: APIClientTestCase {
             let components = URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false)
             let query = Dictionary(uniqueKeysWithValues: (components?.queryItems ?? []).map { ($0.name, $0.value) })
             XCTAssertEqual(query["msg_before"], "100")
-            XCTAssertNil(query["expand_renderable"])
+            XCTAssertFalse(query.keys.contains("expand_renderable"))
 
             return apiTestJSONResponse("""
             { "session": { "session_id": "abc123" } }

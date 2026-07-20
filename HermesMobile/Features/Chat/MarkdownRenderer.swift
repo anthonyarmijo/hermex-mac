@@ -361,10 +361,15 @@ private struct ChatMarkdownView: View {
     let content: String
     let colorScheme: ColorScheme
     let isStreaming: Bool
+    @Environment(\.macInterfaceScale) private var macInterfaceScale
 
     var body: some View {
         Markdown(content)
-            .markdownTheme(MarkdownUI.Theme.chat(colorScheme: colorScheme, isStreaming: isStreaming))
+            .markdownTheme(MarkdownUI.Theme.chat(
+                colorScheme: colorScheme,
+                isStreaming: isStreaming,
+                baseFontSize: 16 * macInterfaceScale
+            ))
             .markdownTextStyle {
                 ForegroundColor(.primary)
                 BackgroundColor(nil)
@@ -1183,12 +1188,16 @@ private struct PlainMarkdownFallbackView: View {
 }
 
 private extension MarkdownUI.Theme {
-    static func chat(colorScheme: ColorScheme, isStreaming: Bool) -> MarkdownUI.Theme {
+    static func chat(
+        colorScheme: ColorScheme,
+        isStreaming: Bool,
+        baseFontSize: CGFloat
+    ) -> MarkdownUI.Theme {
         MarkdownUI.Theme.gitHub
             .text {
                 ForegroundColor(.primary)
                 BackgroundColor(nil)
-                FontSize(16)
+                FontSize(baseFontSize)
             }
             .code {
                 FontFamilyVariant(.monospaced)

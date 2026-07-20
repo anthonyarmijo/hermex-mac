@@ -1615,6 +1615,12 @@ final class ChatViewModelSendTests: XCTestCase {
         }
 
         viewModel.cleanupPollingTasks()
+
+        // Cancellation is cooperative: a mock request that already entered its
+        // handler may finish once. Let that in-flight work settle, then prove no
+        // polling task schedules another request across several intervals.
+        try await Task.sleep(nanoseconds: 150_000_000)
+
         let approvalCountAfterCleanup = approvalPendingRequests.count
         let clarificationCountAfterCleanup = clarificationPendingRequests.count
         let backgroundCountAfterCleanup = backgroundStatusRequests.count
@@ -3205,6 +3211,32 @@ final class ChatViewModelSendTests: XCTestCase {
         XCTAssertEqual(viewModel.messages.compactMap(\.content), ["Fresh question", "Fresh answer"])
         XCTAssertFalse(viewModel.isViewingCachedData)
         XCTAssertNil(viewModel.errorMessage)
+    }
+
+    @MainActor
+    func testPrepareInitialMessageLoadPrimesCacheWithoutStartingNetwork() throws {
+        let context = try makeContext()
+        let serverURL = try XCTUnwrap(URL(string: "https://example.test"))
+        try CacheStore.cacheMessages(
+            [
+                ChatMessage(role: "user", content: "Cached question", timestamp: 1_770_000_001, messageId: "cached-user"),
+                ChatMessage(role: "assistant", content: "Cached answer", timestamp: 1_770_000_002, messageId: "cached-assistant")
+            ],
+            serverURL: serverURL,
+            sessionID: "session-abc",
+            in: context
+        )
+
+        let viewModel = try makeViewModel { request in
+            XCTFail("Cache preparation must not start a request: \(request.url?.absoluteString ?? "nil")")
+            throw URLError(.badURL)
+        }
+
+        viewModel.prepareInitialMessageLoad(modelContext: context)
+
+        XCTAssertEqual(viewModel.messages.compactMap(\.content), ["Cached question", "Cached answer"])
+        XCTAssertTrue(viewModel.isLoading)
+        XCTAssertFalse(viewModel.isViewingCachedData)
     }
 
     @MainActor

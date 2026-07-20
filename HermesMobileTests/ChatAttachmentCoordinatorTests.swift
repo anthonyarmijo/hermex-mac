@@ -364,6 +364,74 @@ final class ChatAttachmentCoordinatorTests: APIClientTestCase {
     }
 }
 
+@MainActor
+final class PastedAttachmentLoaderTests: XCTestCase {
+    func testFileURLAcceptsFinderPasteboardRepresentations() throws {
+        let expectedURL = URL(fileURLWithPath: "/tmp/Hermex Paste/file.txt")
+
+        XCTAssertEqual(
+            PastedAttachmentLoader.fileURL(from: expectedURL as NSURL),
+            expectedURL
+        )
+        XCTAssertEqual(
+            PastedAttachmentLoader.fileURL(from: expectedURL.dataRepresentation as NSData),
+            expectedURL
+        )
+        XCTAssertEqual(
+            PastedAttachmentLoader.fileURL(from: expectedURL.path as NSString),
+            expectedURL
+        )
+        XCTAssertEqual(
+            PastedAttachmentLoader.fileURL(from: expectedURL.absoluteString as NSString),
+            expectedURL
+        )
+    }
+
+    func testFileURLRejectsNonFileURLsAndEmptyStrings() {
+        XCTAssertNil(
+            PastedAttachmentLoader.fileURL(
+                from: URL(staticString: "https://example.test/file.txt") as NSURL
+            )
+        )
+        XCTAssertNil(PastedAttachmentLoader.fileURL(from: "" as NSString))
+    }
+
+    func testLoadFileReadsDataAndUsesFilesystemFilename() throws {
+        let filename = "hermex-paste-\(UUID().uuidString).txt"
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
+        let expectedData = Data("pasted from Finder".utf8)
+        try expectedData.write(to: url, options: .atomic)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let file = try PastedAttachmentLoader.loadFile(
+            from: url,
+            suggestedName: "ignored-name.txt"
+        )
+
+        XCTAssertEqual(file, PastedFile(data: expectedData, filename: filename))
+    }
+
+    func testLoadFileRejectsRemoteURLs() {
+        XCTAssertThrowsError(
+            try PastedAttachmentLoader.loadFile(
+                from: URL(staticString: "https://example.test/file.txt"),
+                suggestedName: nil
+            )
+        ) { error in
+            guard case PastedFileError.unreadableURL = error else {
+                return XCTFail("Expected unreadableURL, got \(error)")
+            }
+        }
+    }
+
+    func testImageFilenameKeepsSuggestedExtension() {
+        XCTAssertEqual(
+            PastedAttachmentLoader.imageFilename(suggestedName: "screenshot.png"),
+            "screenshot.png"
+        )
+    }
+}
+
 private final class DeferredUploadMockURLProtocol: URLProtocol {
     static var requestHandler: ((URLRequest, DeferredUploadMockURLProtocol) throws -> Void)?
 

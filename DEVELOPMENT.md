@@ -102,7 +102,7 @@ XcodeBuildMCP is the preferred local validation path for feature and bug-fix sli
 - Scheme: `HermesMobile`
 - Configuration: `Debug`
 - Simulator: `iPhone 17`
-- Bundle ID: `com.uzairansar.hermesmobile`
+- Bundle ID: `com.anthonyarmijo.hermex`
 
 After each completed implementation slice:
 
@@ -116,7 +116,7 @@ After each completed implementation slice:
 Agent/MCP flow:
 
 - Call `session_show_defaults` before the first local build/run/test.
-- If defaults are missing, set project `HermesMobile.xcodeproj`, scheme `HermesMobile`, configuration `Debug`, simulator `iPhone 17`, and bundle ID `com.uzairansar.hermesmobile`.
+- If defaults are missing, set project `HermesMobile.xcodeproj`, scheme `HermesMobile`, configuration `Debug`, simulator `iPhone 17`, and bundle ID `com.anthonyarmijo.hermex`.
 - Use `test_sim` for XCTest validation.
 - Use `build_run_sim` to build, install, launch, and open Simulator for manual testing.
 - Use `screenshot`, UI inspection, and log capture only when they help validate the slice.
@@ -179,6 +179,71 @@ xcodebuild -project HermesMobile.xcodeproj -scheme HermesMobile -destination 'pl
 
 If `iPhone 15` is not installed, choose a nearby available iPhone simulator.
 
+## Mac Catalyst Validation and Developer ID Release
+
+Hermex supports macOS 15+ through Mac Catalyst while preserving the iPhone target. The Mac product uses bundle ID and Keychain service `com.anthonyarmijo.hermex.mac`; it does not embed the iOS share or Live Activity extensions.
+
+Build and test the native Apple Silicon slice locally:
+
+```zsh
+xcodebuild -project HermesMobile.xcodeproj -scheme HermesMobile \
+  -destination 'platform=macOS,arch=arm64,variant=Mac Catalyst' build
+xcodebuild test -project HermesMobile.xcodeproj -scheme HermesMobile \
+  -destination 'platform=macOS,arch=arm64,variant=Mac Catalyst' \
+  -enableCodeCoverage NO
+```
+
+To create a universal arm64/x86_64 Developer ID archive and export, install the owning team's `Developer ID Application` certificate and a **Mac Catalyst Developer ID** (`MAC_CATALYST_APP_DIRECT`) provisioning profile for `com.anthonyarmijo.hermex.mac`. The profile must authorize Keychain Sharing; without it, Mac Catalyst cannot persist the server credentials used by the connection flow.
+
+For repeatable local releases, put the per-machine signing configuration in the ignored `.env.release.local` file. The release scripts load it automatically (or the file named by `HERMEX_MAC_RELEASE_ENV_FILE`):
+
+```zsh
+DEVELOPMENT_TEAM=8UV3BJB6XS
+DEVELOPER_ID_APPLICATION='Developer ID Application: ANTHONY LUIS ARMIJO (8UV3BJB6XS)'
+MAC_PROVISIONING_PROFILE_SPECIFIER='Hermex-Mac-Catalyst'
+NOTARYTOOL_KEYCHAIN_PROFILE='<existing-notarytool-profile>'
+```
+
+With those values in place, archive with:
+
+```zsh
+scripts/archive-mac
+```
+
+The output defaults to a timestamped directory under `.build/macos-release/`. Set `HERMEX_MAC_RELEASE_DIR` to choose another directory or `DEVELOPER_ID_APPLICATION` to select a specific signing identity. The archive enables Hardened Runtime and includes the sandbox entitlements required for outbound networking, user-selected files, microphone input, Photos access, and Keychain persistence. Before succeeding, the workflow runs `scripts/verify-mac-app` to validate the Developer ID signature and timestamp, universal arm64/x86_64 executable, macOS 15 deployment target, privacy descriptions, sandbox capabilities, resolved Keychain group, and matching embedded provisioning profile. The notarization script runs the same local verification before submitting the app.
+
+Notarization uploads the app to Apple and therefore is a separate, explicit maintainer step. If this Mac does not already have a working `notarytool` Keychain profile, create one once (the command securely prompts for the app-specific password):
+
+```zsh
+xcrun notarytool store-credentials '<local-profile-name>' \
+  --apple-id '<Apple Developer account email>' \
+  --team-id 8UV3BJB6XS
+```
+
+Then run:
+
+```zsh
+scripts/notarize-mac /path/to/Hermex.app
+```
+
+The script submits the app, waits for acceptance, staples and validates the ticket, then performs a Gatekeeper assessment. Package and notarize the public disk image only after that succeeds:
+
+```zsh
+scripts/package-mac-dmg /path/to/Hermex.app /path/to/Hermex-1.0.0-macOS-universal.dmg
+scripts/notarize-mac /path/to/Hermex-1.0.0-macOS-universal.dmg
+scripts/verify-mac-dmg --notarized /path/to/Hermex-1.0.0-macOS-universal.dmg
+```
+
+`package-mac-dmg` creates a compressed, signed image containing `Hermex.app` and an `/Applications` alias. `verify-mac-dmg` mounts it read-only and validates the image, inner app, universal architecture, signature, entitlements, profile, install alias, notarization tickets, and Gatekeeper assessments. Do not distribute the Developer ID build until every check succeeds.
+
+### GitHub Actions Mac release
+
+The manual `Mac Release` workflow validates an existing `mac-vX.Y.Z` tag at current `master`, runs the Mac Catalyst suite, imports ephemeral signing material, archives and notarizes the app and DMG, uploads the DMG plus SHA-256 file, and creates a **draft** GitHub Release. Publishing is always manual.
+
+Configure a protected GitHub environment named `mac-release`. Store `MAC_DEVELOPMENT_TEAM`, `MAC_DEVELOPER_ID_APPLICATION`, and `MAC_PROVISIONING_PROFILE_SPECIFIER` as environment variables. Store the base64 Developer ID `.p12`, its password, the base64 Mac Catalyst Developer ID profile, and the App Store Connect API key values as the environment secrets named in `.github/workflows/mac-release.yml`. Require maintainer approval and allow self-review for the single-maintainer release gate.
+
+For Mac 1.0.0, tag current `master` as `mac-v1.0.0`, dispatch the workflow from `master`, enter the tag, and type `RELEASE_MAC`. Inspect and install the draft asset before publishing it.
+
 ## TestFlight Readiness Notes
 
 Current status:
@@ -186,10 +251,10 @@ Current status:
 - App Store Connect app name: `Hermex`.
 - Xcode target/scheme name: `HermesMobile`.
 - iPhone home-screen display name: `Hermex`.
-- Bundle ID: `com.uzairansar.hermesmobile`.
-- Test bundle ID: `com.uzairansar.hermesmobile.tests`.
+- Bundle ID: `com.anthonyarmijo.hermex`.
+- Test bundle ID: `com.anthonyarmijo.hermex.tests`.
 - SKU: `hermes-mobile-ios`.
-- Apple Developer Team ID: `6GYD9C9N6R`.
+- Apple Developer Team ID: `8UV3BJB6XS`.
 - Signing uses Xcode automatic signing.
 - Export compliance is declared in `Info.plist` with `ITSAppUsesNonExemptEncryption = NO`; the app does not implement custom/proprietary encryption and uses normal Apple/platform networking security.
 - App icon uses owner-supplied light and dark assets in `AppIcon.appiconset`.
@@ -202,8 +267,8 @@ Current status:
 
 After merging the repo rebrand slice, update App Store Connect metadata separately:
 
-1. Production app (`com.uzairansar.hermesmobile`): rename listing from `Hermes Agent Mobile` → `Hermex`.
-2. Branch TestFlight app (`com.uzairansar.hermesmobile.branch`): rename listing from `Hermes Agent Branch` → `Hermex Branch`.
+1. Production app (`com.anthonyarmijo.hermex`): rename listing from `Hermes Agent Mobile` → `Hermex`.
+2. Branch TestFlight app (`com.anthonyarmijo.hermex.branch`): rename listing from `Hermes Agent Branch` → `Hermex Branch`.
 3. Update TestFlight/review notes and any metadata copy that still says the old app name.
 4. Upload a build and confirm TestFlight shows **Hermex** / **Hermex Branch** on the home screen after processing.
 
@@ -212,16 +277,16 @@ After merging the repo rebrand slice, update App Store Connect metadata separate
 When the owner says **"push to branch testflight"**, upload the current *feature branch*
 to the side-by-side **Hermex Branch** internal TestFlight app. This is a TestFlight
 upload, **not** a Git push. Never merge, Git push, or upload the production
-`com.uzairansar.hermesmobile` TestFlight app unless the owner explicitly asks.
+`com.anthonyarmijo.hermex` TestFlight app unless the owner explicitly asks.
 
 Branch TestFlight app identity:
 
 - App Store Connect app name: `Hermex Branch`
-- Main bundle ID: `com.uzairansar.hermesmobile.branch`
-- Share extension bundle ID: `com.uzairansar.hermesmobile.branch.shareextension`
-- Live Activity widget bundle ID: `com.uzairansar.hermesmobile.branch.liveactivitywidget`
+- Main bundle ID: `com.anthonyarmijo.hermex.branch`
+- Share extension bundle ID: `com.anthonyarmijo.hermex.branch.shareextension`
+- Live Activity widget bundle ID: `com.anthonyarmijo.hermex.branch.liveactivitywidget`
 - Display name: `Hermex Branch`
-- App group: `group.com.uzairansar.hermesmobile.branch`
+- App group: `group.com.anthonyarmijo.hermex.branch`
 - URL scheme: `hermes-agent-branch`
 - SKU: `hermes-mobile-ios-branch`
 
@@ -268,7 +333,7 @@ GitHub Actions internal TestFlight flow:
    - `APP_STORE_CONNECT_KEY_ID`: the App Store Connect API key ID.
    - `APP_STORE_CONNECT_ISSUER_ID`: the App Store Connect issuer ID.
    - `APP_STORE_CONNECT_PRIVATE_KEY`: the full `.p8` private key contents. A one-line value with escaped `\n` separators also works.
-3. Use an App Store Connect team API key with enough access to upload builds and let `xcodebuild -allowProvisioningUpdates` manage automatic signing for Team ID `6GYD9C9N6R`. If provisioning fails in CI, check the API key role, Apple Developer agreements, and App Store Connect access before changing the project to manual signing.
+3. Use an App Store Connect team API key with enough access to upload builds and let `xcodebuild -allowProvisioningUpdates` manage automatic signing for Team ID `8UV3BJB6XS`. If provisioning fails in CI, check the API key role, Apple Developer agreements, and App Store Connect access before changing the project to manual signing.
 4. Run the `Internal TestFlight` workflow manually from the GitHub Actions tab after the workflow file exists on the default branch.
 5. Select `master` as the workflow ref, set `confirm_internal_only` to `INTERNAL`, and leave `build_number` blank so the workflow selects the next App Store Connect build number for the current marketing version.
 6. The workflow archives the Release build, uploads directly to App Store Connect, and uses `testFlightInternalTestingOnly = true` so uploaded builds cannot be promoted to external TestFlight or App Store distribution.
@@ -297,7 +362,7 @@ GitHub Actions external-capable TestFlight flow:
 ## Full-App Manual Regression Checklist
 
 Use this before internal TestFlight smoke builds and again before adding external testers.
-Capture bugs, polish notes, and follow-up ideas in [GitHub Issues](https://github.com/uzairansaruzi/hermex/issues).
+Capture bugs, polish notes, and follow-up ideas in [GitHub Issues](https://github.com/anthonyarmijo/hermex-mac/issues).
 
 ### Onboarding/Auth
 - Fresh install opens onboarding.

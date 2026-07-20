@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+require_notarization=false
+
+if [[ "${1:-}" == "--notarized" ]]; then
+  require_notarization=true
+  shift
+fi
+
+if [[ $# -ne 1 ]]; then
+  echo "Usage: scripts/verify-mac-dmg [--notarized] /path/to/Hermex.dmg" >&2
+  exit 2
+fi
+
+dmg_path="$1"
+if [[ ! -f "$dmg_path" ]]; then
+  echo "Disk image not found: $dmg_path" >&2
+  exit 2
+fi
+
+hdiutil verify "$dmg_path"
+codesign --verify --strict --verbose=2 "$dmg_path"
+
+if [[ "$require_notarization" == true ]]; then
+  xcrun stapler validate "$dmg_path"
+  spctl --assess --type open --context context:primary-signature --verbose=4 "$dmg_path"
+fi
+
+mount_directory="$(mktemp -d "${TMPDIR:-/tmp}/hermex-dmg-mount.XXXXXX")"
+mounted=false
+
+cleanup() {
+  if [[ "$mounted" == true ]]; then
+    hdiutil detach "$mount_directory" >/dev/null || true
+  fi
+  if [[ "$mount_directory" == "${TMPDIR:-/tmp}/hermex-dmg-mount."* ]]; then
+    rmdir "$mount_directory" 2>/dev/null || true
+  fi
+}
+trap cleanup EXIT
+
+hdiutil attach -readonly -nobrowse -mountpoint "$mount_directory" "$dmg_path" >/dev/null
+mounted=true
+
+app_path="$mount_directory/Hermex.app"
+applications_link="$mount_directory/Applications"
+
+if [[ ! -d "$app_path" ]]; then
+  echo "Mounted disk image does not contain Hermex.app." >&2
+  exit 1
+fi
+if [[ ! -L "$applications_link" || "$(readlink "$applications_link")" != "/Applications" ]]; then
+  echo "Mounted disk image does not contain the expected /Applications alias." >&2
+  exit 1
+fi
+
+"$repo_root/scripts/verify-mac-app" "$app_path"
+if [[ "$require_notarization" == true ]]; then
+  xcrun stapler validate "$app_path"
+  spctl --assess --type execute --verbose=4 "$app_path"
+fi
+
+echo "Verified Mac disk image:"
+echo "  Disk image:        $dmg_path"
+echo "  App:               Hermex.app"
+echo "  Install target:    /Applications"
+echo "  Notarized checks:  $require_notarization"

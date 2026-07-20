@@ -623,40 +623,47 @@ struct MessageComposerView: View {
     }
 
     private func composerOptionsMenu() -> UIMenu {
-        UIMenu(title: "", children: [
+        var attachmentActions: [UIMenuElement] = [
+            UIAction(
+                title: String(localized: "Attach File"),
+                image: UIImage(systemName: "paperclip")
+            ) { _ in
+                Task { @MainActor in
+                    prepareForComposerPresentation()
+                    showFileImporter = true
+                }
+            },
+            UIAction(
+                title: String(localized: "Photos"),
+                image: UIImage(systemName: "photo.on.rectangle")
+            ) { _ in
+                Task { @MainActor in
+                    prepareForComposerPresentation()
+                    showPhotoPicker = true
+                }
+            }
+        ]
+
+        if PlatformCapabilities.supportsCameraCapture {
+            attachmentActions.append(
+                UIAction(
+                    title: String(localized: "Camera"),
+                    image: UIImage(systemName: "camera"),
+                    attributes: UIImagePickerController.isSourceTypeAvailable(.camera) ? [] : .disabled
+                ) { _ in
+                    Task { @MainActor in
+                        prepareForComposerPresentation()
+                        showCameraPicker = true
+                    }
+                }
+            )
+        }
+
+        return UIMenu(title: "", children: [
             UIMenu(
                 title: String(localized: "Attach"),
                 options: [.displayInline],
-                children: [
-                    UIAction(
-                        title: String(localized: "Attach File"),
-                        image: UIImage(systemName: "paperclip")
-                    ) { _ in
-                        Task { @MainActor in
-                            prepareForComposerPresentation()
-                            showFileImporter = true
-                        }
-                    },
-                    UIAction(
-                        title: String(localized: "Photos"),
-                        image: UIImage(systemName: "photo.on.rectangle")
-                    ) { _ in
-                        Task { @MainActor in
-                            prepareForComposerPresentation()
-                            showPhotoPicker = true
-                        }
-                    },
-                    UIAction(
-                        title: String(localized: "Camera"),
-                        image: UIImage(systemName: "camera"),
-                        attributes: UIImagePickerController.isSourceTypeAvailable(.camera) ? [] : .disabled
-                    ) { _ in
-                        Task { @MainActor in
-                            prepareForComposerPresentation()
-                            showCameraPicker = true
-                        }
-                    }
-                ]
+                children: attachmentActions
             )
         ])
     }
@@ -1084,7 +1091,8 @@ struct MessageComposerView: View {
     /// otherwise stops and sends the clip.
     @MainActor
     private func finishVoiceNote(translationHeight: CGFloat) {
-        let shouldCancel = ComposerVoiceNoteGesture.isCancelArmed(dragTranslationHeight: translationHeight)
+        let shouldCancel = PlatformCapabilities.supportsSlideToCancelVoiceNotes
+            && ComposerVoiceNoteGesture.isCancelArmed(dragTranslationHeight: translationHeight)
         voiceNoteCancelArmed = false
 
         guard !shouldCancel else {

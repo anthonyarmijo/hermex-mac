@@ -518,9 +518,15 @@ final class SessionListViewModel {
         guard beginSessionMutation(sessionId) else { return false }
         defer { endSessionMutation(sessionId) }
 
-        return await mutate(modelContext: modelContext, animation: animation) {
+        let didDelete = await mutate(modelContext: modelContext, animation: animation) {
             try await sessionMutator.delete(sessionID: sessionId)
         }
+
+        if didDelete {
+            SessionDraftPersistence.remove(for: sessionId, server: server)
+        }
+
+        return didDelete
     }
 
     func isMutating(_ session: SessionSummary) -> Bool {
@@ -873,7 +879,11 @@ final class SessionListViewModel {
     /// Creates a new session. `profile` pins it to a specific server profile (the "New Chat
     /// in <Profile>" App Intent, #339); nil keeps the legacy behavior of letting the server
     /// use its active profile (the "+" button / plain New Chat).
-    func createSession(modelContext: ModelContext? = nil, profile: String? = nil) async -> SessionSummary? {
+    func createSession(
+        modelContext: ModelContext? = nil,
+        profile: String? = nil,
+        projectID: String? = nil
+    ) async -> SessionSummary? {
         isCreatingSession = true
         actionErrorMessage = nil
         lastError = nil
@@ -886,7 +896,8 @@ final class SessionListViewModel {
                 workspace: workspace,
                 model: nil,
                 modelProvider: nil,
-                profile: Self.nonEmpty(profile)
+                profile: Self.nonEmpty(profile),
+                projectID: Self.nonEmpty(projectID)
             )
 
             guard let sessionDetail = response.session else {
@@ -900,19 +911,20 @@ final class SessionListViewModel {
                 return nil
             }
 
-            if newSession.shouldAppearInSessionList {
-                if let existingIndex = sessions.firstIndex(where: { $0.sessionId == newSession.sessionId }) {
-                    sessions[existingIndex] = newSession
-                } else {
-                    sessions.insert(newSession, at: 0)
-                }
+            // Keep the new row visible while its composer is open. Empty rows are
+            // deliberately not cached and are removed when an abandoned new-chat
+            // route closes; a successful first submission promotes the row below.
+            if let existingIndex = sessions.firstIndex(where: { $0.sessionId == newSession.sessionId }) {
+                sessions[existingIndex] = newSession
+            } else {
+                sessions.insert(newSession, at: 0)
+            }
 
-                if let modelContext {
-                    do {
-                        try CacheStore.cacheSession(newSession, serverURL: server, in: modelContext)
-                    } catch {
-                        cacheErrorMessage = error.localizedDescription
-                    }
+            if newSession.shouldAppearInSessionList, let modelContext {
+                do {
+                    try CacheStore.cacheSession(newSession, serverURL: server, in: modelContext)
+                } catch {
+                    cacheErrorMessage = error.localizedDescription
                 }
             }
 
@@ -923,6 +935,28 @@ final class SessionListViewModel {
             lastError = error
             actionErrorMessage = error.localizedDescription
             return nil
+        }
+    }
+
+    /// Promotes a just-created empty placeholder after the chat accepts its first
+    /// user submission. This is intentionally local and synchronous so the row
+    /// cannot disappear while the server is still generating its title/response.
+    func markCreatedSessionAsStarted(sessionID: String?, modelContext: ModelContext? = nil) {
+        guard let sessionID = Self.nonEmpty(sessionID),
+              let index = sessions.firstIndex(where: { $0.sessionId == sessionID })
+        else {
+            return
+        }
+
+        let startedSession = sessions[index].markingUserMessageSubmitted()
+        sessions[index] = startedSession
+
+        if let modelContext {
+            do {
+                try CacheStore.cacheSession(startedSession, serverURL: server, in: modelContext)
+            } catch {
+                cacheErrorMessage = error.localizedDescription
+            }
         }
     }
 

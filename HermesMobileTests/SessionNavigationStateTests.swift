@@ -53,6 +53,52 @@ final class SessionNavigationStateTests: XCTestCase {
         XCTAssertEqual(state.lastSelectedSessionID, "session-1")
     }
 
+    func testHomePreservesRememberedSessionAndBlocksAutomaticRestore() {
+        let remembered = SessionSummary(sessionId: "session-1", title: "One")
+        var state = SessionNavigationState(lastSelectedSessionID: "session-1")
+
+        state.selectHome()
+        state.restoreIfNeeded(from: [remembered])
+
+        XCTAssertEqual(state.destination, .home)
+        XCTAssertNil(state.selectedSessionID)
+        XCTAssertEqual(state.lastSelectedSessionID, "session-1")
+    }
+
+    func testProjectNewChatRouteCarriesProjectMetadata() {
+        let route = PendingNewChatRoute(projectID: "project-1", projectName: "Hermex")
+
+        XCTAssertEqual(route.projectID, "project-1")
+        XCTAssertEqual(route.projectName, "Hermex")
+    }
+
+    func testHomeModelLimitsAndSortsRecentChatsAndCountsProjects() throws {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let project = try decoder.decode(
+            ProjectSummary.self,
+            from: Data(#"{"project_id":"project-1","name":"Hermex"}"#.utf8)
+        )
+        let sessions = (1...7).map { index in
+            SessionSummary(
+                sessionId: "session-\(index)",
+                title: "Chat \(index)",
+                messageCount: 1,
+                lastMessageAt: Double(index),
+                archived: index == 7,
+                projectId: index <= 3 ? "project-1" : nil
+            )
+        }
+
+        let model = HermexHomeModel(sessions: sessions, projects: [project])
+
+        XCTAssertEqual(model.recentSessions.map(\.sessionId), ["session-6", "session-5", "session-4", "session-3", "session-2"])
+        XCTAssertEqual(model.sessionCount(for: project), 3)
+        XCTAssertEqual(model.projects, [project])
+        XCTAssertEqual(HermexHomeModel.chatCountTitle(1), "1 chat")
+        XCTAssertEqual(HermexHomeModel.chatCountTitle(3), "3 chats")
+    }
+
     func testExplicitSessionRouteOverridesStoredSelection() {
         let stored = SessionSummary(sessionId: "stored")
         let deepLinked = SessionSummary(sessionId: "deep-linked")
@@ -162,6 +208,78 @@ final class SessionNavigationStateTests: XCTestCase {
         XCTAssertEqual(
             SessionNavigationPersistence.load(for: secondServer, defaults: defaults),
             "second-session"
+        )
+    }
+}
+
+final class SessionDraftPersistenceTests: XCTestCase {
+    private var suiteName: String!
+    private var defaults: UserDefaults!
+
+    override func setUp() {
+        super.setUp()
+        suiteName = "SessionDraftPersistenceTests.\(UUID().uuidString)"
+        defaults = UserDefaults(suiteName: suiteName)
+        defaults.removePersistentDomain(forName: suiteName)
+    }
+
+    override func tearDown() {
+        defaults.removePersistentDomain(forName: suiteName)
+        defaults = nil
+        suiteName = nil
+        super.tearDown()
+    }
+
+    func testDraftRoundTripsExactlyAcrossDefaultsReload() throws {
+        let server = try XCTUnwrap(URL(string: "https://first.example.com"))
+        let draft = "  First line\n\nSecond line with trailing space  "
+
+        SessionDraftPersistence.save(draft, for: " session-1 ", server: server, defaults: defaults)
+
+        let reloadedDefaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        XCTAssertEqual(
+            SessionDraftPersistence.load(for: "session-1", server: server, defaults: reloadedDefaults),
+            draft
+        )
+    }
+
+    func testEmptyDraftRemovesPersistedValue() throws {
+        let server = try XCTUnwrap(URL(string: "https://first.example.com"))
+        SessionDraftPersistence.save("Keep this", for: "session-1", server: server, defaults: defaults)
+
+        SessionDraftPersistence.save("", for: "session-1", server: server, defaults: defaults)
+
+        XCTAssertNil(SessionDraftPersistence.load(for: "session-1", server: server, defaults: defaults))
+    }
+
+    func testDraftsAreIsolatedByServerAndSession() throws {
+        let firstServer = try XCTUnwrap(URL(string: "https://first.example.com"))
+        let secondServer = try XCTUnwrap(URL(string: "https://second.example.com"))
+
+        SessionDraftPersistence.save("First", for: "session-1", server: firstServer, defaults: defaults)
+        SessionDraftPersistence.save("Second", for: "session-2", server: firstServer, defaults: defaults)
+        SessionDraftPersistence.save("Other server", for: "session-1", server: secondServer, defaults: defaults)
+
+        XCTAssertEqual(SessionDraftPersistence.load(for: "session-1", server: firstServer, defaults: defaults), "First")
+        XCTAssertEqual(SessionDraftPersistence.load(for: "session-2", server: firstServer, defaults: defaults), "Second")
+        XCTAssertEqual(
+            SessionDraftPersistence.load(for: "session-1", server: secondServer, defaults: defaults),
+            "Other server"
+        )
+    }
+
+    func testRemovingServerDraftsDoesNotTouchAnotherServer() throws {
+        let removedServer = try XCTUnwrap(URL(string: "https://removed.example.com"))
+        let retainedServer = try XCTUnwrap(URL(string: "https://retained.example.com"))
+        SessionDraftPersistence.save("Remove", for: "session-1", server: removedServer, defaults: defaults)
+        SessionDraftPersistence.save("Retain", for: "session-1", server: retainedServer, defaults: defaults)
+
+        SessionDraftPersistence.removeAll(for: removedServer, defaults: defaults)
+
+        XCTAssertNil(SessionDraftPersistence.load(for: "session-1", server: removedServer, defaults: defaults))
+        XCTAssertEqual(
+            SessionDraftPersistence.load(for: "session-1", server: retainedServer, defaults: defaults),
+            "Retain"
         )
     }
 }

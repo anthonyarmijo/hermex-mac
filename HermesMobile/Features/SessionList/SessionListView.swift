@@ -1,6 +1,7 @@
 import SwiftUI
 import SwiftData
 import UIKit
+import UniformTypeIdentifiers
 
 @MainActor
 struct SessionListView: View {
@@ -18,12 +19,19 @@ struct SessionListView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.openWindow) private var openWindow
+    @Environment(\.macInterfaceScale) private var macInterfaceScale
     @State private var viewModel: SessionListViewModel
     @State private var navigationState: SessionNavigationState
     @State private var sessionPendingRename: SessionSummary?
     @State private var sessionPendingDeletion: SessionSummary?
     @State private var sessionPendingProjectCreation: SessionSummary?
     @State private var sessionExportShareItem: SessionExportShareItem?
+    @State private var sessionExportDocument = ExportedFileDocument(data: Data())
+    @State private var sessionExportContentType = UTType.data
+    @State private var sessionExportFilename = String(localized: "Hermex Session")
+    @State private var isSessionFileExporterPresented = false
+    @State private var sessionExportErrorMessage: String?
     @State private var isPresentingProjectCreation = false
     @State private var isPresentingAddServer = false
     @State private var projectPendingDeletion: ProjectSummary?
@@ -32,6 +40,7 @@ struct SessionListView: View {
     @State private var isSearchVisible = false
     @State private var isSearchFocused = false
     @State private var searchChromeIsExpanded = false
+    @State private var composerFocusRequestID = 0
     @State private var selectedProjectID: String?
     @State private var sidebarScrollPosition: String?
     @State private var didCompleteInitialLoad = false
@@ -89,6 +98,17 @@ struct SessionListView: View {
 
     var body: some View {
         navigationContainer
+            .fileExporter(
+                isPresented: $isSessionFileExporterPresented,
+                document: sessionExportDocument,
+                contentType: sessionExportContentType,
+                defaultFilename: sessionExportFilename
+            ) { result in
+                if case .failure(let error) = result,
+                   (error as NSError).code != NSUserCancelledError {
+                    sessionExportErrorMessage = error.localizedDescription
+                }
+            }
             .sheet(item: $sessionExportShareItem) { item in
                 SessionExportShareSheet(fileURL: item.fileURL)
                     .presentationDetents([.medium, .large])
@@ -102,6 +122,23 @@ struct SessionListView: View {
                             at: item.fileURL.deletingLastPathComponent()
                         )
                     }
+            }
+            .alert(
+                "Session Export Failed",
+                isPresented: Binding(
+                    get: { sessionExportErrorMessage != nil },
+                    set: { isPresented in
+                        if !isPresented {
+                            sessionExportErrorMessage = nil
+                        }
+                    }
+                )
+            ) {
+                Button("OK") {
+                    sessionExportErrorMessage = nil
+                }
+            } message: {
+                Text(sessionExportErrorMessage ?? "")
             }
             .sheet(item: $sessionPendingRename) { session in
                 SessionRenameSheet(
@@ -253,11 +290,19 @@ struct SessionListView: View {
                     .navigationSplitViewColumnWidth(min: 280, ideal: 340, max: 420)
             } detail: {
                 NavigationStack {
-                    regularWidthDetail
+                    ZStack {
+                        Color(.systemBackground)
+                            .ignoresSafeArea()
+
+                        regularWidthDetail
+                    }
                 }
+                // Reset only the detail navigation path when a sidebar root is
+                // selected. Applying this identity to the entire split view also
+                // recreated the sidebar List and snapped it back to the top.
+                .id(navigationState.rootRevision)
             }
             .navigationSplitViewStyle(.balanced)
-            .id(navigationState.rootRevision)
         } else {
             NavigationStack {
                 sessionListSurface
@@ -289,22 +334,22 @@ struct SessionListView: View {
         if let destination = navigationState.destination {
             navigationDestination(destination)
         } else {
-            ContentUnavailableView {
-                Label("Select a Chat", systemImage: "bubble.left.and.bubble.right")
-            } description: {
-                Text("Choose a session from the sidebar or start a new chat.")
-            } actions: {
-                Button("New Chat", action: openNewChat)
-                    .buttonStyle(.borderedProminent)
-            }
+            homeView
         }
     }
 
     @ViewBuilder
     private func navigationDestination(_ destination: SessionNavigationDestination) -> some View {
         switch destination {
+        case .home:
+            homeView
         case .session(let session):
-            ChatView(session: session, server: server, onAPIError: authManager.handleAPIError)
+            ChatView(
+                session: session,
+                server: server,
+                onAPIError: authManager.handleAPIError,
+                externalComposerFocusRequestID: composerFocusRequestID
+            )
                 .id(session.id)
         case .newChat(let route):
             PendingNewChatView(
@@ -312,6 +357,9 @@ struct SessionListView: View {
                 initialAttachments: route.initialAttachments,
                 autoStartsVoiceInput: route.autoStartsVoiceInput,
                 profileName: route.profileName,
+                projectID: route.projectID,
+                projectName: route.projectName,
+                externalComposerFocusRequestID: composerFocusRequestID,
                 server: server,
                 viewModel: viewModel,
                 onAPIError: authManager.handleAPIError,
@@ -321,6 +369,27 @@ struct SessionListView: View {
         case .utility(let destination):
             utilityDestination(destination)
         }
+    }
+
+    private var homeView: some View {
+        HermexHomeView(
+            model: HermexHomeModel(
+                sessions: viewModel.visibleSessions(
+                    searchText: "",
+                    selectedProjectID: nil,
+                    automatedVisibility: automatedSessionVisibility
+                ),
+                projects: viewModel.projects
+            ),
+            logoColor: selectedHeaderLogoColor,
+            isViewingCachedData: viewModel.isViewingCachedData,
+            isStartingNewChat: viewModel.isCreatingSession || navigationState.isCreatingNewChat,
+            showsMessageCount: showsSessionMessageCount,
+            showsWorkspace: showsSessionWorkspace,
+            onNewChat: openNewChat,
+            onNewProjectChat: openNewChat,
+            onOpenSession: selectSession
+        )
     }
 
     @ViewBuilder
@@ -394,7 +463,9 @@ struct SessionListView: View {
                     },
                     presentProjectCreation: {
                         isPresentingProjectCreation = true
-                    }
+                    },
+                    startProjectChat: openNewChat,
+                    isStartingNewChat: viewModel.isCreatingSession || navigationState.isCreatingNewChat
                 )
             }
 
@@ -458,11 +529,18 @@ struct SessionListView: View {
 
     private var header: some View {
         HStack(alignment: .center, spacing: searchChromeIsExpanded ? 0 : 16) {
-            HermesHeaderLogo(selectedColor: selectedHeaderLogoColor)
-                .frame(width: searchChromeIsExpanded ? 0 : 160, alignment: .leading)
-                .opacity(searchChromeIsExpanded ? 0 : 1)
-                .clipped()
-                .accessibilityHidden(searchChromeIsExpanded)
+            Button(action: openHome) {
+                HermesHeaderLogo(selectedColor: selectedHeaderLogoColor)
+                    .frame(width: searchChromeIsExpanded ? 0 : 160 * macInterfaceScale, alignment: .leading)
+                    .opacity(searchChromeIsExpanded ? 0 : 1)
+                    .clipped()
+                    .accessibilityHidden(true)
+            }
+            .buttonStyle(.plain)
+            .help("Home")
+            .accessibilityLabel("Hermex Home")
+            .accessibilityHint("Shows the Home launchpad.")
+            .accessibilityHidden(searchChromeIsExpanded)
 
             searchChrome
                 .frame(maxWidth: .infinity, alignment: .trailing)
@@ -493,6 +571,7 @@ struct SessionListView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .help("Search Sessions (⌘F)")
             .accessibilityLabel(searchChromeIsExpanded ? "Focus session search" : "Search sessions")
             .accessibilityHint("Shows the session search field.")
             .accessibilityHidden(searchChromeIsExpanded)
@@ -552,7 +631,7 @@ struct SessionListView: View {
             if searchChromeIsExpanded {
                 closeSearch()
             } else {
-                navigationState.select(.settings(nil))
+                openSettings()
             }
         } label: {
             ZStack {
@@ -578,6 +657,7 @@ struct SessionListView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .help(searchChromeIsExpanded ? "Close Search" : "Settings (⌘,)")
         .accessibilityLabel(searchChromeIsExpanded ? "Close search" : "Settings")
         .accessibilityHint(
             searchChromeIsExpanded
@@ -599,7 +679,7 @@ struct SessionListView: View {
                         authManager.switchActiveServer(to: account)
                     },
                     addServer: { isPresentingAddServer = true },
-                    manageServers: { navigationState.select(.settings(.servers)) }
+                    manageServers: { openSettings(scrollTo: .servers) }
                 )
             }
         }
@@ -636,6 +716,7 @@ struct SessionListView: View {
             )
         }
         .buttonStyle(SessionListFloatingChatButtonStyle())
+        .help("New Chat (⌘N)")
         .disabled(viewModel.isViewingCachedData || navigationState.isCreatingNewChat)
         .opacity(viewModel.isViewingCachedData ? 0.45 : 1)
         .accessibilityLabel("New Session")
@@ -875,6 +956,7 @@ struct SessionListView: View {
     }
 
     private func closeSearch() {
+        let shouldRestoreComposerFocus = searchChromeIsExpanded || searchFieldIsFocused
         searchText = ""
         searchFieldIsFocused = false
         isSearchFocused = false
@@ -882,6 +964,10 @@ struct SessionListView: View {
         withAnimation(SessionListMotion.searchChromeAnimation(reduceMotion: reduceMotion)) {
             searchChromeIsExpanded = false
             isSearchVisible = false
+        }
+
+        if shouldRestoreComposerFocus {
+            composerFocusRequestID &+= 1
         }
     }
 
@@ -891,6 +977,15 @@ struct SessionListView: View {
             searchChromeIsExpanded = true
         }
         searchFieldIsFocused = true
+    }
+
+    private func openSettings(scrollTo target: SettingsScrollAnchor? = nil) {
+        if PlatformCapabilities.supportsDedicatedSettingsWindow {
+            HermexSettingsWindowModel.shared.request(scrollTo: target)
+            openWindow(id: HermexSceneID.settings, value: HermexSceneID.settingsValue)
+        } else {
+            navigationState.select(.settings(target))
+        }
     }
 
     private var sceneActions: HermexSceneActions {
@@ -1062,7 +1157,28 @@ struct SessionListView: View {
         handleLastError()
 
         if let fileURL {
-            sessionExportShareItem = SessionExportShareItem(fileURL: fileURL)
+            if PlatformCapabilities.usesNativeSessionFileExporter {
+                prepareNativeSessionExport(from: fileURL)
+            } else {
+                sessionExportShareItem = SessionExportShareItem(fileURL: fileURL)
+            }
+        }
+    }
+
+    private func prepareNativeSessionExport(from fileURL: URL) {
+        defer {
+            try? FileManager.default.removeItem(at: fileURL.deletingLastPathComponent())
+        }
+
+        do {
+            sessionExportDocument = ExportedFileDocument(data: try Data(contentsOf: fileURL))
+            sessionExportContentType = UTType(filenameExtension: fileURL.pathExtension) ?? .data
+            sessionExportFilename = fileURL.lastPathComponent.isEmpty
+                ? String(localized: "Hermex Session")
+                : fileURL.lastPathComponent
+            isSessionFileExporterPresented = true
+        } catch {
+            sessionExportErrorMessage = error.localizedDescription
         }
     }
 
@@ -1145,6 +1261,29 @@ struct SessionListView: View {
 
     private func openNewChat() {
         navigationState.select(PendingNewChatRoute())
+    }
+
+    private func openNewChat(in project: ProjectSummary) {
+        guard !viewModel.isViewingCachedData,
+              !viewModel.isCreatingSession,
+              !navigationState.isCreatingNewChat,
+              let projectID = project.projectId?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !projectID.isEmpty
+        else {
+            return
+        }
+
+        navigationState.select(
+            PendingNewChatRoute(
+                projectID: projectID,
+                projectName: HermexHomeModel.displayName(for: project)
+            )
+        )
+    }
+
+    private func openHome() {
+        closeSearch()
+        navigationState.selectHome()
     }
 
     private func selectSession(_ session: SessionSummary) {
@@ -1237,17 +1376,25 @@ struct PendingNewChatRoute: Identifiable, Hashable {
     let autoStartsVoiceInput: Bool
     /// When set, the new session is created pinned to this profile (#339).
     let profileName: String?
+    /// When set, the server creates the new session directly inside this project.
+    let projectID: String?
+    /// Display-only project title used while routing and for accessibility.
+    let projectName: String?
 
     init(
         initialDraft: String = "",
         initialAttachments: [SharedAttachmentImport] = [],
         autoStartsVoiceInput: Bool = false,
-        profileName: String? = nil
+        profileName: String? = nil,
+        projectID: String? = nil,
+        projectName: String? = nil
     ) {
         self.initialDraft = initialDraft
         self.initialAttachments = initialAttachments
         self.autoStartsVoiceInput = autoStartsVoiceInput
         self.profileName = profileName
+        self.projectID = projectID
+        self.projectName = projectName
     }
 
     static func == (lhs: PendingNewChatRoute, rhs: PendingNewChatRoute) -> Bool {
@@ -1296,6 +1443,9 @@ private struct PendingNewChatView: View {
     let initialAttachments: [SharedAttachmentImport]
     let autoStartsVoiceInput: Bool
     let profileName: String?
+    let projectID: String?
+    let projectName: String?
+    let externalComposerFocusRequestID: Int
 
     @State private var createdSession: SessionSummary?
     @State private var draftMessage = ""
@@ -1309,6 +1459,9 @@ private struct PendingNewChatView: View {
         initialAttachments: [SharedAttachmentImport] = [],
         autoStartsVoiceInput: Bool = false,
         profileName: String? = nil,
+        projectID: String? = nil,
+        projectName: String? = nil,
+        externalComposerFocusRequestID: Int = 0,
         server: URL,
         viewModel: SessionListViewModel,
         onAPIError: @escaping (Error) -> Void,
@@ -1321,6 +1474,9 @@ private struct PendingNewChatView: View {
         self.initialAttachments = initialAttachments
         self.autoStartsVoiceInput = autoStartsVoiceInput
         self.profileName = profileName
+        self.projectID = projectID
+        self.projectName = projectName
+        self.externalComposerFocusRequestID = externalComposerFocusRequestID
         _draftMessage = State(initialValue: initialDraft)
     }
 
@@ -1331,10 +1487,22 @@ private struct PendingNewChatView: View {
                     session: createdSession,
                     server: server,
                     onAPIError: onAPIError,
+                    onMessageSubmitted: {
+                        viewModel.markCreatedSessionAsStarted(
+                            sessionID: createdSession.sessionId,
+                            modelContext: modelContext
+                        )
+                    },
+                    onResponseCompleted: {
+                        Task {
+                            await viewModel.load(modelContext: modelContext, animation: .default)
+                        }
+                    },
                     initialDraft: draftMessage,
                     initialAttachments: initialAttachments,
                     loadsInitialMessages: false,
-                    autoStartsVoiceInput: autoStartsVoiceInput
+                    autoStartsVoiceInput: autoStartsVoiceInput,
+                    externalComposerFocusRequestID: externalComposerFocusRequestID
                 )
             } else {
                 pendingContent
@@ -1358,7 +1526,11 @@ private struct PendingNewChatView: View {
             ContentUnavailableView {
                 Image(systemName: "bubble.left.and.bubble.right")
             } description: {
-                Text("Send a message to start the conversation.")
+                if let projectName {
+                    Text("Creating a new chat in \(projectName).")
+                } else {
+                    Text("Send a message to start the conversation.")
+                }
             }
             .contentShape(Rectangle())
             .onTapGesture {
@@ -1435,7 +1607,11 @@ private struct PendingNewChatView: View {
 
         didStartCreation = true
         creationErrorMessage = nil
-        let session = await viewModel.createSession(modelContext: modelContext, profile: profileName)
+        let session = await viewModel.createSession(
+            modelContext: modelContext,
+            profile: profileName,
+            projectID: projectID
+        )
         guard !Task.isCancelled else { return }
         if let lastError = viewModel.lastError {
             onAPIError(lastError)

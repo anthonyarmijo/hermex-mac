@@ -298,7 +298,7 @@ final class SessionListMutationTests: XCTestCase {
     }
 
     @MainActor
-    func testCreateSessionReturnsEmptyPlaceholderWithoutInsertingIntoSessionList() async throws {
+    func testCreateSessionKeepsEmptyPlaceholderVisibleWithoutCachingIt() async throws {
         let context = try makeContext()
         let serverURL = try XCTUnwrap(URL(string: "https://example.test"))
         var requestedPaths: [String] = []
@@ -322,6 +322,7 @@ final class SessionListMutationTests: XCTestCase {
                 XCTAssertNil(body["model"] as? String)
                 XCTAssertNil(body["model_provider"] as? String)
                 XCTAssertNil(body["profile"] as? String)
+                XCTAssertNil(body["project_id"] as? String)
 
                 return apiTestJSONResponse("""
                 {
@@ -347,12 +348,105 @@ final class SessionListMutationTests: XCTestCase {
         let created = await viewModel.createSession(modelContext: context)
 
         XCTAssertEqual(created?.sessionId, "new-123")
-        XCTAssertTrue(viewModel.sessions.isEmpty)
+        XCTAssertEqual(viewModel.sessions.compactMap(\.sessionId), ["new-123"])
+        XCTAssertTrue(try XCTUnwrap(viewModel.sessions.first).isEmptySidebarPlaceholder)
         XCTAssertTrue(try CacheStore.cachedSessions(serverURL: serverURL, in: context).isEmpty)
         XCTAssertEqual(requestedPaths, ["/api/workspaces", "/api/session/new"])
         XCTAssertFalse(viewModel.isCreatingSession)
         XCTAssertNil(viewModel.actionErrorMessage)
         XCTAssertNil(viewModel.lastError)
+    }
+
+    @MainActor
+    func testCreateSessionInProjectIncludesProjectIDAndKeepsAssignment() async throws {
+        let context = try makeContext()
+        let viewModel = try makeViewModel { request in
+            switch request.url?.path {
+            case "/api/workspaces":
+                return apiTestJSONResponse(
+                    #"{"workspaces":[{"path":"/tmp/workspace"}],"last":"/tmp/workspace"}"#,
+                    for: request
+                )
+            case "/api/session/new":
+                let body = try XCTUnwrap(apiTestJSONBody(from: request))
+                XCTAssertEqual(body["project_id"] as? String, "project-42")
+                return apiTestJSONResponse(
+                    """
+                    {
+                      "session": {
+                        "session_id": "project-chat",
+                        "title": "Untitled Session",
+                        "workspace": "/tmp/workspace",
+                        "project_id": "project-42",
+                        "archived": false
+                      }
+                    }
+                    """,
+                    for: request
+                )
+            default:
+                XCTFail("Unexpected request path: \(request.url?.path ?? "nil")")
+                throw URLError(.badURL)
+            }
+        }
+
+        let created = await viewModel.createSession(
+            modelContext: context,
+            projectID: "project-42"
+        )
+
+        XCTAssertEqual(created?.sessionId, "project-chat")
+        XCTAssertEqual(created?.projectId, "project-42")
+        XCTAssertEqual(viewModel.sessions.first?.projectId, "project-42")
+        XCTAssertFalse(viewModel.isCreatingSession)
+        XCTAssertNil(viewModel.actionErrorMessage)
+    }
+
+    @MainActor
+    func testFirstSubmissionPromotesAndCachesCreatedPlaceholder() async throws {
+        let context = try makeContext()
+        let serverURL = try XCTUnwrap(URL(string: "https://example.test"))
+        let viewModel = try makeViewModel { request in
+            switch request.url?.path {
+            case "/api/workspaces":
+                return apiTestJSONResponse("""
+                {"workspaces": [{"path": "/tmp/workspace"}], "last": "/tmp/workspace"}
+                """, for: request)
+            case "/api/session/new":
+                return apiTestJSONResponse("""
+                {
+                  "session": {
+                    "session_id": "voice-chat-123",
+                    "title": "Untitled Session",
+                    "workspace": "/tmp/workspace",
+                    "archived": false
+                  }
+                }
+                """, for: request)
+            default:
+                XCTFail("Unexpected request path: \(request.url?.path ?? "nil")")
+                throw URLError(.badURL)
+            }
+        }
+
+        let created = await viewModel.createSession(modelContext: context)
+        XCTAssertTrue(try XCTUnwrap(created).isEmptySidebarPlaceholder)
+
+        viewModel.markCreatedSessionAsStarted(
+            sessionID: created?.sessionId,
+            modelContext: context
+        )
+        viewModel.removeEmptySidebarPlaceholders()
+
+        let retained = try XCTUnwrap(viewModel.sessions.first)
+        XCTAssertEqual(retained.sessionId, "voice-chat-123")
+        XCTAssertEqual(retained.messageCount, 1)
+        XCTAssertEqual(retained.userMessageCount, 1)
+        XCTAssertFalse(retained.isEmptySidebarPlaceholder)
+        XCTAssertEqual(
+            try CacheStore.cachedSessions(serverURL: serverURL, in: context).compactMap(\.sessionId),
+            ["voice-chat-123"]
+        )
     }
 
     @MainActor
@@ -764,6 +858,9 @@ final class SessionListMutationTests: XCTestCase {
 
     @MainActor
     func testPinArchiveMoveAndDeleteCallServerMutationThenReloadSessions() async throws {
+        let server = try XCTUnwrap(URL(string: "https://example.test"))
+        SessionDraftPersistence.save("Unsent thought", for: "session-abc", server: server)
+        defer { SessionDraftPersistence.remove(for: "session-abc", server: server) }
         var loadCount = 0
         var mutationPaths: [String] = []
         let viewModel = try makeViewModel { request in
@@ -810,6 +907,10 @@ final class SessionListMutationTests: XCTestCase {
         let didArchive = await viewModel.archive(session)
         XCTAssertTrue(didArchive)
         XCTAssertTrue(viewModel.sessions.isEmpty)
+        XCTAssertEqual(
+            SessionDraftPersistence.load(for: "session-abc", server: server),
+            "Unsent thought"
+        )
 
         await viewModel.move(session, to: "project-1")
         XCTAssertEqual(viewModel.sessions.first?.projectId, "project-1")
@@ -817,6 +918,7 @@ final class SessionListMutationTests: XCTestCase {
         let didDelete = await viewModel.delete(session)
         XCTAssertTrue(didDelete)
         XCTAssertTrue(viewModel.sessions.isEmpty)
+        XCTAssertNil(SessionDraftPersistence.load(for: "session-abc", server: server))
 
         XCTAssertEqual(loadCount, 5)
         XCTAssertEqual(
@@ -825,6 +927,54 @@ final class SessionListMutationTests: XCTestCase {
         )
         XCTAssertNil(viewModel.actionErrorMessage)
         XCTAssertNil(viewModel.lastError)
+    }
+
+    @MainActor
+    func testDeleteSessionFailurePreservesDraft() async throws {
+        let server = try XCTUnwrap(URL(string: "https://example.test"))
+        let sessionID = "draft-delete-failure-\(UUID().uuidString)"
+        SessionDraftPersistence.save("Keep after failure", for: sessionID, server: server)
+        defer { SessionDraftPersistence.remove(for: sessionID, server: server) }
+        var loadCount = 0
+        let viewModel = try makeViewModel { request in
+            switch request.url?.path {
+            case "/api/sessions":
+                loadCount += 1
+                return apiTestJSONResponse(
+                    """
+                    {
+                      "sessions": [
+                        {"session_id": "\(sessionID)", "title": "Draft", "archived": false}
+                      ]
+                    }
+                    """,
+                    for: request
+                )
+            case "/api/session/delete":
+                let response = HTTPURLResponse(
+                    url: try XCTUnwrap(request.url),
+                    statusCode: 500,
+                    httpVersion: nil,
+                    headerFields: ["Content-Type": "application/json"]
+                )
+                return (try XCTUnwrap(response), Data(#"{"error":"delete failed"}"#.utf8))
+            default:
+                XCTFail("Unexpected request path: \(request.url?.path ?? "nil")")
+                throw URLError(.badURL)
+            }
+        }
+
+        await viewModel.load()
+        let session = try XCTUnwrap(viewModel.sessions.first)
+
+        let didDelete = await viewModel.delete(session)
+
+        XCTAssertFalse(didDelete)
+        XCTAssertEqual(loadCount, 1)
+        XCTAssertEqual(
+            SessionDraftPersistence.load(for: sessionID, server: server),
+            "Keep after failure"
+        )
     }
 
     func testSessionMutatorDuplicateBranchesThenLoadsReturnedSession() async throws {

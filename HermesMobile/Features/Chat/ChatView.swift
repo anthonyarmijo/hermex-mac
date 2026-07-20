@@ -275,10 +275,13 @@ struct ChatView: View {
     let session: SessionSummary
     let server: URL
     let onAPIError: (Error) -> Void
+    let onMessageSubmitted: () -> Void
+    let onResponseCompleted: () -> Void
     let loadsInitialMessages: Bool
     /// When true, the composer auto-starts voice dictation on appear — set by the
     /// "New Chat with Voice" App Intent (#338). Defaults to false for normal opens.
     let autoStartsVoiceInput: Bool
+    let externalComposerFocusRequestID: Int
 
     @State private var draftMessage = ""
     @State private var isScrolledNearBottom = true
@@ -326,17 +329,28 @@ struct ChatView: View {
         session: SessionSummary,
         server: URL,
         onAPIError: @escaping (Error) -> Void,
+        onMessageSubmitted: @escaping () -> Void = {},
+        onResponseCompleted: @escaping () -> Void = {},
         initialDraft: String = "",
         initialAttachments: [SharedAttachmentImport] = [],
         loadsInitialMessages: Bool = true,
-        autoStartsVoiceInput: Bool = false
+        autoStartsVoiceInput: Bool = false,
+        externalComposerFocusRequestID: Int = 0
     ) {
         self.session = session
         self.server = server
         self.onAPIError = onAPIError
+        self.onMessageSubmitted = onMessageSubmitted
+        self.onResponseCompleted = onResponseCompleted
         self.loadsInitialMessages = loadsInitialMessages
         self.autoStartsVoiceInput = autoStartsVoiceInput
-        _draftMessage = State(initialValue: initialDraft)
+        self.externalComposerFocusRequestID = externalComposerFocusRequestID
+        let restoredDraft = SessionDraftPersistence.load(for: session.sessionId, server: server)
+        let resolvedDraft = restoredDraft ?? initialDraft
+        _draftMessage = State(initialValue: resolvedDraft)
+        if restoredDraft == nil, !initialDraft.isEmpty {
+            SessionDraftPersistence.save(initialDraft, for: session.sessionId, server: server)
+        }
         _initialAttachments = State(initialValue: initialAttachments)
         _viewModel = State(initialValue: ChatViewModel(
             session: session,
@@ -356,7 +370,7 @@ struct ChatView: View {
     // "unable to type-check in reasonable time" limit).
     private var messageComposer: some View {
         MessageComposerView(
-            draftMessage: $draftMessage,
+            draftMessage: persistedDraftMessage,
             isFocused: $composerIsFocused,
             isSending: viewModel.isStartingChat || viewModel.isSendingVoiceNote,
             isCompressingSession: viewModel.isCompressingSession,
@@ -491,7 +505,15 @@ struct ChatView: View {
         // toggle (#259): input, placeholder, and chrome mirror together.
         .environment(\.layoutDirection, chatLayoutDirection)
         .background(
-            NavigationAppearanceCompletionObserver(action: handleInitialAppearanceCompletion)
+            ZStack {
+                NavigationAppearanceCompletionObserver(action: handleInitialAppearanceCompletion)
+
+                Color.clear
+                    .onChange(of: externalComposerFocusRequestID) { _, _ in
+                        guard PlatformCapabilities.isMacCatalyst else { return }
+                        requestComposerFocusIfPossible()
+                    }
+            }
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
         )
@@ -572,30 +594,8 @@ struct ChatView: View {
         .navigationTitle(displayTitle)
         .navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier("chat-detail:\(viewModel.displayTitle)")
-        .task {
-            viewModel.setShowsLiveActivityResponseExcerpts(showsLiveActivityResponseExcerpts)
-            if loadsInitialMessages {
-                await loadMessages(appliesInitialFocus: false)
-            }
-            if initialAttachments.isEmpty {
-                isInitialComposerFocusContentReady = true
-                applyInitialComposerFocusPolicyIfNeeded()
-            }
-            await viewModel.loadComposerConfiguration()
-            await viewModel.refreshApprovalBypassState()
-            await uploadInitialAttachmentsIfNeeded()
-            isInitialComposerFocusContentReady = true
-            applyInitialComposerFocusPolicyIfNeeded()
-            if let lastError = viewModel.lastError {
-                onAPIError(lastError)
-            }
-        }
-        .task(id: gitAvailabilityTaskID) {
-            let availabilityViewModel = GitWorkspaceAvailabilityViewModel(session: session, server: server)
-            await MainActor.run {
-                gitAvailabilityViewModel = availabilityViewModel
-            }
-            await availabilityViewModel.loadIfNeeded()
+        .task(id: didCompleteInitialAppearance) {
+            await handleInitialAppearanceTask()
         }
         .onChange(of: scenePhase) {
                 handleScenePhaseChange(scenePhase)
@@ -643,6 +643,7 @@ struct ChatView: View {
             }
             .onChange(of: viewModel.responseCompletionHapticTrigger) {
                 guard viewModel.responseCompletionHapticTrigger > 0 else { return }
+                onResponseCompleted()
                 handleResponseCompletionSideEffects()
             }
             .toolbar {
@@ -683,7 +684,10 @@ struct ChatView: View {
                 ChatView(session: session, server: server, onAPIError: onAPIError)
             }
             .fullScreenCover(item: $selectableResponseText) { selectableText in
-                SelectableResponseTextView(selection: selectableText)
+                SelectableResponseTextView(
+                    selection: selectableText,
+                    onDismiss: restoreComposerFocusAfterPreviewIfNeeded
+                )
             }
             .sheet(item: $attachmentPreviewItem) { item in
                 ChatAttachmentPreviewView(
@@ -715,6 +719,7 @@ struct ChatView: View {
                 EditMessageSheet(
                     originalText: editContext?.copyText ?? "",
                     editDraft: $editDraft,
+                    onDismiss: restoreComposerFocusAfterPreviewIfNeeded,
                     onSubmit: {
                         if let context = editContext {
                             Task { await submitEdit(context) }
@@ -732,6 +737,7 @@ struct ChatView: View {
                 }
                 Button("Discard & Edit", role: .destructive) {
                     ChatHaptics.destructiveConfirmationAccepted(isEnabled: isHapticsEnabled)
+                    prepareForTemporaryComposerFocusHandoff()
                     showEditSheet = true
                 }
             } message: {
@@ -813,10 +819,6 @@ struct ChatView: View {
             )
             .transition(ChatMotion.disclosureTransition(reduceMotion: reduceMotion))
         }
-    }
-
-    private var gitAvailabilityTaskID: String {
-        "\(session.id)|\(server.absoluteString)"
     }
 
     private var gitWriteAvailability: GitWriteAvailability {
@@ -1108,6 +1110,9 @@ struct ChatView: View {
             isRespondingToClarification: viewModel.isRespondingToClarification,
             clarificationErrorMessage: viewModel.clarificationErrorMessage,
             hidesRunStatusAccessibility: activeRunStatusPresentation != nil,
+            keepsComposerFocusedOnInteraction: ComposerFocusPolicy.keepsFocusDuringTranscriptInteraction(
+                isMacCatalyst: PlatformCapabilities.isMacCatalyst
+            ),
             showsThinkingAndToolCards: showsThinkingAndToolCards,
             showsAssistantTypingIndicator: showsAssistantTypingIndicator,
             showsScrollToBottomButton: showsScrollToBottomButton,
@@ -1154,7 +1159,7 @@ struct ChatView: View {
                 await loadOlderMessages()
             },
             onUpdateScrollMetrics: updateScrollMetrics,
-            onDismissKeyboard: dismissKeyboard,
+            onDismissKeyboard: handleTranscriptFocusInteraction,
             onScrollToBottom: scrollToBottom,
             onScrollToLatestTranscriptMessage: { proxy in
                 scrollToLatestTranscriptMessage(proxy)
@@ -1182,6 +1187,7 @@ struct ChatView: View {
                 }
             },
             onSelectText: { context in
+                prepareForTemporaryComposerFocusHandoff()
                 selectableResponseText = SelectableResponseText(context: context)
             },
             onRegenerate: beginRegenerateResponse,
@@ -1324,6 +1330,60 @@ struct ChatView: View {
         transcriptMessages.last?.message.role
     }
 
+    private func prepareInitialAppearance() {
+        viewModel.setShowsLiveActivityResponseExcerpts(showsLiveActivityResponseExcerpts)
+        if loadsInitialMessages {
+            viewModel.prepareInitialMessageLoad(modelContext: modelContext)
+        }
+    }
+
+    private func handleInitialAppearanceTask() async {
+        prepareInitialAppearance()
+
+        guard ChatInitialAppearancePolicy.shouldBeginAsyncWork(
+            hasCompletedAppearance: didCompleteInitialAppearance
+        ) else {
+            return
+        }
+
+        async let chatStartup: Void = performInitialAsyncWork()
+        async let gitAvailability: Void = loadInitialGitAvailability()
+        _ = await (chatStartup, gitAvailability)
+    }
+
+    private func performInitialAsyncWork() async {
+        guard !Task.isCancelled else { return }
+
+        if loadsInitialMessages {
+            await loadMessages(appliesInitialFocus: false)
+            guard !Task.isCancelled else { return }
+        }
+        if initialAttachments.isEmpty {
+            isInitialComposerFocusContentReady = true
+            applyInitialComposerFocusPolicyIfNeeded()
+        }
+        await viewModel.loadComposerConfiguration()
+        guard !Task.isCancelled else { return }
+
+        await viewModel.refreshApprovalBypassState()
+        guard !Task.isCancelled else { return }
+
+        await uploadInitialAttachmentsIfNeeded()
+        guard !Task.isCancelled else { return }
+
+        isInitialComposerFocusContentReady = true
+        applyInitialComposerFocusPolicyIfNeeded()
+        if let lastError = viewModel.lastError {
+            onAPIError(lastError)
+        }
+    }
+
+    private func loadInitialGitAvailability() async {
+        let availabilityViewModel = GitWorkspaceAvailabilityViewModel(session: session, server: server)
+        gitAvailabilityViewModel = availabilityViewModel
+        await availabilityViewModel.loadIfNeeded()
+    }
+
     private var goalControlMenu: some View {
         GoalControlsMenu(
             currentGoal: viewModel.currentGoal,
@@ -1422,6 +1482,7 @@ struct ChatView: View {
         }
 
         if didStart {
+            onMessageSubmitted()
             ChatHaptics.messageSent(isEnabled: isHapticsEnabled)
             if shouldRestoreFocusAfterSend {
                 requestComposerFocusIfPossible()
@@ -1445,6 +1506,7 @@ struct ChatView: View {
         )
 
         if didSend {
+            onMessageSubmitted()
             ChatHaptics.messageSent(isEnabled: isHapticsEnabled)
         }
 
@@ -1460,11 +1522,11 @@ struct ChatView: View {
 
         prepareTranscriptForExplicitSend()
 
-        draftMessage = ""
+        setDraftMessage("")
 
         let didStart = await viewModel.sendMessage(submittedDraft, modelContext: modelContext)
         if !didStart, draftMessage.isEmpty {
-            draftMessage = submittedDraft
+            setDraftMessage(submittedDraft)
         }
 
         return didStart
@@ -1487,13 +1549,13 @@ struct ChatView: View {
                     viewModel.appendLocalAssistantMessage(message)
                 }
             }
-            draftMessage = ""
+            setDraftMessage("")
         case .openedSession(let session):
             forkedSession = session
-            draftMessage = ""
+            setDraftMessage("")
         case .unsupported(let friendlyMessage):
             viewModel.setSendErrorMessage(friendlyMessage)
-            draftMessage = ""
+            setDraftMessage("")
         case .needsSubArg:
             viewModel.setSendErrorMessage(String(localized: "Choose a slash command or continue typing."))
         case .sendAsMessage:
@@ -1622,7 +1684,7 @@ struct ChatView: View {
 
         for url in fileURLs {
             do {
-                let file = try loadPastedFile(from: url, suggestedName: nil)
+                let file = try PastedAttachmentLoader.loadFile(from: url, suggestedName: nil)
                 await viewModel.uploadAttachment(data: file.data, filename: file.filename)
             } catch {
                 viewModel.setUploadAttachmentError(error.localizedDescription)
@@ -1682,7 +1744,11 @@ struct ChatView: View {
                 continue
             }
 
-            await viewModel.uploadAttachment(data: data, filename: pastedImageFilename(), previewData: data)
+            await viewModel.uploadAttachment(
+                data: data,
+                filename: PastedAttachmentLoader.imageFilename(),
+                previewData: data
+            )
         }
     }
 
@@ -1696,13 +1762,13 @@ struct ChatView: View {
                     return
                 }
 
-                guard let url = pastedFileURL(from: item) else {
+                guard let url = PastedAttachmentLoader.fileURL(from: item) else {
                     continuation.resume(throwing: PastedFileError.unreadableURL)
                     return
                 }
 
                 do {
-                    let file = try loadPastedFile(from: url, suggestedName: suggestedName)
+                    let file = try PastedAttachmentLoader.loadFile(from: url, suggestedName: suggestedName)
                     continuation.resume(returning: file)
                 } catch {
                     continuation.resume(throwing: error)
@@ -1721,40 +1787,12 @@ struct ChatView: View {
 
         for url in fileURLs {
             do {
-                let file = try loadPastedFile(from: url, suggestedName: nil)
+                let file = try PastedAttachmentLoader.loadFile(from: url, suggestedName: nil)
                 await viewModel.uploadAttachment(data: file.data, filename: file.filename)
             } catch {
                 viewModel.setUploadAttachmentError(error.localizedDescription)
             }
         }
-    }
-
-    private func loadPastedFile(from url: URL, suggestedName: String?) throws -> PastedFile {
-        let didStartAccessing = url.startAccessingSecurityScopedResource()
-        defer {
-            if didStartAccessing {
-                url.stopAccessingSecurityScopedResource()
-            }
-        }
-
-        try validateAttachmentSize(for: url)
-        let data = try Data(contentsOf: url)
-        let filename = url.lastPathComponent.isEmpty
-            ? suggestedName ?? "pasted-file"
-            : url.lastPathComponent
-        return PastedFile(data: data, filename: filename)
-    }
-
-    private func validateAttachmentSize(for url: URL) throws {
-        let values = try url.resourceValues(forKeys: [.fileSizeKey])
-        guard let size = values.fileSize,
-              size > PendingAttachment.maximumUploadBytes
-        else {
-            return
-        }
-
-        let filename = url.lastPathComponent.isEmpty ? String(localized: "Selected file") : url.lastPathComponent
-        throw PastedFileError.fileTooLarge(filename: filename)
     }
 
     private func loadPastedImage(from provider: NSItemProvider) async throws -> PastedFile {
@@ -1779,37 +1817,11 @@ struct ChatView: View {
                 continuation.resume(
                     returning: PastedFile(
                         data: data,
-                        filename: pastedImageFilename(suggestedName: suggestedName)
+                        filename: PastedAttachmentLoader.imageFilename(suggestedName: suggestedName)
                     )
                 )
             }
         }
-    }
-
-    private func pastedImageFilename(suggestedName: String? = nil) -> String {
-        if let suggestedName,
-           !suggestedName.isEmpty,
-           !URL(fileURLWithPath: suggestedName).pathExtension.isEmpty {
-            return suggestedName
-        }
-
-        return "image_\(Int(Date().timeIntervalSince1970))_\(UUID().uuidString.prefix(4)).jpg"
-    }
-
-    private func pastedFileURL(from item: NSSecureCoding?) -> URL? {
-        if let url = item as? URL {
-            return url
-        }
-
-        if let data = item as? Data {
-            return URL(dataRepresentation: data, relativeTo: nil)
-        }
-
-        if let string = item as? String {
-            return URL(string: string) ?? URL(fileURLWithPath: string)
-        }
-
-        return nil
     }
 
     private func handleScenePhaseChange(_ phase: ScenePhase) {
@@ -2043,7 +2055,10 @@ struct ChatView: View {
         guard !didApplyInitialComposerFocusPolicy else { return }
         guard didCompleteInitialAppearance, isInitialComposerFocusContentReady else { return }
 
-        if !viewModel.messages.isEmpty {
+        guard ComposerFocusPolicy.shouldAutoFocusOnAppearance(
+            hasMessages: !viewModel.messages.isEmpty,
+            isMacCatalyst: PlatformCapabilities.isMacCatalyst
+        ) else {
             didApplyInitialComposerFocusPolicy = true
             return
         }
@@ -2054,11 +2069,28 @@ struct ChatView: View {
     }
 
     private func presentPreviewRestoringComposerFocusIfNeeded(_ present: () -> Void) {
-        shouldRestoreComposerFocusAfterPreview = composerIsFocused
+        prepareForTemporaryComposerFocusHandoff()
+        present()
+    }
+
+    private func prepareForTemporaryComposerFocusHandoff() {
+        shouldRestoreComposerFocusAfterPreview = ComposerFocusPolicy.shouldRestoreAfterTemporaryInput(
+            wasComposerFocused: composerIsFocused,
+            isMacCatalyst: PlatformCapabilities.isMacCatalyst
+        )
         if composerIsFocused {
             composerIsFocused = false
         }
-        present()
+    }
+
+    private func handleTranscriptFocusInteraction() {
+        if ComposerFocusPolicy.keepsFocusDuringTranscriptInteraction(
+            isMacCatalyst: PlatformCapabilities.isMacCatalyst
+        ) {
+            requestComposerFocusIfPossible()
+        } else {
+            dismissKeyboard()
+        }
     }
 
     private func restoreComposerFocusAfterPreviewIfNeeded() {
@@ -2137,6 +2169,7 @@ struct ChatView: View {
         if messagesAfter > 0 {
             showEditDiscardConfirmation = true
         } else {
+            prepareForTemporaryComposerFocusHandoff()
             showEditSheet = true
         }
     }
@@ -2195,6 +2228,18 @@ struct ChatView: View {
         }
 
         return String(localized: "Switch to \(profile.displayName) and start a new session. This keeps the current transcript on its original profile.")
+    }
+
+    private var persistedDraftMessage: Binding<String> {
+        Binding(
+            get: { draftMessage },
+            set: { setDraftMessage($0) }
+        )
+    }
+
+    private func setDraftMessage(_ newDraft: String) {
+        draftMessage = newDraft
+        SessionDraftPersistence.save(newDraft, for: session.sessionId, server: server)
     }
 
     private func transcriptMessagesAfter(_ context: MessageActionContext) -> Int {
@@ -2331,12 +2376,76 @@ enum ChatToolbarSubtitleResolver {
     }
 }
 
-private struct PastedFile {
+enum PastedAttachmentLoader {
+    nonisolated static func fileURL(from item: NSSecureCoding?) -> URL? {
+        let url: URL?
+        if let pastedURL = item as? URL {
+            url = pastedURL
+        } else if let data = item as? Data {
+            url = URL(dataRepresentation: data, relativeTo: nil)
+        } else if let string = item as? String, !string.isEmpty {
+            if let parsedURL = URL(string: string), parsedURL.scheme != nil {
+                url = parsedURL
+            } else {
+                url = URL(fileURLWithPath: string)
+            }
+        } else {
+            url = nil
+        }
+
+        guard let url, url.isFileURL else { return nil }
+        return url
+    }
+
+    nonisolated static func loadFile(from url: URL, suggestedName: String?) throws -> PastedFile {
+        guard url.isFileURL else {
+            throw PastedFileError.unreadableURL
+        }
+
+        let didStartAccessing = url.startAccessingSecurityScopedResource()
+        defer {
+            if didStartAccessing {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        try validateAttachmentSize(for: url)
+        let data = try Data(contentsOf: url)
+        let filename = url.lastPathComponent.isEmpty
+            ? suggestedName ?? "pasted-file"
+            : url.lastPathComponent
+        return PastedFile(data: data, filename: filename)
+    }
+
+    nonisolated static func imageFilename(suggestedName: String? = nil) -> String {
+        if let suggestedName,
+           !suggestedName.isEmpty,
+           !URL(fileURLWithPath: suggestedName).pathExtension.isEmpty {
+            return suggestedName
+        }
+
+        return "image_\(Int(Date().timeIntervalSince1970))_\(UUID().uuidString.prefix(4)).jpg"
+    }
+
+    private nonisolated static func validateAttachmentSize(for url: URL) throws {
+        let values = try url.resourceValues(forKeys: [.fileSizeKey])
+        guard let size = values.fileSize,
+              size > PendingAttachment.maximumUploadBytes
+        else {
+            return
+        }
+
+        let filename = url.lastPathComponent.isEmpty ? String(localized: "Selected file") : url.lastPathComponent
+        throw PastedFileError.fileTooLarge(filename: filename)
+    }
+}
+
+struct PastedFile: Equatable, Sendable {
     let data: Data
     let filename: String
 }
 
-private enum PastedFileError: LocalizedError {
+enum PastedFileError: LocalizedError, Sendable {
     case unreadableURL
     case unreadableImage
     case fileTooLarge(filename: String)

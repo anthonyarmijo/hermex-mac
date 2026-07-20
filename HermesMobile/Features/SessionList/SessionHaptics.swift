@@ -36,6 +36,8 @@ enum SessionHaptics {
     }
 
     private static func perform(_ feedback: SessionHapticFeedback) {
+        guard PlatformCapabilities.supportsHaptics else { return }
+
         switch feedback {
         case .lightImpact:
             UIImpactFeedbackGenerator(style: .light).impactOccurred()

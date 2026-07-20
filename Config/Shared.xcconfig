@@ -1,14 +1,17 @@
 // Shared app-identity and signing defaults, attached to the project as the
 // base configuration for both build configurations (Debug and Release).
 //
-// Contributors: never edit this file or project.pbxproj to sign with your own
-// Apple team. Create Config/Local.xcconfig (gitignored) instead — see
-// CONTRIBUTING.md ("Code signing for contributors").
+// Forked by Anthony Armijo — uses his Apple Developer team and bundle ID.
 
-DEVELOPMENT_TEAM = 6GYD9C9N6R
+DEVELOPMENT_TEAM = 8UV3BJB6XS
 APP_IDENTIFIER_SUFFIX =
-APP_BUNDLE_IDENTIFIER = com.uzairansar.hermesmobile$(APP_IDENTIFIER_SUFFIX)
-APP_GROUP_IDENTIFIER = group.com.uzairansar.hermesmobile$(APP_IDENTIFIER_SUFFIX)
+APP_BUNDLE_IDENTIFIER = com.anthonyarmijo.hermex$(APP_IDENTIFIER_SUFFIX)
+APP_GROUP_IDENTIFIER = group.com.anthonyarmijo.hermex$(APP_IDENTIFIER_SUFFIX)
+
+// SE-0418 lets Swift infer Sendable for key-path literals that capture only
+// Sendable values. Keep this target-scoped so package dependencies retain
+// their own language-feature settings.
+SWIFT_UPCOMING_FEATURE_INFER_SENDABLE_FROM_CAPTURES = YES
 
 // Optional per-machine overrides. This include must stay last: later
 // assignments win, so Local.xcconfig values override the defaults above.
