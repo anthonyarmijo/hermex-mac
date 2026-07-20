@@ -214,6 +214,34 @@ final class KanbanCardEditorStateTests: XCTestCase {
         XCTAssertNil(request?.status)
     }
 
+    func testRunningExitRequiresConfirmationBeforeWrite() async {
+        let client = CardEditorClient(
+            editResults: [.success(.overwritten)],
+            detailResults: [.success(.runningBaseline)]
+        )
+        let state = KanbanCardEditorState(
+            mode: .edit(cardID: "CARD-1"),
+            board: "main",
+            client: client,
+            card: .runningBaseline
+        )
+        state.title = "My local draft"
+        state.status = "ready"
+
+        XCTAssertTrue(state.needsRunningExitConfirmation)
+        await state.save(allowsMutation: true)
+        XCTAssertEqual(state.submission, .idle)
+        var editCalls = await client.editCallCount
+        XCTAssertEqual(editCalls, 0)
+
+        await state.save(allowsMutation: true, runningExitConfirmed: true)
+        XCTAssertEqual(state.submission, .succeeded(cardID: "CARD-1"))
+        editCalls = await client.editCallCount
+        XCTAssertEqual(editCalls, 1)
+        let request = await client.lastEditRequest
+        XCTAssertEqual(request?.status, "ready")
+    }
+
     func testSaveIsSerializedWhilePreflightIsInFlight() async throws {
         let client = StaleEditorClient()
         let state = KanbanCardEditorState(

@@ -111,6 +111,12 @@ final class KanbanCardEditorState: Identifiable {
         !isEditing && status == "ready" && normalized(assignee) == nil
     }
 
+    var needsRunningExitConfirmation: Bool {
+        guard isEditing, status != statusAtOpen else { return false }
+        let serverStatus = remoteCard?.status?.rawValue ?? statusAtOpen
+        return serverStatus == "running" && status != "running"
+    }
+
     var canSubmit: Bool {
         !submission.isInFlight && submission != .conflict
     }
@@ -133,7 +139,12 @@ final class KanbanCardEditorState: Identifiable {
         }
     }
 
-    func save(allowsMutation: Bool, readyUnassignedConfirmed: Bool = false, overwriteConflict: Bool = false) async {
+    func save(
+        allowsMutation: Bool,
+        readyUnassignedConfirmed: Bool = false,
+        runningExitConfirmed: Bool = false,
+        overwriteConflict: Bool = false
+    ) async {
         guard !submission.isInFlight else { return }
         guard allowsMutation else {
             submission = .failed
@@ -141,6 +152,9 @@ final class KanbanCardEditorState: Identifiable {
         }
         guard validate() else { return }
         if needsReadyUnassignedConfirmation && !readyUnassignedConfirmed {
+            return
+        }
+        if needsRunningExitConfirmation && !runningExitConfirmed {
             return
         }
 
@@ -179,6 +193,11 @@ final class KanbanCardEditorState: Identifiable {
             return
         }
         if needsReadyUnassignedConfirmation && !readyUnassignedConfirmed {
+            submission = .idle
+            activeAttemptID = nil
+            return
+        }
+        if needsRunningExitConfirmation && !runningExitConfirmed {
             submission = .idle
             activeAttemptID = nil
             return

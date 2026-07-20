@@ -184,6 +184,7 @@ final class LocalizationCatalogTests: XCTestCase {
         let editorKeys = [
             "Edit Card", "New Card", "Title", "Title is required.", "Assignment", "Execution",
             "Prerequisite", "Create Ready, Unassigned Card?", "Reload Server Version",
+            "Move Card Out of Running?", "Moving this Card out of Running may clear its claim and worker state.",
             "Review and Overwrite", "This Card changed on the server after the editor opened. Your draft has been preserved.",
             "Workspace, Skills, Maximum Runtime, and Prerequisite are set when the Card is created and cannot be edited here."
         ]

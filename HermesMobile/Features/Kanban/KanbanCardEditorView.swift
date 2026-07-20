@@ -8,8 +8,11 @@ struct KanbanCardEditorView: View {
 
     @FocusState private var focusedField: Field?
     @State private var showsReadyWarning = false
+    @State private var showsRunningExitWarning = false
     @State private var showsReloadConfirmation = false
     @State private var hasConfirmedReadyUnassigned = false
+    @State private var hasConfirmedRunningExit = false
+    @State private var pendingOverwriteConflict = false
 
     private enum Field: Hashable {
         case title, body, tenant, priority, workspacePath, skills, maximumRuntime, prerequisite
@@ -35,14 +38,26 @@ struct KanbanCardEditorView: View {
             .onChange(of: state.submission) { _, submission in
                 handle(submission)
             }
+            .onChange(of: state.status) {
+                hasConfirmedRunningExit = false
+            }
             .alert("Create Ready, Unassigned Card?", isPresented: $showsReadyWarning) {
-                Button("Cancel", role: .cancel) {}
+                Button("Cancel", role: .cancel) { pendingOverwriteConflict = false }
                 Button("Create") {
                     hasConfirmedReadyUnassigned = true
-                    submit()
+                    submit(overwriteConflict: pendingOverwriteConflict)
                 }
             } message: {
                 Text("The Dispatcher skips Ready Cards without an Assigned Profile.")
+            }
+            .alert("Move Card Out of Running?", isPresented: $showsRunningExitWarning) {
+                Button("Cancel", role: .cancel) { pendingOverwriteConflict = false }
+                Button("Continue Anyway", role: .destructive) {
+                    hasConfirmedRunningExit = true
+                    beginSubmit(overwriteConflict: pendingOverwriteConflict)
+                }
+            } message: {
+                Text("Moving this Card out of Running may clear its claim and worker state.")
             }
             .alert("Reload Server Version?", isPresented: $showsReloadConfirmation) {
                 Button("Cancel", role: .cancel) {}
@@ -219,7 +234,7 @@ struct KanbanCardEditorView: View {
                 }
                 Button("Reload Server Version") { showsReloadConfirmation = true }
                 Button("Review and Overwrite") {
-                    Task { await state.save(allowsMutation: allowsMutation, readyUnassignedConfirmed: true, overwriteConflict: true) }
+                    beginSubmit(overwriteConflict: true)
                 }
             }
         }
@@ -245,19 +260,25 @@ struct KanbanCardEditorView: View {
         }
     }
 
-    private func beginSubmit() {
-        if state.needsReadyUnassignedConfirmation && !hasConfirmedReadyUnassigned {
+    private func beginSubmit(overwriteConflict: Bool = false) {
+        pendingOverwriteConflict = overwriteConflict
+        if state.needsRunningExitConfirmation && !hasConfirmedRunningExit {
+            showsRunningExitWarning = true
+        } else if state.needsReadyUnassignedConfirmation && !hasConfirmedReadyUnassigned {
             showsReadyWarning = true
         } else {
-            submit()
+            submit(overwriteConflict: overwriteConflict)
         }
     }
 
-    private func submit() {
+    private func submit(overwriteConflict: Bool = false) {
+        pendingOverwriteConflict = false
         Task {
             await state.save(
                 allowsMutation: allowsMutation,
-                readyUnassignedConfirmed: hasConfirmedReadyUnassigned
+                readyUnassignedConfirmed: hasConfirmedReadyUnassigned,
+                runningExitConfirmed: hasConfirmedRunningExit,
+                overwriteConflict: overwriteConflict
             )
         }
     }

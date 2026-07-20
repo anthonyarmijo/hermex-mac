@@ -45594,6 +45594,44 @@
         }
       }
     },
+    "Move Card Out of Running?" : { "localizations" : {
+      "ar" : { "stringUnit" : { "state" : "translated", "value" : "نقل البطاقة من حالة التشغيل؟" } },
+      "de" : { "stringUnit" : { "state" : "translated", "value" : "Karte aus „Wird ausgeführt“ verschieben?" } },
+      "es" : { "stringUnit" : { "state" : "translated", "value" : "¿Mover la tarjeta fuera de En ejecución?" } },
+      "fr" : { "stringUnit" : { "state" : "translated", "value" : "Déplacer la carte hors de l’état En cours ?" } },
+      "he" : { "stringUnit" : { "state" : "translated", "value" : "להעביר את הכרטיס ממצב ״פועל״?" } },
+      "it" : { "stringUnit" : { "state" : "translated", "value" : "Spostare la scheda da In esecuzione?" } },
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "カードを実行中から移動しますか？" } },
+      "ko" : { "stringUnit" : { "state" : "translated", "value" : "카드를 실행 중 상태에서 이동할까요?" } },
+      "nl" : { "stringUnit" : { "state" : "translated", "value" : "Kaart uit Actief verplaatsen?" } },
+      "pl" : { "stringUnit" : { "state" : "translated", "value" : "Przenieść kartę ze stanu W toku?" } },
+      "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Mover o cartão para fora de Em execução?" } },
+      "ru" : { "stringUnit" : { "state" : "translated", "value" : "Переместить карточку из статуса «Выполняется»?" } },
+      "tr" : { "stringUnit" : { "state" : "translated", "value" : "Kart Çalışıyor durumundan çıkarılsın mı?" } },
+      "ur" : { "stringUnit" : { "state" : "translated", "value" : "کارڈ کو جاری حالت سے منتقل کریں؟" } },
+      "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "将卡片移出“运行中”状态？" } },
+      "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "將卡片移出「執行中」狀態？" } },
+      "zh-HK" : { "stringUnit" : { "state" : "translated", "value" : "將卡片移出「執行中」狀態？" } }
+    } },
+    "Moving this Card out of Running may clear its claim and worker state." : { "localizations" : {
+      "ar" : { "stringUnit" : { "state" : "translated", "value" : "قد يؤدي نقل هذه البطاقة من حالة التشغيل إلى مسح حالة المطالبة والعامل." } },
+      "de" : { "stringUnit" : { "state" : "translated", "value" : "Beim Verschieben dieser Karte aus „Wird ausgeführt“ können ihr Anspruch und Worker-Status gelöscht werden." } },
+      "es" : { "stringUnit" : { "state" : "translated", "value" : "Mover esta tarjeta fuera de En ejecución puede borrar su reclamación y el estado del trabajador." } },
+      "fr" : { "stringUnit" : { "state" : "translated", "value" : "Déplacer cette carte hors de l’état En cours peut effacer sa réservation et l’état du worker." } },
+      "he" : { "stringUnit" : { "state" : "translated", "value" : "העברת הכרטיס ממצב ״פועל״ עלולה לנקות את מצב התביעה והעובד שלו." } },
+      "it" : { "stringUnit" : { "state" : "translated", "value" : "Spostare questa scheda da In esecuzione può cancellarne la rivendicazione e lo stato del worker." } },
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "このカードを実行中から移動すると、クレームとワーカーの状態が消去される場合があります。" } },
+      "ko" : { "stringUnit" : { "state" : "translated", "value" : "이 카드를 실행 중 상태에서 이동하면 클레임 및 워커 상태가 지워질 수 있습니다." } },
+      "nl" : { "stringUnit" : { "state" : "translated", "value" : "Als je deze kaart uit Actief verplaatst, kunnen de claim en workerstatus worden gewist." } },
+      "pl" : { "stringUnit" : { "state" : "translated", "value" : "Przeniesienie tej karty ze stanu W toku może wyczyścić jej przypisanie i stan procesu roboczego." } },
+      "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Mover este cartão para fora de Em execução pode limpar sua reivindicação e o estado do worker." } },
+      "ru" : { "stringUnit" : { "state" : "translated", "value" : "При перемещении этой карточки из статуса «Выполняется» могут быть очищены данные закрепления и рабочего процесса." } },
+      "tr" : { "stringUnit" : { "state" : "translated", "value" : "Bu Kartı Çalışıyor durumundan çıkarmak, talep ve çalışan durumunu temizleyebilir." } },
+      "ur" : { "stringUnit" : { "state" : "translated", "value" : "اس کارڈ کو جاری حالت سے منتقل کرنے سے اس کی کلیم اور ورکر حالت صاف ہو سکتی ہے۔" } },
+      "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "将此卡片移出“运行中”状态可能会清除其认领和工作进程状态。" } },
+      "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "將此卡片移出「執行中」狀態可能會清除其認領與工作程序狀態。" } },
+      "zh-HK" : { "stringUnit" : { "state" : "translated", "value" : "將此卡片移出「執行中」狀態可能會清除其認領與工作程序狀態。" } }
+    } },
     "Move to Project" : {
       "localizations" : {
         "ar" : {
