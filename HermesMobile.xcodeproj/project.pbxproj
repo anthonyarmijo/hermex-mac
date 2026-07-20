@@ -1911,6 +1911,7 @@
 				"CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = HermesMobile/Resources/HermesMobileMac.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				"CURRENT_PROJECT_VERSION[sdk=macosx*]" = 1;
 				DEVELOPMENT_ASSET_PATHS = "";
 				"ENABLE_HARDENED_RUNTIME[sdk=macosx*]" = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -1926,6 +1927,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.4;
+				"MARKETING_VERSION[sdk=macosx*]" = 1.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(APP_BUNDLE_IDENTIFIER)";
 				"PRODUCT_BUNDLE_IDENTIFIER[sdk=macosx*]" = com.anthonyarmijo.hermex.mac;
 				PRODUCT_MODULE_NAME = HermesMobile;
@@ -1951,6 +1953,7 @@
 				"CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = HermesMobile/Resources/HermesMobileMac.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				"CURRENT_PROJECT_VERSION[sdk=macosx*]" = 1;
 				DEVELOPMENT_ASSET_PATHS = "";
 				"ENABLE_HARDENED_RUNTIME[sdk=macosx*]" = YES;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -1966,6 +1969,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.4;
+				"MARKETING_VERSION[sdk=macosx*]" = 1.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(APP_BUNDLE_IDENTIFIER)";
 				"PRODUCT_BUNDLE_IDENTIFIER[sdk=macosx*]" = com.anthonyarmijo.hermex.mac;
 				PRODUCT_MODULE_NAME = HermesMobile;

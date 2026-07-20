@@ -290,7 +290,12 @@ struct SessionListView: View {
                     .navigationSplitViewColumnWidth(min: 280, ideal: 340, max: 420)
             } detail: {
                 NavigationStack {
-                    regularWidthDetail
+                    ZStack {
+                        Color(.systemBackground)
+                            .ignoresSafeArea()
+
+                        regularWidthDetail
+                    }
                 }
                 // Reset only the detail navigation path when a sidebar root is
                 // selected. Applying this identity to the entire split view also

@@ -1,4 +1,4 @@
-# Contributor CI: build and run the full XCTest suite on every pull request
+# Contributor CI: build and run the full iPhone and Mac Catalyst XCTest suites on every pull request
 # that touches app code. Docs-only PRs (markdown, docs/, community files) skip
 # the macOS runner entirely and pass via the cheap gate job.
 #
@@ -8,9 +8,8 @@
 #
 # Uses no repository secrets, so PRs from forks get green CI too.
 #
-# Code signing is disabled (CODE_SIGNING_ALLOWED=NO) — fine for compile/test
-# runs per TESTFLIGHT.md; the "simulator installs must be signed" rule applies
-# to manual simulator testing, not CI.
+# Code signing is disabled (CODE_SIGNING_ALLOWED=NO) for CI-only test hosts.
+# Manual simulator and Mac validation still use signed Debug builds.
 
 name: PR CI
 
@@ -31,7 +30,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      run_ios: ${{ steps.filter.outputs.run_ios }}
+      run_tests: ${{ steps.filter.outputs.run_tests }}
     steps:
       - name: Classify changed files
         id: filter
@@ -49,16 +48,16 @@ jobs:
           if [[ -n "${non_docs}" ]]; then
             echo "Non-docs changes detected — running the full suite:"
             echo "${non_docs}"
-            echo "run_ios=true" >> "$GITHUB_OUTPUT"
+            echo "run_tests=true" >> "$GITHUB_OUTPUT"
           else
             echo "Docs-only change — skipping the macOS runner."
-            echo "run_ios=false" >> "$GITHUB_OUTPUT"
+            echo "run_tests=false" >> "$GITHUB_OUTPUT"
           fi
 
-  test:
-    name: Build and Test
+  test_ios:
+    name: iPhone Build and Test
     needs: changes
-    if: needs.changes.outputs.run_ios == 'true'
+    if: needs.changes.outputs.run_tests == 'true'
     runs-on: macos-26
     timeout-minutes: 90
 
@@ -194,9 +193,50 @@ jobs:
           path: ${{ env.RESULT_BUNDLE_PATH }}
           if-no-files-found: ignore
 
+  test_mac:
+    name: Mac Catalyst Build and Test
+    needs: changes
+    if: needs.changes.outputs.run_tests == 'true'
+    runs-on: macos-26
+    timeout-minutes: 90
+
+    env:
+      PROJECT_PATH: HermesMobile.xcodeproj
+      SCHEME: HermesMobile
+      DERIVED_DATA_PATH: DerivedData-Mac
+      RESULT_BUNDLE_PATH: TestResults-Mac.xcresult
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Build and test Mac Catalyst
+        run: |
+          set -euo pipefail
+          xcodebuild test \
+            -project "${PROJECT_PATH}" \
+            -scheme "${SCHEME}" \
+            -destination "platform=macOS,arch=arm64,variant=Mac Catalyst" \
+            -derivedDataPath "${DERIVED_DATA_PATH}" \
+            -resultBundlePath "${RESULT_BUNDLE_PATH}" \
+            -enableCodeCoverage NO \
+            -showBuildTimingSummary \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Upload Mac test results on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mac-test-results
+          path: ${{ env.RESULT_BUNDLE_PATH }}
+          if-no-files-found: ignore
+
   gate:
     name: CI Gate
-    needs: [changes, test]
+    needs: [changes, test_ios, test_mac]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -205,12 +245,16 @@ jobs:
         run: |
           set -euo pipefail
           echo "changes: ${{ needs.changes.result }}"
-          echo "test: ${{ needs.test.result }}"
+          echo "test-ios: ${{ needs.test_ios.result }}"
+          echo "test-mac: ${{ needs.test_mac.result }}"
           if [[ "${{ needs.changes.result }}" != "success" ]]; then
             echo "Path detection failed — failing the gate." >&2
             exit 1
           fi
-          case "${{ needs.test.result }}" in
-            success|skipped) echo "Gate passed." ;;
-            *) echo "Build and Test did not pass — failing the gate." >&2; exit 1 ;;
-          esac
+          for result in "${{ needs.test_ios.result }}" "${{ needs.test_mac.result }}"; do
+            case "$result" in
+              success|skipped) ;;
+              *) echo "A platform test job did not pass — failing the gate." >&2; exit 1 ;;
+            esac
+          done
+          echo "Gate passed."

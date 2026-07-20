@@ -189,12 +189,13 @@ Build and test the native Apple Silicon slice locally:
 xcodebuild -project HermesMobile.xcodeproj -scheme HermesMobile \
   -destination 'platform=macOS,arch=arm64,variant=Mac Catalyst' build
 xcodebuild test -project HermesMobile.xcodeproj -scheme HermesMobile \
-  -destination 'platform=macOS,arch=arm64,variant=Mac Catalyst'
+  -destination 'platform=macOS,arch=arm64,variant=Mac Catalyst' \
+  -enableCodeCoverage NO
 ```
 
 To create a universal arm64/x86_64 Developer ID archive and export, install the owning team's `Developer ID Application` certificate and a **Mac Catalyst Developer ID** (`MAC_CATALYST_APP_DIRECT`) provisioning profile for `com.anthonyarmijo.hermex.mac`. The profile must authorize Keychain Sharing; without it, Mac Catalyst cannot persist the server credentials used by the connection flow.
 
-For repeatable local releases, put the per-machine signing configuration in the ignored `.env.release.local` file. Both release scripts load it automatically (or the file named by `HERMEX_MAC_RELEASE_ENV_FILE`):
+For repeatable local releases, put the per-machine signing configuration in the ignored `.env.release.local` file. The release scripts load it automatically (or the file named by `HERMEX_MAC_RELEASE_ENV_FILE`):
 
 ```zsh
 DEVELOPMENT_TEAM=8UV3BJB6XS
@@ -225,7 +226,23 @@ Then run:
 scripts/notarize-mac /path/to/Hermex.app
 ```
 
-The script submits the app, waits for acceptance, staples and validates the ticket, then performs a Gatekeeper assessment. Do not distribute the Developer ID build until that process succeeds.
+The script submits the app, waits for acceptance, staples and validates the ticket, then performs a Gatekeeper assessment. Package and notarize the public disk image only after that succeeds:
+
+```zsh
+scripts/package-mac-dmg /path/to/Hermex.app /path/to/Hermex-1.0.0-macOS-universal.dmg
+scripts/notarize-mac /path/to/Hermex-1.0.0-macOS-universal.dmg
+scripts/verify-mac-dmg --notarized /path/to/Hermex-1.0.0-macOS-universal.dmg
+```
+
+`package-mac-dmg` creates a compressed, signed image containing `Hermex.app` and an `/Applications` alias. `verify-mac-dmg` mounts it read-only and validates the image, inner app, universal architecture, signature, entitlements, profile, install alias, notarization tickets, and Gatekeeper assessments. Do not distribute the Developer ID build until every check succeeds.
+
+### GitHub Actions Mac release
+
+The manual `Mac Release` workflow validates an existing `mac-vX.Y.Z` tag at current `master`, runs the Mac Catalyst suite, imports ephemeral signing material, archives and notarizes the app and DMG, uploads the DMG plus SHA-256 file, and creates a **draft** GitHub Release. Publishing is always manual.
+
+Configure a protected GitHub environment named `mac-release`. Store `MAC_DEVELOPMENT_TEAM`, `MAC_DEVELOPER_ID_APPLICATION`, and `MAC_PROVISIONING_PROFILE_SPECIFIER` as environment variables. Store the base64 Developer ID `.p12`, its password, the base64 Mac Catalyst Developer ID profile, and the App Store Connect API key values as the environment secrets named in `.github/workflows/mac-release.yml`. Require maintainer approval and allow self-review for the single-maintainer release gate.
+
+For Mac 1.0.0, tag current `master` as `mac-v1.0.0`, dispatch the workflow from `master`, enter the tag, and type `RELEASE_MAC`. Inspect and install the draft asset before publishing it.
 
 ## TestFlight Readiness Notes
 
@@ -345,7 +362,7 @@ GitHub Actions external-capable TestFlight flow:
 ## Full-App Manual Regression Checklist
 
 Use this before internal TestFlight smoke builds and again before adding external testers.
-Capture bugs, polish notes, and follow-up ideas in [GitHub Issues](https://github.com/uzairansaruzi/hermex/issues).
+Capture bugs, polish notes, and follow-up ideas in [GitHub Issues](https://github.com/anthonyarmijo/hermex-mac/issues).
 
 ### Onboarding/Auth
 - Fresh install opens onboarding.

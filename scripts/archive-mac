@@ -42,6 +42,14 @@ signing_arguments=(
 
 signing_arguments+=(HERMEX_MAC_PROVISIONING_PROFILE_SPECIFIER="$provisioning_profile")
 
+if [[ -n "${HERMEX_MAC_MARKETING_VERSION:-}" ]]; then
+  signing_arguments+=(MARKETING_VERSION="$HERMEX_MAC_MARKETING_VERSION")
+fi
+
+if [[ -n "${HERMEX_MAC_BUILD_NUMBER:-}" ]]; then
+  signing_arguments+=(CURRENT_PROJECT_VERSION="$HERMEX_MAC_BUILD_NUMBER")
+fi
+
 DEVELOPER_DIR="$developer_dir" xcodebuild \
 	-quiet \
 	-project "$repo_root/HermesMobile.xcodeproj" \

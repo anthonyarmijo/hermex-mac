@@ -6,13 +6,13 @@ read the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Local setup
 
-- **Xcode 26 or newer** (the project builds with the iOS 18 SDK or later; the
-  deployment target is iOS 18).
+- **Xcode 26 or newer** (the Mac Catalyst deployment target is macOS 15; the
+  shared iPhone target remains available for upstream compatibility).
 - Clone the repo and open `HermesMobile.xcodeproj`. Dependencies resolve
   automatically via Swift Package Manager — the dependency list is locked in
   `PROJECT_SPEC.md`; do not add new ones without maintainer approval.
-- Build and run the **`HermesMobile`** scheme on an iPhone simulator
-  (`iPhone 17` is the reference device; any recent iPhone simulator works).
+- Build and run the **`HermesMobile`** scheme as a Mac Catalyst app. When a
+  change affects shared code, also validate the `iPhone 17` simulator.
 - To actually use the app you need your own
   [hermes-webui](https://github.com/nesquena/hermes-webui) server — the app is
   a client only. See the [README](README.md#you-need-your-own-server) for
@@ -25,6 +25,15 @@ The full XCTest suite is the repo's green bar — it must pass before any PR:
 
 ```zsh
 xcodebuild test -project HermesMobile.xcodeproj -scheme HermesMobile -destination 'platform=iOS Simulator,name=iPhone 17'
+```
+
+Run the Mac Catalyst suite with coverage disabled to avoid Xcode instrumenting
+the C targets in `swift-cmark` without linking its coverage runtime:
+
+```zsh
+xcodebuild test -project HermesMobile.xcodeproj -scheme HermesMobile \
+  -destination 'platform=macOS,arch=arm64,variant=Mac Catalyst' \
+  -enableCodeCoverage NO
 ```
 
 If that simulator name isn't installed, pick a nearby iPhone from
@@ -104,12 +113,11 @@ bug here, reproduce it in the hermes-webui **web UI** against the same server:
    itself built with coding agents, so it's normal context for review — not a
    gate.
 
-`master` is the protected release-candidate branch. Releases and TestFlight
-uploads (`.github/workflows/*-testflight.yml`) are maintainer-only operations —
-contributors never need App Store Connect access.
+`master` is the protected Mac release-candidate branch. Developer ID signing,
+notarization, and GitHub Releases are maintainer-only operations; contributors
+never need release credentials.
 
 ## Questions
 
-Ask in [GitHub Discussions](https://github.com/uzairansaruzi/hermex/discussions)
-if something here is unclear or wrong — docs fixes are welcome contributions
-too.
+Open an issue in [this fork](https://github.com/anthonyarmijo/hermex-mac/issues)
+if something here is unclear or wrong — docs fixes are welcome contributions too.

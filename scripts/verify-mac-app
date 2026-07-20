@@ -63,6 +63,15 @@ category="$(require_plist_string "$info_plist" LSApplicationCategoryType)"
 require_plist_string "$info_plist" NSMicrophoneUsageDescription >/dev/null
 require_plist_string "$info_plist" NSSpeechRecognitionUsageDescription >/dev/null
 
+marketing_version="$(require_plist_string "$info_plist" CFBundleShortVersionString)"
+build_number="$(require_plist_string "$info_plist" CFBundleVersion)"
+if [[ -n "${HERMEX_MAC_MARKETING_VERSION:-}" && "$marketing_version" != "$HERMEX_MAC_MARKETING_VERSION" ]]; then
+  fail "CFBundleShortVersionString is $marketing_version; expected $HERMEX_MAC_MARKETING_VERSION"
+fi
+if [[ -n "${HERMEX_MAC_BUILD_NUMBER:-}" && "$build_number" != "$HERMEX_MAC_BUILD_NUMBER" ]]; then
+  fail "CFBundleVersion is $build_number; expected $HERMEX_MAC_BUILD_NUMBER"
+fi
+
 codesign --verify --deep --strict --verbose=2 "$app_path"
 codesign_details="$(codesign -dvvv "$app_path" 2>&1)"
 grep -q '^Authority=Developer ID Application:' <<<"$codesign_details" \
@@ -136,6 +145,7 @@ echo "  Bundle ID:        $bundle_identifier"
 echo "  Team ID:          $expected_team"
 echo "  Architectures:    $architectures"
 echo "  Minimum macOS:    $minimum_system_version"
+echo "  Version:          $marketing_version ($build_number)"
 echo "  Hardened Runtime: enabled"
 echo "  App Sandbox:      enabled"
 echo "  Keychain group:   $keychain_access_group"

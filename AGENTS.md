@@ -1,9 +1,12 @@
 # AGENTS.md — working agreement for Hermex
 
-Hermex is a native SwiftUI iPhone app (Xcode target/scheme `HermesMobile`, App Store
-name `Hermex`) for a self-hosted `hermes-webui` server. `PROJECT_SPEC.md` is the
-product/API source of truth — if a request conflicts with it, stop and ask.
-Read by every agent (Codex, Claude Code, …); keep it tool-agnostic.
+Hermex for Mac is a macOS-focused SwiftUI Mac Catalyst fork of
+`uzairansaruzi/hermex` for a self-hosted `hermes-webui` server. The shared iPhone
+target remains buildable for upstream compatibility, but this fork's public
+distribution is the Mac app. The Xcode target/scheme remains `HermesMobile` and
+the product name is `Hermex`. `PROJECT_SPEC.md` is the product/API source of
+truth — if a request conflicts with it, stop and ask. Read by every agent
+(Codex, Claude Code, …); keep it tool-agnostic.
 
 ## Session start & wrap-up
 - Read `CURRENT.md` first if it exists — it holds the latest resumable state. It is
@@ -19,8 +22,8 @@ Read by every agent (Codex, Claude Code, …); keep it tool-agnostic.
 ## How work flows
 - One issue → one short `issue/<n>-slug` branch → one PR (branches with no issue use
   `chore/` or `fix/`). Issue/triage/domain conventions live in `docs/agents/`.
-- `master` is the protected release-candidate branch (the source for internal
-  TestFlight builds): keep it buildable, never do feature work on it.
+- `master` is the protected Mac release-candidate branch: keep it buildable and
+  never do feature work directly on it.
 - Pushing a branch, opening/updating a PR, or merging needs explicit human approval.
   Triage bot/review comments before accepting them.
 
@@ -52,19 +55,20 @@ Read by every agent (Codex, Claude Code, …); keep it tool-agnostic.
   (see `TESTFLIGHT.md`) and strips entitlements, so Keychain writes fail with
   `errSecMissingEntitlement` and login breaks. Put the app on the sim via XcodeBuildMCP
   `build_run_sim` or a plain signed Debug build (no signing-disabling flags), then install/launch.
-- Before asking for review or committing a slice: run the full XCTest suite, and
-  build + launch the app for the human's manual simulator test when UI changed.
+- Before asking for review or committing a slice: run the full iPhone and Mac
+  Catalyst XCTest suites, and build + launch the signed Mac app when UI changed.
 
-## App identity (resolved via xcconfig — not grep-able)
-Bundle ID `com.uzairansar.hermesmobile` · tests `….tests` · Team `6GYD9C9N6R` · SKU `hermes-mobile-ios`.
+## App identity
+Mac bundle ID and Keychain service `com.anthonyarmijo.hermex.mac` · shared iPhone
+bundle ID `com.anthonyarmijo.hermex` · Team `8UV3BJB6XS` · Mac releases use the
+`mac-vX.Y.Z` tag namespace.
 
-## "push to branch testflight" (maintainer-only)
-Upload the current branch to the side-by-side **Hermex Branch** internal TestFlight app
-(`com.uzairansar.hermesmobile.branch`) — a TestFlight upload, **not** a git push.
-Requires the maintainer's App Store Connect access; contributors never need this. Use a
-unique `CURRENT_PROJECT_VERSION` (e.g. `YYYYMMDDHHMM`) each time. Full commands + branch
-identity: `DEVELOPMENT.md`. Never touch the production `com.uzairansar.hermesmobile` app
-unless explicitly asked.
+## Mac release (maintainer-only)
+The `Mac Release` GitHub Actions workflow accepts an existing tag from current
+`master`, validates the Mac suite, signs and notarizes the universal app and DMG,
+and creates a draft GitHub Release. Dispatching that workflow, pushing its tag,
+or publishing its draft always requires explicit human approval. Full local and
+CI instructions live in `DEVELOPMENT.md`.
 
 ## Working with the human
 - Surface tradeoffs in plain English before non-obvious choices; when in doubt, ask.

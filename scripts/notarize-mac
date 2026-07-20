@@ -12,29 +12,65 @@ if [[ -f "$env_file" ]]; then
 fi
 
 if [[ $# -ne 1 ]]; then
-  echo "Usage: scripts/notarize-mac /path/to/Hermex.app" >&2
+  echo "Usage: scripts/notarize-mac /path/to/Hermex.app-or-dmg" >&2
   exit 2
 fi
 
-app_path="$1"
+artifact_path="${1%/}"
 notary_profile="${NOTARYTOOL_KEYCHAIN_PROFILE:-}"
+notary_key_path="${APP_STORE_CONNECT_KEY_PATH:-}"
+notary_key_id="${APP_STORE_CONNECT_KEY_ID:-}"
+notary_issuer_id="${APP_STORE_CONNECT_ISSUER_ID:-}"
 
-if [[ -z "$notary_profile" ]]; then
-  echo "Set NOTARYTOOL_KEYCHAIN_PROFILE in .env.release.local to a profile created with 'notarytool store-credentials'." >&2
+notary_arguments=()
+if [[ -n "$notary_profile" ]]; then
+  notary_arguments+=(--keychain-profile "$notary_profile")
+elif [[ -n "$notary_key_path" && -n "$notary_key_id" && -n "$notary_issuer_id" ]]; then
+  notary_arguments+=(--key "$notary_key_path" --key-id "$notary_key_id" --issuer "$notary_issuer_id")
+else
+  echo "Configure NOTARYTOOL_KEYCHAIN_PROFILE, or APP_STORE_CONNECT_KEY_PATH, APP_STORE_CONNECT_KEY_ID, and APP_STORE_CONNECT_ISSUER_ID." >&2
   exit 2
 fi
 
-if [[ ! -d "$app_path" ]]; then
-  echo "App bundle not found: $app_path" >&2
-  exit 2
-fi
+case "$artifact_path" in
+  *.app)
+    if [[ ! -d "$artifact_path" ]]; then
+      echo "App bundle not found: $artifact_path" >&2
+      exit 2
+    fi
 
-"$repo_root/scripts/verify-mac-app" "$app_path"
+    "$repo_root/scripts/verify-mac-app" "$artifact_path"
 
-archive_path="${app_path%.*}.notarization.zip"
+    temporary_directory="$(mktemp -d "${TMPDIR:-/tmp}/hermex-notarization.XXXXXX")"
+    archive_path="$temporary_directory/Hermex.zip"
+    cleanup() {
+      if [[ "$temporary_directory" == "${TMPDIR:-/tmp}/hermex-notarization."* ]]; then
+        rm -R "$temporary_directory"
+      fi
+    }
+    trap cleanup EXIT
 
-ditto -c -k --keepParent "$app_path" "$archive_path"
-xcrun notarytool submit "$archive_path" --keychain-profile "$notary_profile" --wait
-xcrun stapler staple "$app_path"
-xcrun stapler validate "$app_path"
-spctl --assess --type execute --verbose=4 "$app_path"
+    ditto -c -k --keepParent "$artifact_path" "$archive_path"
+    xcrun notarytool submit "$archive_path" "${notary_arguments[@]}" --wait
+    xcrun stapler staple "$artifact_path"
+    xcrun stapler validate "$artifact_path"
+    spctl --assess --type execute --verbose=4 "$artifact_path"
+    ;;
+  *.dmg)
+    if [[ ! -f "$artifact_path" ]]; then
+      echo "Disk image not found: $artifact_path" >&2
+      exit 2
+    fi
+
+    hdiutil verify "$artifact_path"
+    codesign --verify --strict --verbose=2 "$artifact_path"
+    xcrun notarytool submit "$artifact_path" "${notary_arguments[@]}" --wait
+    xcrun stapler staple "$artifact_path"
+    xcrun stapler validate "$artifact_path"
+    spctl --assess --type open --context context:primary-signature --verbose=4 "$artifact_path"
+    ;;
+  *)
+    echo "Unsupported artifact type: $artifact_path (expected .app or .dmg)" >&2
+    exit 2
+    ;;
+esac

@@ -1,11 +1,11 @@
 blank_issues_enabled: false
 contact_links:
   - name: Security vulnerability
-    url: https://github.com/uzairansaruzi/hermex/security/advisories/new
+    url: https://github.com/anthonyarmijo/hermex-mac/security/advisories/new
     about: Please report security issues privately, not as public issues.
   - name: hermes-webui (server) issues
     url: https://github.com/nesquena/hermes-webui/issues
     about: Bugs in the server itself belong in the upstream project.
   - name: Questions and help
-    url: https://github.com/uzairansaruzi/hermex/discussions
-    about: Questions and help — ask in Discussions, not issues.
+    url: https://github.com/anthonyarmijo/hermex-mac/issues/new/choose
+    about: Ask a Mac client question or request help from this fork's maintainer.
