@@ -192,20 +192,37 @@ xcodebuild test -project HermesMobile.xcodeproj -scheme HermesMobile \
   -destination 'platform=macOS,arch=arm64,variant=Mac Catalyst'
 ```
 
-To create a universal arm64/x86_64 Developer ID archive and export, install the owning team's `Developer ID Application` certificate and a **Mac Catalyst Developer ID** (`MAC_CATALYST_APP_DIRECT`) provisioning profile for `com.anthonyarmijo.hermex.mac`. The profile must authorize Keychain Sharing; without it, Mac Catalyst cannot persist the server credentials used by the connection flow. Set the certificate's Team ID and profile name:
+To create a universal arm64/x86_64 Developer ID archive and export, install the owning team's `Developer ID Application` certificate and a **Mac Catalyst Developer ID** (`MAC_CATALYST_APP_DIRECT`) provisioning profile for `com.anthonyarmijo.hermex.mac`. The profile must authorize Keychain Sharing; without it, Mac Catalyst cannot persist the server credentials used by the connection flow.
+
+For repeatable local releases, put the per-machine signing configuration in the ignored `.env.release.local` file. Both release scripts load it automatically (or the file named by `HERMEX_MAC_RELEASE_ENV_FILE`):
 
 ```zsh
-DEVELOPMENT_TEAM=<developer-id-team-id> \
-MAC_PROVISIONING_PROFILE_SPECIFIER='<developer-id-profile-name>' \
+DEVELOPMENT_TEAM=8UV3BJB6XS
+DEVELOPER_ID_APPLICATION='Developer ID Application: ANTHONY LUIS ARMIJO (8UV3BJB6XS)'
+MAC_PROVISIONING_PROFILE_SPECIFIER='Hermex-Mac-Catalyst'
+NOTARYTOOL_KEYCHAIN_PROFILE='<existing-notarytool-profile>'
+```
+
+With those values in place, archive with:
+
+```zsh
 scripts/archive-mac
 ```
 
 The output defaults to a timestamped directory under `.build/macos-release/`. Set `HERMEX_MAC_RELEASE_DIR` to choose another directory or `DEVELOPER_ID_APPLICATION` to select a specific signing identity. The archive enables Hardened Runtime and includes the sandbox entitlements required for outbound networking, user-selected files, microphone input, Photos access, and Keychain persistence. Before succeeding, the workflow runs `scripts/verify-mac-app` to validate the Developer ID signature and timestamp, universal arm64/x86_64 executable, macOS 15 deployment target, privacy descriptions, sandbox capabilities, resolved Keychain group, and matching embedded provisioning profile. The notarization script runs the same local verification before submitting the app.
 
-Notarization uploads the app to Apple and therefore is a separate, explicit maintainer step. After storing credentials with `notarytool store-credentials`, run:
+Notarization uploads the app to Apple and therefore is a separate, explicit maintainer step. If this Mac does not already have a working `notarytool` Keychain profile, create one once (the command securely prompts for the app-specific password):
 
 ```zsh
-NOTARYTOOL_KEYCHAIN_PROFILE=<profile> scripts/notarize-mac /path/to/Hermex.app
+xcrun notarytool store-credentials '<local-profile-name>' \
+  --apple-id '<Apple Developer account email>' \
+  --team-id 8UV3BJB6XS
+```
+
+Then run:
+
+```zsh
+scripts/notarize-mac /path/to/Hermex.app
 ```
 
 The script submits the app, waits for acceptance, staples and validates the ticket, then performs a Gatekeeper assessment. Do not distribute the Developer ID build until that process succeeds.

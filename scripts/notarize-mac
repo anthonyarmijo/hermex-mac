@@ -2,9 +2,17 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+env_file="${HERMEX_MAC_RELEASE_ENV_FILE:-"$repo_root/.env.release.local"}"
+
+if [[ -f "$env_file" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$env_file"
+  set +a
+fi
 
 if [[ $# -ne 1 ]]; then
-  echo "Usage: NOTARYTOOL_KEYCHAIN_PROFILE=<profile> scripts/notarize-mac /path/to/Hermex.app" >&2
+  echo "Usage: scripts/notarize-mac /path/to/Hermex.app" >&2
   exit 2
 fi
 
@@ -12,7 +20,7 @@ app_path="$1"
 notary_profile="${NOTARYTOOL_KEYCHAIN_PROFILE:-}"
 
 if [[ -z "$notary_profile" ]]; then
-  echo "Set NOTARYTOOL_KEYCHAIN_PROFILE to a profile created with 'notarytool store-credentials'." >&2
+  echo "Set NOTARYTOOL_KEYCHAIN_PROFILE in .env.release.local to a profile created with 'notarytool store-credentials'." >&2
   exit 2
 fi
 
