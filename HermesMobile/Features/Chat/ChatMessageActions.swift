@@ -81,6 +81,7 @@ struct ChatMessageActionMenu: View {
 
 struct SelectableResponseTextView: View {
     let selection: SelectableResponseText
+    var onDismiss: () -> Void = {}
 
     @Environment(\.dismiss) private var dismiss
 
@@ -99,6 +100,7 @@ struct SelectableResponseTextView: View {
                     }
                 }
         }
+        .onDisappear(perform: onDismiss)
     }
 }
 
@@ -134,6 +136,7 @@ struct EditMessageSheet: View {
 
     let originalText: String
     @Binding var editDraft: String
+    var onDismiss: () -> Void = {}
     let onSubmit: () -> Void
 
     var body: some View {
@@ -164,5 +167,6 @@ struct EditMessageSheet: View {
         }
         .presentationDetents([.medium, .large])
         .adaptiveFormPresentation()
+        .onDisappear(perform: onDismiss)
     }
 }

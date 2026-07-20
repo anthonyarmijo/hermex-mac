@@ -88,6 +88,8 @@ struct SessionSidebarUtilityRows: View {
     let openDestination: (SessionListUtilityDestination) -> Void
     let switchActiveProfile: (ProfileSummary) -> Void
     let presentProjectCreation: () -> Void
+    let startProjectChat: (ProjectSummary) -> Void
+    let isStartingNewChat: Bool
 
     // Each disclosure subrow is emitted as its own List row (like the session
     // rows below it). List does not animate height/transition changes inside a
@@ -288,13 +290,16 @@ struct SessionSidebarUtilityRows: View {
                         count: sessionCount(for: project),
                         isViewingCachedData: viewModel.isViewingCachedData,
                         isRenamingProject: viewModel.isRenamingProject,
-                        isDeletingProject: viewModel.isDeletingProject
+                        isDeletingProject: viewModel.isDeletingProject,
+                        isStartingNewChat: isStartingNewChat
                     ) {
                         guard let projectID = project.projectId else { return }
 
                         withAnimation(SessionListMotion.disclosureAnimation(reduceMotion: reduceMotion)) {
                             selectedProjectID = selectedProjectID == projectID ? nil : projectID
                         }
+                    } newChat: {
+                        startProjectChat(project)
                     } rename: {
                         projectPendingRename = project
                     } delete: {
@@ -1209,7 +1214,9 @@ struct ProjectFilterRow: View {
     let isViewingCachedData: Bool
     let isRenamingProject: Bool
     let isDeletingProject: Bool
+    let isStartingNewChat: Bool
     let action: () -> Void
+    let newChat: () -> Void
     let rename: () -> Void
     let delete: () -> Void
 
@@ -1248,19 +1255,7 @@ struct ProjectFilterRow: View {
             .accessibilityHint(isSelected ? "Clears this project filter." : "Filters sessions to this project.")
 
             Menu {
-                Button {
-                    rename()
-                } label: {
-                    Label("Rename Project", systemImage: "pencil")
-                }
-                .disabled(projectActionsAreDisabled)
-
-                Button(role: .destructive) {
-                    delete()
-                } label: {
-                    Label("Delete Project", systemImage: "trash")
-                }
-                .disabled(projectActionsAreDisabled)
+                projectActionsMenu
             } label: {
                 Label(String(localized: "Project actions for \(displayName)"), systemImage: "ellipsis")
                     .labelStyle(.iconOnly)
@@ -1271,18 +1266,31 @@ struct ProjectFilterRow: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel(String(localized: "Project actions for \(displayName)"))
-            .accessibilityHint("Shows rename and delete actions for this project.")
+            .accessibilityHint("Shows new chat, rename, and delete actions for this project.")
         }
         .background {
-            if isSelected {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Color.accentColor.opacity(0.10))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .stroke(Color.accentColor.opacity(0.20), lineWidth: 1)
-                    }
-            }
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.accentColor.opacity(0.10))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(Color.accentColor.opacity(0.20), lineWidth: 1)
+                }
+                .opacity(isSelected ? 1 : 0)
         }
+        .contextMenu {
+            projectActionsMenu
+        }
+    }
+
+    private var projectActionsMenu: some View {
+        ProjectActionsMenu(
+            projectName: displayName,
+            canStartChat: !isViewingCachedData && !isStartingNewChat && hasValidProjectID,
+            projectActionsAreDisabled: projectActionsAreDisabled,
+            newChat: newChat,
+            rename: rename,
+            delete: delete
+        )
     }
 
     private var displayName: String {
@@ -1302,7 +1310,14 @@ struct ProjectFilterRow: View {
         isViewingCachedData
             || isRenamingProject
             || isDeletingProject
-            || project.projectId == nil
+            || !hasValidProjectID
+    }
+
+    private var hasValidProjectID: Bool {
+        guard let projectID = project.projectId?.trimmingCharacters(in: .whitespacesAndNewlines) else {
+            return false
+        }
+        return !projectID.isEmpty
     }
 
     private var projectColor: Color {
@@ -1324,6 +1339,35 @@ struct ProjectFilterRow: View {
         return source.unicodeScalars.reduce(0) { partialResult, scalar in
             partialResult &+ Int(scalar.value)
         }
+    }
+}
+
+private struct ProjectActionsMenu: View {
+    let projectName: String
+    let canStartChat: Bool
+    let projectActionsAreDisabled: Bool
+    let newChat: () -> Void
+    let rename: () -> Void
+    let delete: () -> Void
+
+    var body: some View {
+        Button(action: newChat) {
+            Label("New Chat in Project", systemImage: "square.and.pencil")
+        }
+        .disabled(!canStartChat)
+        .accessibilityLabel(String(localized: "New Chat in \(projectName)"))
+
+        Divider()
+
+        Button(action: rename) {
+            Label("Rename Project", systemImage: "pencil")
+        }
+        .disabled(projectActionsAreDisabled)
+
+        Button(role: .destructive, action: delete) {
+            Label("Delete Project", systemImage: "trash")
+        }
+        .disabled(projectActionsAreDisabled)
     }
 }
 

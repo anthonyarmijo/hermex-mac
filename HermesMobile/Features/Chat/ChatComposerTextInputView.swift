@@ -371,3 +371,20 @@ enum ComposerKeyboardCommand {
         PlatformCapabilities.isMacCatalyst && modifierFlags.isEmpty
     }
 }
+
+enum ComposerFocusPolicy {
+    static func shouldAutoFocusOnAppearance(hasMessages: Bool, isMacCatalyst: Bool) -> Bool {
+        isMacCatalyst || !hasMessages
+    }
+
+    static func keepsFocusDuringTranscriptInteraction(isMacCatalyst: Bool) -> Bool {
+        isMacCatalyst
+    }
+
+    static func shouldRestoreAfterTemporaryInput(
+        wasComposerFocused: Bool,
+        isMacCatalyst: Bool
+    ) -> Bool {
+        isMacCatalyst || wasComposerFocused
+    }
+}

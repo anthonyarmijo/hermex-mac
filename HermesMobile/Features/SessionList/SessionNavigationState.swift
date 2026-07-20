@@ -1,6 +1,7 @@
 import Foundation
 
 enum SessionNavigationDestination: Hashable, Identifiable {
+    case home
     case session(SessionSummary)
     case newChat(PendingNewChatRoute)
     case utility(SessionListUtilityDestination)
@@ -37,6 +38,12 @@ struct SessionNavigationState: Equatable {
         newChatSessionID = nil
         destination = .session(session)
         remember(session)
+    }
+
+    mutating func selectHome() {
+        rootRevision += 1
+        newChatSessionID = nil
+        destination = .home
     }
 
     mutating func select(_ route: PendingNewChatRoute) {

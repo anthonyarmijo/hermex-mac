@@ -49,7 +49,13 @@ extension APIClient {
         try await send(endpoint: .sessionStatus(id: id), method: "GET")
     }
 
-    func createSession(workspace: String?, model: String?, modelProvider: String?, profile: String?) async throws -> SessionResponse {
+    func createSession(
+        workspace: String?,
+        model: String?,
+        modelProvider: String?,
+        profile: String?,
+        projectID: String? = nil
+    ) async throws -> SessionResponse {
         try await send(
             endpoint: .newSession,
             method: "POST",
@@ -57,7 +63,8 @@ extension APIClient {
                 workspace: workspace,
                 model: model,
                 modelProvider: modelProvider,
-                profile: profile
+                profile: profile,
+                projectID: projectID
             )
         )
     }
@@ -178,6 +185,7 @@ private struct NewSessionRequest: Encodable {
     let model: String?
     let modelProvider: String?
     let profile: String?
+    let projectID: String?
 }
 
 private struct RenameSessionRequest: Encodable {
@@ -231,4 +239,3 @@ private struct SessionYoloRequest: Encodable {
     let sessionId: String
     let enabled: Bool
 }
-

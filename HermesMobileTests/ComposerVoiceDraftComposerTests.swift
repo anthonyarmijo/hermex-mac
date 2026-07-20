@@ -23,6 +23,35 @@ final class ComposerVoiceDraftComposerTests: XCTestCase {
         XCTAssertFalse(ComposerKeyboardCommand.wantsPriorityOverSystemBehavior(for: .shift))
     }
 
+    func testComposerFocusPolicyKeepsExistingMacChatsLive() {
+        XCTAssertTrue(ComposerFocusPolicy.shouldAutoFocusOnAppearance(hasMessages: true, isMacCatalyst: true))
+        XCTAssertTrue(ComposerFocusPolicy.keepsFocusDuringTranscriptInteraction(isMacCatalyst: true))
+        XCTAssertTrue(
+            ComposerFocusPolicy.shouldRestoreAfterTemporaryInput(
+                wasComposerFocused: false,
+                isMacCatalyst: true
+            )
+        )
+    }
+
+    func testComposerFocusPolicyPreservesMobileDismissalBehavior() {
+        XCTAssertFalse(ComposerFocusPolicy.shouldAutoFocusOnAppearance(hasMessages: true, isMacCatalyst: false))
+        XCTAssertTrue(ComposerFocusPolicy.shouldAutoFocusOnAppearance(hasMessages: false, isMacCatalyst: false))
+        XCTAssertFalse(ComposerFocusPolicy.keepsFocusDuringTranscriptInteraction(isMacCatalyst: false))
+        XCTAssertFalse(
+            ComposerFocusPolicy.shouldRestoreAfterTemporaryInput(
+                wasComposerFocused: false,
+                isMacCatalyst: false
+            )
+        )
+        XCTAssertTrue(
+            ComposerFocusPolicy.shouldRestoreAfterTemporaryInput(
+                wasComposerFocused: true,
+                isMacCatalyst: false
+            )
+        )
+    }
+
     func testComposedDraftUsesTranscriptWhenDraftIsEmpty() {
         XCTAssertEqual(
             ComposerVoiceDraftComposer.composedDraft(baseDraft: "", transcript: "Open the workspace"),

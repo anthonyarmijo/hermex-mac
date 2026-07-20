@@ -322,6 +322,7 @@ final class SessionListMutationTests: XCTestCase {
                 XCTAssertNil(body["model"] as? String)
                 XCTAssertNil(body["model_provider"] as? String)
                 XCTAssertNil(body["profile"] as? String)
+                XCTAssertNil(body["project_id"] as? String)
 
                 return apiTestJSONResponse("""
                 {
@@ -354,6 +355,51 @@ final class SessionListMutationTests: XCTestCase {
         XCTAssertFalse(viewModel.isCreatingSession)
         XCTAssertNil(viewModel.actionErrorMessage)
         XCTAssertNil(viewModel.lastError)
+    }
+
+    @MainActor
+    func testCreateSessionInProjectIncludesProjectIDAndKeepsAssignment() async throws {
+        let context = try makeContext()
+        let viewModel = try makeViewModel { request in
+            switch request.url?.path {
+            case "/api/workspaces":
+                return apiTestJSONResponse(
+                    #"{"workspaces":[{"path":"/tmp/workspace"}],"last":"/tmp/workspace"}"#,
+                    for: request
+                )
+            case "/api/session/new":
+                let body = try XCTUnwrap(apiTestJSONBody(from: request))
+                XCTAssertEqual(body["project_id"] as? String, "project-42")
+                return apiTestJSONResponse(
+                    """
+                    {
+                      "session": {
+                        "session_id": "project-chat",
+                        "title": "Untitled Session",
+                        "workspace": "/tmp/workspace",
+                        "project_id": "project-42",
+                        "archived": false
+                      }
+                    }
+                    """,
+                    for: request
+                )
+            default:
+                XCTFail("Unexpected request path: \(request.url?.path ?? "nil")")
+                throw URLError(.badURL)
+            }
+        }
+
+        let created = await viewModel.createSession(
+            modelContext: context,
+            projectID: "project-42"
+        )
+
+        XCTAssertEqual(created?.sessionId, "project-chat")
+        XCTAssertEqual(created?.projectId, "project-42")
+        XCTAssertEqual(viewModel.sessions.first?.projectId, "project-42")
+        XCTAssertFalse(viewModel.isCreatingSession)
+        XCTAssertNil(viewModel.actionErrorMessage)
     }
 
     @MainActor

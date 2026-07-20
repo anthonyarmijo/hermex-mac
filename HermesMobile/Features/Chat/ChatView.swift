@@ -281,6 +281,7 @@ struct ChatView: View {
     /// When true, the composer auto-starts voice dictation on appear — set by the
     /// "New Chat with Voice" App Intent (#338). Defaults to false for normal opens.
     let autoStartsVoiceInput: Bool
+    let externalComposerFocusRequestID: Int
 
     @State private var draftMessage = ""
     @State private var isScrolledNearBottom = true
@@ -333,7 +334,8 @@ struct ChatView: View {
         initialDraft: String = "",
         initialAttachments: [SharedAttachmentImport] = [],
         loadsInitialMessages: Bool = true,
-        autoStartsVoiceInput: Bool = false
+        autoStartsVoiceInput: Bool = false,
+        externalComposerFocusRequestID: Int = 0
     ) {
         self.session = session
         self.server = server
@@ -342,6 +344,7 @@ struct ChatView: View {
         self.onResponseCompleted = onResponseCompleted
         self.loadsInitialMessages = loadsInitialMessages
         self.autoStartsVoiceInput = autoStartsVoiceInput
+        self.externalComposerFocusRequestID = externalComposerFocusRequestID
         let restoredDraft = SessionDraftPersistence.load(for: session.sessionId, server: server)
         let resolvedDraft = restoredDraft ?? initialDraft
         _draftMessage = State(initialValue: resolvedDraft)
@@ -502,7 +505,15 @@ struct ChatView: View {
         // toggle (#259): input, placeholder, and chrome mirror together.
         .environment(\.layoutDirection, chatLayoutDirection)
         .background(
-            NavigationAppearanceCompletionObserver(action: handleInitialAppearanceCompletion)
+            ZStack {
+                NavigationAppearanceCompletionObserver(action: handleInitialAppearanceCompletion)
+
+                Color.clear
+                    .onChange(of: externalComposerFocusRequestID) { _, _ in
+                        guard PlatformCapabilities.isMacCatalyst else { return }
+                        requestComposerFocusIfPossible()
+                    }
+            }
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
         )
@@ -695,7 +706,10 @@ struct ChatView: View {
                 ChatView(session: session, server: server, onAPIError: onAPIError)
             }
             .fullScreenCover(item: $selectableResponseText) { selectableText in
-                SelectableResponseTextView(selection: selectableText)
+                SelectableResponseTextView(
+                    selection: selectableText,
+                    onDismiss: restoreComposerFocusAfterPreviewIfNeeded
+                )
             }
             .sheet(item: $attachmentPreviewItem) { item in
                 ChatAttachmentPreviewView(
@@ -727,6 +741,7 @@ struct ChatView: View {
                 EditMessageSheet(
                     originalText: editContext?.copyText ?? "",
                     editDraft: $editDraft,
+                    onDismiss: restoreComposerFocusAfterPreviewIfNeeded,
                     onSubmit: {
                         if let context = editContext {
                             Task { await submitEdit(context) }
@@ -744,6 +759,7 @@ struct ChatView: View {
                 }
                 Button("Discard & Edit", role: .destructive) {
                     ChatHaptics.destructiveConfirmationAccepted(isEnabled: isHapticsEnabled)
+                    prepareForTemporaryComposerFocusHandoff()
                     showEditSheet = true
                 }
             } message: {
@@ -1120,6 +1136,9 @@ struct ChatView: View {
             isRespondingToClarification: viewModel.isRespondingToClarification,
             clarificationErrorMessage: viewModel.clarificationErrorMessage,
             hidesRunStatusAccessibility: activeRunStatusPresentation != nil,
+            keepsComposerFocusedOnInteraction: ComposerFocusPolicy.keepsFocusDuringTranscriptInteraction(
+                isMacCatalyst: PlatformCapabilities.isMacCatalyst
+            ),
             showsThinkingAndToolCards: showsThinkingAndToolCards,
             showsAssistantTypingIndicator: showsAssistantTypingIndicator,
             showsScrollToBottomButton: showsScrollToBottomButton,
@@ -1166,7 +1185,7 @@ struct ChatView: View {
                 await loadOlderMessages()
             },
             onUpdateScrollMetrics: updateScrollMetrics,
-            onDismissKeyboard: dismissKeyboard,
+            onDismissKeyboard: handleTranscriptFocusInteraction,
             onScrollToBottom: scrollToBottom,
             onScrollToLatestTranscriptMessage: { proxy in
                 scrollToLatestTranscriptMessage(proxy)
@@ -1194,6 +1213,7 @@ struct ChatView: View {
                 }
             },
             onSelectText: { context in
+                prepareForTemporaryComposerFocusHandoff()
                 selectableResponseText = SelectableResponseText(context: context)
             },
             onRegenerate: beginRegenerateResponse,
@@ -2007,7 +2027,10 @@ struct ChatView: View {
         guard !didApplyInitialComposerFocusPolicy else { return }
         guard didCompleteInitialAppearance, isInitialComposerFocusContentReady else { return }
 
-        if !viewModel.messages.isEmpty {
+        guard ComposerFocusPolicy.shouldAutoFocusOnAppearance(
+            hasMessages: !viewModel.messages.isEmpty,
+            isMacCatalyst: PlatformCapabilities.isMacCatalyst
+        ) else {
             didApplyInitialComposerFocusPolicy = true
             return
         }
@@ -2018,11 +2041,28 @@ struct ChatView: View {
     }
 
     private func presentPreviewRestoringComposerFocusIfNeeded(_ present: () -> Void) {
-        shouldRestoreComposerFocusAfterPreview = composerIsFocused
+        prepareForTemporaryComposerFocusHandoff()
+        present()
+    }
+
+    private func prepareForTemporaryComposerFocusHandoff() {
+        shouldRestoreComposerFocusAfterPreview = ComposerFocusPolicy.shouldRestoreAfterTemporaryInput(
+            wasComposerFocused: composerIsFocused,
+            isMacCatalyst: PlatformCapabilities.isMacCatalyst
+        )
         if composerIsFocused {
             composerIsFocused = false
         }
-        present()
+    }
+
+    private func handleTranscriptFocusInteraction() {
+        if ComposerFocusPolicy.keepsFocusDuringTranscriptInteraction(
+            isMacCatalyst: PlatformCapabilities.isMacCatalyst
+        ) {
+            requestComposerFocusIfPossible()
+        } else {
+            dismissKeyboard()
+        }
     }
 
     private func restoreComposerFocusAfterPreviewIfNeeded() {
@@ -2101,6 +2141,7 @@ struct ChatView: View {
         if messagesAfter > 0 {
             showEditDiscardConfirmation = true
         } else {
+            prepareForTemporaryComposerFocusHandoff()
             showEditSheet = true
         }
     }

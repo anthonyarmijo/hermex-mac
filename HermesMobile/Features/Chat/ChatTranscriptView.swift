@@ -22,6 +22,7 @@ struct ChatTranscriptView: View {
     let isRespondingToClarification: Bool
     let clarificationErrorMessage: String?
     let hidesRunStatusAccessibility: Bool
+    let keepsComposerFocusedOnInteraction: Bool
     let showsThinkingAndToolCards: Bool
     let showsAssistantTypingIndicator: Bool
     let showsScrollToBottomButton: Bool
@@ -128,7 +129,9 @@ struct ChatTranscriptView: View {
                             await onLoadMessages()
                         }
                     }
-                    .scrollDismissesKeyboard(.interactively)
+                    .scrollDismissesKeyboard(
+                        keepsComposerFocusedOnInteraction ? .never : .interactively
+                    )
                     .safeAreaInset(edge: .bottom, spacing: 0) {
                         Color.clear
                             .frame(height: transcriptBottomInsetHeight)
