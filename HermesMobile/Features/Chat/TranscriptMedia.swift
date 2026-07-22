@@ -115,6 +115,9 @@ enum TranscriptMediaSegment: Equatable {
 enum TranscriptMediaParser {
     static func segments(in markdown: String) -> [TranscriptMediaSegment] {
         guard !markdown.isEmpty else { return [] }
+        // Most transcript rows contain ordinary prose. Avoid the line/fence scan
+        // unless the only supported media marker can possibly be present.
+        guard markdown.contains("MEDIA:") else { return [.text(markdown)] }
 
         var segments: [TranscriptMediaSegment] = []
         var index = markdown.startIndex

@@ -195,6 +195,11 @@ enum ActiveStreamRecoveryState: Equatable {
     case reconnecting
 }
 
+struct CacheFirstRenderMarker: Equatable, Sendable {
+    let sessionID: String
+    let generation: Int
+}
+
 @MainActor
 @Observable
 final class ChatViewModel {
@@ -235,6 +240,10 @@ final class ChatViewModel {
     /// render, so the view re-pins to the bottom on this token *without* animation —
     /// otherwise the height growth produces a visible scroll jump.
     private(set) var cacheFirstReconcileScrollToken = 0
+    private(set) var cacheFirstRenderMarker: CacheFirstRenderMarker?
+    @ObservationIgnored private var cacheFirstRenderGeneration = 0
+    @ObservationIgnored private var cacheFirstFrameWaiter: CheckedContinuation<Bool, Never>?
+    @ObservationIgnored private var cacheFirstFrameTimeoutTask: Task<Void, Never>?
     private var hasPrimedInitialCachedMessages = false
     @ObservationIgnored private var pendingStreamingScrollTriggerTask: Task<Void, Never>?
     @ObservationIgnored private var pendingAssistantTokenChunks: [String] = []
@@ -1423,22 +1432,101 @@ final class ChatViewModel {
             return []
         }
 
+        TranscriptPerformanceSignpost.event(
+            "Cache reader resumed on main",
+            sessionID: sessionID
+        )
+
         guard !Task.isCancelled, !cachedMessages.isEmpty else { return [] }
 
         let publicationSignpostID = TranscriptPerformanceSignpost.begin(
             "Cache-first publication",
             sessionID: sessionID
         )
+        cacheFirstRenderGeneration += 1
+        let renderMarker = CacheFirstRenderMarker(
+            sessionID: sessionID,
+            generation: cacheFirstRenderGeneration
+        )
         messages = cachedMessages
         messagesOffset = 0
         hasOlderMessages = false
         isViewingCachedData = false
+        cacheFirstRenderMarker = renderMarker
         TranscriptPerformanceSignpost.end(
             "Cache-first publication",
             signpostID: publicationSignpostID,
             sessionID: sessionID
         )
+        TranscriptPerformanceSignpost.event(
+            "Cache-first state published",
+            sessionID: sessionID
+        )
         return cachedMessages
+    }
+
+    @discardableResult
+    func markCacheFirstTranscriptFrameCommitted(_ marker: CacheFirstRenderMarker) -> Bool {
+        guard cacheFirstRenderMarker == marker,
+              sessionID == marker.sessionID,
+              !messages.isEmpty
+        else { return false }
+
+        cacheFirstRenderMarker = nil
+        finishWaitingForCacheFirstFrame(didCommit: true)
+        TranscriptPerformanceSignpost.event(
+            "First transcript frame committed",
+            sessionID: marker.sessionID
+        )
+        return true
+    }
+
+    func invalidateCacheFirstRenderMarker() {
+        cacheFirstRenderMarker = nil
+        finishWaitingForCacheFirstFrame(didCommit: false)
+    }
+
+    /// Holds only the network reconcile behind the first cache-first frame. The
+    /// observable publication and SwiftUI commit remain on the main actor; the
+    /// bounded timeout preserves the existing network path if a platform fails to
+    /// install/commit the diagnostic probe.
+    func awaitCacheFirstTranscriptFrameCommit(
+        timeout: Duration = .milliseconds(100)
+    ) async -> Bool {
+        guard cacheFirstRenderMarker != nil else { return false }
+
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                guard cacheFirstRenderMarker != nil else {
+                    continuation.resume(returning: false)
+                    return
+                }
+
+                finishWaitingForCacheFirstFrame(didCommit: false)
+                cacheFirstFrameWaiter = continuation
+                cacheFirstFrameTimeoutTask = Task { [weak self] in
+                    do {
+                        try await Task.sleep(for: timeout)
+                    } catch {
+                        return
+                    }
+                    guard !Task.isCancelled else { return }
+                    self?.finishWaitingForCacheFirstFrame(didCommit: false)
+                }
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                self?.finishWaitingForCacheFirstFrame(didCommit: false)
+            }
+        }
+    }
+
+    private func finishWaitingForCacheFirstFrame(didCommit: Bool) {
+        cacheFirstFrameTimeoutTask?.cancel()
+        cacheFirstFrameTimeoutTask = nil
+        let waiter = cacheFirstFrameWaiter
+        cacheFirstFrameWaiter = nil
+        waiter?.resume(returning: didCommit)
     }
 
     /// Undo a cache-first placeholder (#289) when the reload fails without adopting

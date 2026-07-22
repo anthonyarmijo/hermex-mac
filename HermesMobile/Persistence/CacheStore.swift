@@ -104,6 +104,10 @@ actor TranscriptCacheReader: TranscriptCacheReading {
                 .map(ChatMessage.init(cachedMessage:))
         }
         try Task.checkCancellation()
+        TranscriptPerformanceSignpost.event(
+            "Cached messages ready off-main",
+            sessionID: sessionID
+        )
 
         return TranscriptCachePage(messages: messages)
     }

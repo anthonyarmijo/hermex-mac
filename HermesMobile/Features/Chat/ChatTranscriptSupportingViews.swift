@@ -1,6 +1,57 @@
 import SwiftUI
 import UIKit
 
+/// Bridges cache-first SwiftUI evaluation to the Core Animation transaction that
+/// commits that transcript. It is inert after the one pending marker is consumed.
+struct CacheFirstTranscriptFrameProbe: UIViewRepresentable {
+    let marker: CacheFirstRenderMarker?
+    let onFrameCommitted: (CacheFirstRenderMarker) -> Void
+
+    func makeUIView(context: Context) -> CacheFirstTranscriptFrameProbeView {
+        CacheFirstTranscriptFrameProbeView()
+    }
+
+    func updateUIView(_ uiView: CacheFirstTranscriptFrameProbeView, context: Context) {
+        uiView.observe(marker: marker, onFrameCommitted: onFrameCommitted)
+    }
+}
+
+final class CacheFirstTranscriptFrameProbeView: UIView {
+    private var observedMarker: CacheFirstRenderMarker?
+    private var pendingMarker: CacheFirstRenderMarker?
+    private var onFrameCommitted: ((CacheFirstRenderMarker) -> Void)?
+
+    func observe(
+        marker: CacheFirstRenderMarker?,
+        onFrameCommitted: @escaping (CacheFirstRenderMarker) -> Void
+    ) {
+        self.onFrameCommitted = onFrameCommitted
+        guard let marker, marker != observedMarker else { return }
+
+        observedMarker = marker
+        pendingMarker = marker
+        commitPendingMarkerIfPossible()
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        commitPendingMarkerIfPossible()
+    }
+
+    private func commitPendingMarkerIfPossible() {
+        guard window != nil, let marker = pendingMarker else { return }
+        pendingMarker = nil
+
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { [weak self] in
+            guard let self, self.window != nil, self.observedMarker == marker else { return }
+            self.onFrameCommitted?(marker)
+        }
+        layer.setNeedsLayout()
+        CATransaction.commit()
+    }
+}
+
 struct ChatScrollMetrics: Equatable {
     let distanceFromBottom: CGFloat
     let isUserInteracting: Bool

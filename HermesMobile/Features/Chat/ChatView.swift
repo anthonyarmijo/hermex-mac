@@ -627,6 +627,7 @@ struct ChatView: View {
                 viewModel.stopListening()
                 viewModel.suspendStreamForNavigation()
                 viewModel.cleanupPollingTasks()
+                viewModel.invalidateCacheFirstRenderMarker()
             }
             .onAppear {
                 Task {
@@ -1095,6 +1096,7 @@ struct ChatView: View {
             errorMessage: viewModel.errorMessage,
             messages: viewModel.messages,
             displayedTranscriptMessages: displayedTranscriptMessages,
+            cacheFirstRenderMarker: viewModel.cacheFirstRenderMarker,
             compressionReferenceCard: viewModel.compressionReferenceCard,
             reasoningGroups: viewModel.displayedReasoningGroups,
             completedToolCallGroupsForAnchor: { anchorMessageID in
@@ -1159,6 +1161,9 @@ struct ChatView: View {
                 await loadOlderMessages()
             },
             onUpdateScrollMetrics: updateScrollMetrics,
+            onCacheFirstFrameCommitted: { marker in
+                viewModel.markCacheFirstTranscriptFrameCommitted(marker)
+            },
             onDismissKeyboard: handleTranscriptFocusInteraction,
             onScrollToBottom: scrollToBottom,
             onScrollToLatestTranscriptMessage: { proxy in
@@ -1354,11 +1359,8 @@ struct ChatView: View {
         if loadsInitialMessages {
             await viewModel.prepareInitialMessageLoad(modelContext: modelContext)
             guard !Task.isCancelled else { return }
-            await Task.yield()
-            TranscriptPerformanceSignpost.event(
-                "First transcript render ready",
-                sessionID: session.sessionId ?? "unknown"
-            )
+            _ = await viewModel.awaitCacheFirstTranscriptFrameCommit()
+            guard !Task.isCancelled else { return }
             await loadMessages(appliesInitialFocus: false)
             guard !Task.isCancelled else { return }
         }
