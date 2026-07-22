@@ -386,6 +386,287 @@ final class CacheStoreTests: XCTestCase {
         XCTAssertEqual(cachedMessages.first?.reasoning, "Cached reasoning.")
     }
 
+    func testCachedMessagesNewestLimitReturnsNewestPageInAscendingOrderWithoutDeletingHistory() throws {
+        let context = try makeContext()
+        let serverURL = URL(string: "https://example.test")!
+        let cachedAt = Date(timeIntervalSince1970: 1_770_000_000)
+        let messages = (0..<75).map { index in
+            ChatMessage(
+                role: index.isMultiple(of: 2) ? "user" : "assistant",
+                content: "Message \(index)",
+                timestamp: 1_770_000_000 + Double(index),
+                messageId: "m\(index)"
+            )
+        }
+
+        try CacheStore.cacheMessages(
+            messages,
+            serverURL: serverURL,
+            sessionID: "long-session",
+            in: context,
+            cachedAt: cachedAt
+        )
+
+        let newestPage = try CacheStore.cachedMessages(
+            serverURL: serverURL,
+            sessionID: "long-session",
+            in: context,
+            now: cachedAt.addingTimeInterval(60),
+            newestLimit: 50
+        )
+
+        XCTAssertEqual(newestPage.count, 50)
+        XCTAssertEqual(newestPage.map(\.messageId), (25..<75).map { "m\($0)" })
+        XCTAssertEqual(try fetchCachedMessages(in: context).count, 75)
+    }
+
+    func testCachedMessagesNewestLimitReturnsExactlyOnePageOrFewer() throws {
+        let context = try makeContext()
+        let serverURL = URL(string: "https://example.test")!
+        let cachedAt = Date(timeIntervalSince1970: 1_770_000_000)
+
+        for (sessionID, count) in [("exact-page", 50), ("short-page", 12)] {
+            let messages = (0..<count).map { index in
+                ChatMessage(
+                    role: "assistant",
+                    content: "\(sessionID) \(index)",
+                    timestamp: 1_770_000_000 + Double(index),
+                    messageId: "\(sessionID)-m\(index)"
+                )
+            }
+            try CacheStore.cacheMessages(
+                messages,
+                serverURL: serverURL,
+                sessionID: sessionID,
+                in: context,
+                cachedAt: cachedAt
+            )
+
+            let cachedMessages = try CacheStore.cachedMessages(
+                serverURL: serverURL,
+                sessionID: sessionID,
+                in: context,
+                now: cachedAt.addingTimeInterval(60),
+                newestLimit: 50
+            )
+
+            XCTAssertEqual(cachedMessages.map(\.messageId), messages.map(\.messageId))
+        }
+    }
+
+    func testTranscriptCacheModelActorPreservesBoundedRichMessageValues() async throws {
+        let context = try makeContext()
+        let serverURL = URL(string: "https://example.test")!
+        let cachedAt = Date()
+        let messages = (0..<75).map { index in
+            ChatMessage(
+                role: index.isMultiple(of: 2) ? "user" : "assistant",
+                content: "Message \(index)",
+                timestamp: Double(index),
+                messageId: "m\(index)",
+                toolCalls: [.object(["id": .string("tool-\(index)")])],
+                contentParts: [.object(["type": .string("thinking"), "text": .string("Thought \(index)")])],
+                reasoning: "Reasoning \(index)",
+                attachments: [MessageAttachment(name: "file-\(index).txt", path: "/tmp/file-\(index).txt")]
+            )
+        }
+        try CacheStore.cacheMessages(
+            messages,
+            serverURL: serverURL,
+            sessionID: "long-session",
+            in: context,
+            cachedAt: cachedAt
+        )
+
+        let reader = TranscriptCacheReader(modelContainer: context.container)
+        let page = try await reader.cachedMessages(
+            serverURL: serverURL,
+            sessionID: "long-session",
+            now: cachedAt.addingTimeInterval(60),
+            newestLimit: 50
+        )
+
+        XCTAssertEqual(page.messages, Array(messages.suffix(50)))
+        XCTAssertEqual(try fetchCachedMessages(in: context).count, 75)
+    }
+
+    func testTranscriptCacheReaderRemainsModelActorIsolated() throws {
+        let testFileURL = URL(fileURLWithPath: #filePath)
+        let sourceURL = testFileURL
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("HermesMobile/Persistence/CacheStore.swift")
+        let source = try String(contentsOf: sourceURL, encoding: .utf8)
+
+        XCTAssertNotNil(
+            source.range(
+                of: #"@ModelActor\s+actor\s+TranscriptCacheReader\s*:\s*TranscriptCacheReading"#,
+                options: .regularExpression
+            ),
+            "Bounded transcript fetch and mapping must remain isolated to a SwiftData model actor."
+        )
+        XCTAssertNil(
+            source.range(
+                of: #"@MainActor\s+(?:final\s+)?actor\s+TranscriptCacheReader"#,
+                options: .regularExpression
+            ),
+            "TranscriptCacheReader must not regress onto MainActor."
+        )
+    }
+
+    func testTranscriptCacheReaderHandlesExactShortEmptyAndExpiredPages() async throws {
+        let context = try makeContext()
+        let serverURL = URL(string: "https://example.test")!
+        let cachedAt = Date()
+        for (sessionID, count) in [("exact", 50), ("short", 12), ("expired", 8)] {
+            try CacheStore.cacheMessages(
+                (0..<count).map { index in
+                    ChatMessage(
+                        role: "assistant",
+                        content: "\(sessionID) \(index)",
+                        timestamp: Double(index),
+                        messageId: "\(sessionID)-\(index)"
+                    )
+                },
+                serverURL: serverURL,
+                sessionID: sessionID,
+                in: context,
+                cachedAt: cachedAt
+            )
+        }
+        let reader = TranscriptCacheReader(modelContainer: context.container)
+
+        let exact = try await reader.cachedMessages(
+            serverURL: serverURL,
+            sessionID: "exact",
+            now: cachedAt.addingTimeInterval(60),
+            newestLimit: 50
+        )
+        let short = try await reader.cachedMessages(
+            serverURL: serverURL,
+            sessionID: "short",
+            now: cachedAt.addingTimeInterval(60),
+            newestLimit: 50
+        )
+        let empty = try await reader.cachedMessages(
+            serverURL: serverURL,
+            sessionID: "empty",
+            now: cachedAt.addingTimeInterval(60),
+            newestLimit: 50
+        )
+        let expired = try await reader.cachedMessages(
+            serverURL: serverURL,
+            sessionID: "expired",
+            now: cachedAt.addingTimeInterval(CachePolicy.ttl + 1),
+            newestLimit: 50
+        )
+
+        XCTAssertEqual(exact.messages.count, 50)
+        XCTAssertEqual(short.messages.count, 12)
+        XCTAssertTrue(empty.messages.isEmpty)
+        XCTAssertTrue(expired.messages.isEmpty)
+    }
+
+    /// Repeatable local microbenchmark for the bounded SwiftData materialization +
+    /// JSON decoding path. This is intentionally separate from signpost captures of
+    /// real session opens: XCTest controls iterations, but the absolute result still
+    /// depends on the host and must not be treated as a device performance target.
+    func testNewestCachedMessagePageReadPerformance() async throws {
+        if let storePath = ProcessInfo.processInfo.environment["HERMEX_TRANSCRIPT_DIAGNOSTIC_STORE"],
+           let sessionID = ProcessInfo.processInfo.environment["HERMEX_TRANSCRIPT_DIAGNOSTIC_SESSION"],
+           let serverURLString = ProcessInfo.processInfo.environment["HERMEX_TRANSCRIPT_DIAGNOSTIC_SERVER"],
+           let serverURL = URL(string: serverURLString) {
+            let configuration = ModelConfiguration(url: URL(fileURLWithPath: storePath))
+            let container = try ModelContainer(
+                for: CachedSession.self,
+                CachedMessage.self,
+                configurations: configuration
+            )
+            let reader = TranscriptCacheReader(modelContainer: container)
+            let clock = ContinuousClock()
+            var milliseconds: [Double] = []
+            for _ in 0..<10 {
+                let start = clock.now
+                let page = try await reader.cachedMessages(
+                    serverURL: serverURL,
+                    sessionID: sessionID,
+                    now: Date(),
+                    newestLimit: 50
+                )
+                let duration = start.duration(to: clock.now)
+                milliseconds.append(Double(duration.components.seconds) * 1_000
+                    + Double(duration.components.attoseconds) / 1_000_000_000_000_000)
+                XCTAssertLessThanOrEqual(page.messages.count, 50)
+            }
+            XCTContext.runActivity(
+                named: "RealTranscriptCacheDiagnostic milliseconds=\(milliseconds)"
+            ) { _ in }
+            return
+        }
+
+        let context = try makeContext()
+        let serverURL = URL(string: "https://performance.example.test")!
+        let cachedAt = Date()
+        let attachments = [
+            MessageAttachment(
+                name: "diagnostic.png",
+                path: "/tmp/diagnostic.png",
+                mime: "image/png",
+                size: 4096,
+                isImage: true
+            )
+        ]
+        let contentParts: [JSONValue] = [
+            .object(["type": .string("text"), "text": .string(String(repeating: "content ", count: 80))]),
+            .object(["type": .string("thinking"), "thinking": .string(String(repeating: "reasoning ", count: 80))])
+        ]
+        let toolCalls: [JSONValue] = [
+            .object([
+                "id": .string("tool-1"),
+                "name": .string("diagnostic_tool"),
+                "arguments": .object(["path": .string("/tmp/diagnostic")])
+            ])
+        ]
+
+        for index in 0..<1_000 {
+            context.insert(CachedMessage(
+                serverURLString: serverURL.absoluteString,
+                sessionID: "long-session",
+                message: ChatMessage(
+                    role: index.isMultiple(of: 2) ? "user" : "assistant",
+                    content: String(repeating: "Cached message \(index). ", count: 30),
+                    timestamp: Double(index),
+                    messageId: "message-\(index)",
+                    toolCalls: toolCalls,
+                    contentParts: contentParts,
+                    reasoning: String(repeating: "Reasoning \(index). ", count: 20),
+                    attachments: attachments
+                ),
+                sortIndex: index,
+                cachedAt: cachedAt
+            ))
+        }
+        try context.save()
+
+        let reader = TranscriptCacheReader(modelContainer: context.container)
+        let clock = ContinuousClock()
+        var milliseconds: [Double] = []
+        for _ in 0..<10 {
+            let start = clock.now
+            let page = try await reader.cachedMessages(
+                serverURL: serverURL,
+                sessionID: "long-session",
+                now: cachedAt.addingTimeInterval(60),
+                newestLimit: 50
+            )
+            let duration = start.duration(to: clock.now)
+            milliseconds.append(Double(duration.components.seconds) * 1_000
+                + Double(duration.components.attoseconds) / 1_000_000_000_000_000)
+            XCTAssertEqual(page.messages.count, 50)
+        }
+        XCTContext.runActivity(named: "TranscriptCacheBenchmark milliseconds=\(milliseconds)") { _ in }
+    }
+
     func testCachedMessagesIgnoresExpiredMessages() throws {
         let context = try makeContext()
         let serverURL = URL(string: "https://example.test")!

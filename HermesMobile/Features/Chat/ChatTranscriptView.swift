@@ -9,6 +9,7 @@ struct ChatTranscriptView: View {
     let errorMessage: String?
     let messages: [ChatMessage]
     let displayedTranscriptMessages: [TranscriptMessage]
+    let cacheFirstRenderMarker: CacheFirstRenderMarker?
     let compressionReferenceCard: CompressionReferenceCard?
     let reasoningGroups: [ReasoningGroup]
     let completedToolCallGroupsForAnchor: (String?) -> [ToolCallGroup]
@@ -55,6 +56,7 @@ struct ChatTranscriptView: View {
     let onLoadMessages: () async -> Void
     let onLoadOlderMessages: () async -> Bool
     let onUpdateScrollMetrics: (ChatScrollMetrics) -> Void
+    let onCacheFirstFrameCommitted: (CacheFirstRenderMarker) -> Void
     let onDismissKeyboard: () -> Void
     let onScrollToBottom: (ScrollViewProxy) -> Void
     let onScrollToLatestTranscriptMessage: (ScrollViewProxy) -> Void
@@ -206,7 +208,10 @@ struct ChatTranscriptView: View {
         viewportWidth: CGFloat,
         contentWidth: CGFloat
     ) -> some View {
-        VStack(spacing: transcriptMessageSpacing) {
+        // Transcript rows contain Markdown, syntax highlighting, media, and tool
+        // cards. Keep them lazy so long sessions do not force every off-screen
+        // row through construction and layout on each scroll pass.
+        LazyVStack(spacing: transcriptMessageSpacing) {
             olderMessagesButton(proxy: proxy)
 
             if let compressionReferenceCard, compressionReferenceCard.afterRenderID == nil {
@@ -291,6 +296,11 @@ struct ChatTranscriptView: View {
                 }
 
                 ChatVerticalScrollAxisGuard()
+
+                CacheFirstTranscriptFrameProbe(
+                    marker: cacheFirstRenderMarker,
+                    onFrameCommitted: onCacheFirstFrameCommitted
+                )
             }
             .accessibilityHidden(true)
         }

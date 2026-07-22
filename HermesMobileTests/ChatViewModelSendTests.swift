@@ -3214,7 +3214,7 @@ final class ChatViewModelSendTests: XCTestCase {
     }
 
     @MainActor
-    func testPrepareInitialMessageLoadPrimesCacheWithoutStartingNetwork() throws {
+    func testPrepareInitialMessageLoadPrimesCacheWithoutStartingNetwork() async throws {
         let context = try makeContext()
         let serverURL = try XCTUnwrap(URL(string: "https://example.test"))
         try CacheStore.cacheMessages(
@@ -3232,11 +3232,303 @@ final class ChatViewModelSendTests: XCTestCase {
             throw URLError(.badURL)
         }
 
-        viewModel.prepareInitialMessageLoad(modelContext: context)
+        await viewModel.prepareInitialMessageLoad(modelContext: context)
 
         XCTAssertEqual(viewModel.messages.compactMap(\.content), ["Cached question", "Cached answer"])
         XCTAssertTrue(viewModel.isLoading)
         XCTAssertFalse(viewModel.isViewingCachedData)
+    }
+
+    @MainActor
+    func testPrepareInitialMessageLoadBoundsLargeCacheToNewestPage() async throws {
+        let context = try makeContext()
+        let serverURL = try XCTUnwrap(URL(string: "https://example.test"))
+        let cachedMessages = makeCachedTranscript(count: 75)
+        try CacheStore.cacheMessages(
+            cachedMessages,
+            serverURL: serverURL,
+            sessionID: "session-abc",
+            in: context
+        )
+        let viewModel = try makeViewModel { request in
+            XCTFail("Cache preparation must not start a request: \(request.url?.absoluteString ?? "nil")")
+            throw URLError(.badURL)
+        }
+
+        await viewModel.prepareInitialMessageLoad(modelContext: context)
+
+        XCTAssertEqual(viewModel.messages.count, 50)
+        XCTAssertEqual(viewModel.messages.map(\.messageId), cachedMessages.suffix(50).map(\.messageId))
+        XCTAssertTrue(viewModel.isLoading)
+        XCTAssertFalse(viewModel.isViewingCachedData)
+    }
+
+    @MainActor
+    func testPrepareInitialMessageLoadPublishesOnlyAfterReturningToMainActor() async throws {
+        let context = try makeContext()
+        let cachedMessage = ChatMessage(
+            role: "assistant",
+            content: "Background-loaded cache value",
+            timestamp: 1,
+            messageId: "cached-1"
+        )
+        let reader = ImmediateTranscriptCacheReader(messages: [cachedMessage])
+        let viewModel = try makeViewModel { request in
+            XCTFail("Cache preparation must not start a request: \(request.url?.absoluteString ?? "nil")")
+            throw URLError(.badURL)
+        }
+
+        await viewModel.prepareInitialMessageLoad(modelContext: context, cacheReader: reader)
+
+        XCTAssertTrue(Thread.isMainThread)
+        XCTAssertEqual(viewModel.messages, [cachedMessage])
+        XCTAssertEqual(viewModel.displayedTranscriptMessages.map(\.message), [cachedMessage])
+        let marker = try XCTUnwrap(viewModel.cacheFirstRenderMarker)
+        XCTAssertEqual(marker.sessionID, "session-abc")
+        XCTAssertTrue(viewModel.markCacheFirstTranscriptFrameCommitted(marker))
+        XCTAssertNil(viewModel.cacheFirstRenderMarker)
+        XCTAssertFalse(viewModel.markCacheFirstTranscriptFrameCommitted(marker))
+    }
+
+    @MainActor
+    func testCancelledOrObsoleteInitialFrameMarkerDoesNotCommit() async throws {
+        let context = try makeContext()
+        let cachedMessage = ChatMessage(
+            role: "assistant",
+            content: "Cached value",
+            timestamp: 1,
+            messageId: "cached-1"
+        )
+        let viewModel = try makeViewModel { request in
+            XCTFail("Cache preparation must not start a request: \(request.url?.absoluteString ?? "nil")")
+            throw URLError(.badURL)
+        }
+
+        await viewModel.prepareInitialMessageLoad(
+            modelContext: context,
+            cacheReader: ImmediateTranscriptCacheReader(messages: [cachedMessage])
+        )
+        let obsoleteMarker = try XCTUnwrap(viewModel.cacheFirstRenderMarker)
+        let waitTask = Task { @MainActor in
+            await viewModel.awaitCacheFirstTranscriptFrameCommit(timeout: .seconds(1))
+        }
+        await Task.yield()
+
+        viewModel.invalidateCacheFirstRenderMarker()
+
+        let didCommitObsoleteFrame = await waitTask.value
+        XCTAssertFalse(didCommitObsoleteFrame)
+        XCTAssertFalse(viewModel.markCacheFirstTranscriptFrameCommitted(obsoleteMarker))
+        XCTAssertNil(viewModel.cacheFirstRenderMarker)
+    }
+
+    @MainActor
+    func testNetworkReconcileGateResumesAfterCommittedCacheFirstFrame() async throws {
+        let context = try makeContext()
+        let viewModel = try makeViewModel { _ in throw URLError(.badURL) }
+        await viewModel.prepareInitialMessageLoad(
+            modelContext: context,
+            cacheReader: ImmediateTranscriptCacheReader(messages: [
+                ChatMessage(
+                    role: "assistant",
+                    content: "Cached value",
+                    timestamp: 1,
+                    messageId: "cached-1"
+                )
+            ])
+        )
+        let marker = try XCTUnwrap(viewModel.cacheFirstRenderMarker)
+        let waitTask = Task { @MainActor in
+            await viewModel.awaitCacheFirstTranscriptFrameCommit(timeout: .seconds(1))
+        }
+        await Task.yield()
+
+        XCTAssertTrue(viewModel.markCacheFirstTranscriptFrameCommitted(marker))
+
+        let didCommitFrame = await waitTask.value
+        XCTAssertTrue(didCommitFrame)
+        XCTAssertNil(viewModel.cacheFirstRenderMarker)
+    }
+
+    @MainActor
+    func testNetworkReconcileGateTimesOutToSafeExistingPath() async throws {
+        let context = try makeContext()
+        let viewModel = try makeViewModel { _ in throw URLError(.badURL) }
+        await viewModel.prepareInitialMessageLoad(
+            modelContext: context,
+            cacheReader: ImmediateTranscriptCacheReader(messages: [
+                ChatMessage(
+                    role: "assistant",
+                    content: "Cached value",
+                    timestamp: 1,
+                    messageId: "cached-1"
+                )
+            ])
+        )
+
+        let didCommit = await viewModel.awaitCacheFirstTranscriptFrameCommit(
+            timeout: .milliseconds(1)
+        )
+
+        XCTAssertFalse(didCommit)
+        XCTAssertNotNil(viewModel.cacheFirstRenderMarker)
+        XCTAssertEqual(viewModel.messages.map(\.messageId), ["cached-1"])
+    }
+
+    @MainActor
+    func testCacheFirstPublicationPerformanceDiagnostic() async throws {
+        let context = try makeContext()
+        let cachedMessages = makeCachedTranscript(count: 50)
+        let reader = ImmediateTranscriptCacheReader(messages: cachedMessages)
+        let clock = ContinuousClock()
+        var milliseconds: [Double] = []
+
+        for _ in 0..<10 {
+            let viewModel = try makeViewModel { _ in throw URLError(.badURL) }
+            let start = clock.now
+            await viewModel.prepareInitialMessageLoad(modelContext: context, cacheReader: reader)
+            let duration = start.duration(to: clock.now)
+            milliseconds.append(Double(duration.components.seconds) * 1_000
+                + Double(duration.components.attoseconds) / 1_000_000_000_000_000)
+            XCTAssertEqual(viewModel.displayedTranscriptMessages.count, 50)
+        }
+
+        XCTContext.runActivity(
+            named: "CacheFirstPublicationBenchmark milliseconds=\(milliseconds)"
+        ) { _ in }
+    }
+
+    @MainActor
+    func testCancelledInitialCacheLoadDoesNotPublishAfterRapidNavigation() async throws {
+        let context = try makeContext()
+        let reader = SuspendingTranscriptCacheReader()
+        let viewModel = try makeViewModel { request in
+            XCTFail("Cancelled cache preparation must not start a request: \(request.url?.absoluteString ?? "nil")")
+            throw URLError(.badURL)
+        }
+        let loadTask = Task {
+            await viewModel.prepareInitialMessageLoad(modelContext: context, cacheReader: reader)
+        }
+        while !(await reader.hasStarted) {
+            await Task.yield()
+        }
+
+        loadTask.cancel()
+        await loadTask.value
+
+        XCTAssertTrue(viewModel.messages.isEmpty)
+        XCTAssertTrue(viewModel.displayedTranscriptMessages.isEmpty)
+    }
+
+    @MainActor
+    func testCacheReaderFailureContinuesToNormalNetworkPath() async throws {
+        let context = try makeContext()
+        let viewModel = try makeViewModel { request in
+            XCTAssertEqual(request.url?.path, "/api/session")
+            return apiTestJSONResponse("""
+            {
+              "session": {
+                "session_id": "session-abc",
+                "messages": [
+                  {
+                    "role": "assistant",
+                    "content": "Loaded from server after cache failure",
+                    "timestamp": 1770000001,
+                    "message_id": "server-1"
+                  }
+                ]
+              }
+            }
+            """, for: request)
+        }
+
+        await viewModel.loadMessages(
+            modelContext: context,
+            cacheReader: FailingTranscriptCacheReader()
+        )
+
+        XCTAssertEqual(viewModel.messages.map(\.messageId), ["server-1"])
+        XCTAssertFalse(viewModel.isViewingCachedData)
+        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertNotNil(viewModel.cacheErrorMessage)
+    }
+
+    @MainActor
+    func testOfflineFallbackBoundsLargeCacheToNewestPage() async throws {
+        let context = try makeContext()
+        let serverURL = try XCTUnwrap(URL(string: "https://example.test"))
+        let cachedMessages = makeCachedTranscript(count: 75)
+        try CacheStore.cacheMessages(
+            cachedMessages,
+            serverURL: serverURL,
+            sessionID: "session-abc",
+            in: context
+        )
+        let viewModel = try makeViewModel { request in
+            XCTAssertEqual(request.url?.path, "/api/session")
+            throw URLError(.timedOut)
+        }
+
+        await viewModel.loadMessages(modelContext: context)
+
+        XCTAssertEqual(viewModel.messages.count, 50)
+        XCTAssertEqual(viewModel.messages.map(\.messageId), cachedMessages.suffix(50).map(\.messageId))
+        XCTAssertTrue(viewModel.isViewingCachedData)
+        XCTAssertNil(viewModel.errorMessage)
+    }
+
+    @MainActor
+    func testReloadOptimisticReconciliationReadsOnlyNewestCachePage() async throws {
+        let context = try makeContext()
+        let serverURL = try XCTUnwrap(URL(string: "https://example.test"))
+        var cachedMessages = makeCachedTranscript(count: 59)
+        cachedMessages.insert(
+            ChatMessage(
+                role: "user",
+                content: "Old optimistic message",
+                timestamp: 1_769_999_999,
+                messageId: "local-old"
+            ),
+            at: 0
+        )
+        cachedMessages.append(
+            ChatMessage(
+                role: "user",
+                content: "Newest optimistic message",
+                timestamp: 1_770_000_100,
+                messageId: "local-new"
+            )
+        )
+        try CacheStore.cacheMessages(
+            cachedMessages,
+            serverURL: serverURL,
+            sessionID: "session-abc",
+            in: context
+        )
+        let viewModel = try makeViewModel { request in
+            XCTAssertEqual(request.url?.path, "/api/session")
+            return apiTestJSONResponse("""
+            {
+              "session": {
+                "session_id": "session-abc",
+                "messages": [
+                  {
+                    "role": "assistant",
+                    "content": "Server response",
+                    "timestamp": 1770000099,
+                    "message_id": "server-assistant"
+                  }
+                ]
+              }
+            }
+            """, for: request)
+        }
+
+        await viewModel.loadMessages(modelContext: context)
+
+        XCTAssertFalse(viewModel.messages.contains { $0.messageId == "local-old" })
+        XCTAssertTrue(viewModel.messages.contains { $0.messageId == "local-new" })
+        XCTAssertTrue(viewModel.messages.contains { $0.messageId == "server-assistant" })
     }
 
     @MainActor
@@ -7068,6 +7360,17 @@ final class ChatViewModelSendTests: XCTestCase {
         return ModelContext(container)
     }
 
+    private func makeCachedTranscript(count: Int) -> [ChatMessage] {
+        (0..<count).map { index in
+            ChatMessage(
+                role: index.isMultiple(of: 2) ? "user" : "assistant",
+                content: "Cached message \(index)",
+                timestamp: 1_770_000_000 + Double(index),
+                messageId: "cached-\(index)"
+            )
+        }
+    }
+
     private func makeJPEGData(size: CGSize) throws -> Data {
         let renderer = UIGraphicsImageRenderer(size: size)
         let image = renderer.image { context in
@@ -7137,6 +7440,51 @@ final class ChatViewModelSendTests: XCTestCase {
             file: file,
             line: line
         )
+    }
+}
+
+private struct ImmediateTranscriptCacheReader: TranscriptCacheReading {
+    let messages: [ChatMessage]
+
+    func cachedMessages(
+        serverURL: URL,
+        sessionID: String,
+        now: Date,
+        newestLimit: Int
+    ) async throws -> TranscriptCachePage {
+        TranscriptCachePage(
+            messages: Array(messages.suffix(newestLimit))
+        )
+    }
+}
+
+private actor SuspendingTranscriptCacheReader: TranscriptCacheReading {
+    private(set) var hasStarted = false
+
+    func cachedMessages(
+        serverURL: URL,
+        sessionID: String,
+        now: Date,
+        newestLimit: Int
+    ) async throws -> TranscriptCachePage {
+        hasStarted = true
+        try await Task.sleep(for: .seconds(30))
+        return TranscriptCachePage(messages: [])
+    }
+}
+
+private struct FailingTranscriptCacheReader: TranscriptCacheReading {
+    struct CacheReadError: LocalizedError, Sendable {
+        var errorDescription: String? { "Injected cache read failure" }
+    }
+
+    func cachedMessages(
+        serverURL: URL,
+        sessionID: String,
+        now: Date,
+        newestLimit: Int
+    ) async throws -> TranscriptCachePage {
+        throw CacheReadError()
     }
 }
 

@@ -1,6 +1,6 @@
 import Foundation
 
-struct MessageAttachment: Codable, Equatable {
+struct MessageAttachment: Codable, Equatable, Sendable {
     let name: String?
     let path: String?
     let mime: String?
