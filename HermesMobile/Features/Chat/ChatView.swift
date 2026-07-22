@@ -1332,9 +1332,6 @@ struct ChatView: View {
 
     private func prepareInitialAppearance() {
         viewModel.setShowsLiveActivityResponseExcerpts(showsLiveActivityResponseExcerpts)
-        if loadsInitialMessages {
-            viewModel.prepareInitialMessageLoad(modelContext: modelContext)
-        }
     }
 
     private func handleInitialAppearanceTask() async {
@@ -1355,6 +1352,13 @@ struct ChatView: View {
         guard !Task.isCancelled else { return }
 
         if loadsInitialMessages {
+            await viewModel.prepareInitialMessageLoad(modelContext: modelContext)
+            guard !Task.isCancelled else { return }
+            await Task.yield()
+            TranscriptPerformanceSignpost.event(
+                "First transcript render ready",
+                sessionID: session.sessionId ?? "unknown"
+            )
             await loadMessages(appliesInitialFocus: false)
             guard !Task.isCancelled else { return }
         }

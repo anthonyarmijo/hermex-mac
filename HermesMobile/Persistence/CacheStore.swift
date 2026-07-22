@@ -1,5 +1,113 @@
 import Foundation
+import os
 import SwiftData
+
+enum TranscriptPerformanceSignpost {
+    private static let log = OSLog(
+        subsystem: Bundle.main.bundleIdentifier ?? "com.anthonyarmijo.hermex",
+        category: .pointsOfInterest
+    )
+
+    static func begin(_ name: StaticString, sessionID: String) -> OSSignpostID {
+        let signpostID = OSSignpostID(log: log)
+        os_signpost(
+            .begin,
+            log: log,
+            name: name,
+            signpostID: signpostID,
+            "session=%{public}@",
+            sessionID
+        )
+        return signpostID
+    }
+
+    static func end(_ name: StaticString, signpostID: OSSignpostID, sessionID: String) {
+        os_signpost(
+            .end,
+            log: log,
+            name: name,
+            signpostID: signpostID,
+            "session=%{public}@",
+            sessionID
+        )
+    }
+
+    static func event(_ name: StaticString, sessionID: String) {
+        os_signpost(.event, log: log, name: name, "session=%{public}@", sessionID)
+    }
+
+    static func interval<Value>(
+        _ name: StaticString,
+        sessionID: String,
+        operation: () throws -> Value
+    ) rethrows -> Value {
+        let signpostID = begin(name, sessionID: sessionID)
+        defer { end(name, signpostID: signpostID, sessionID: sessionID) }
+        return try operation()
+    }
+}
+
+struct TranscriptCachePage: Sendable {
+    let messages: [ChatMessage]
+}
+
+protocol TranscriptCacheReading: Sendable {
+    func cachedMessages(
+        serverURL: URL,
+        sessionID: String,
+        now: Date,
+        newestLimit: Int
+    ) async throws -> TranscriptCachePage
+}
+
+/// Read-only SwiftData boundary for opening a transcript. Its generated model
+/// context stays isolated to this actor; only checked-Sendable value models leave it.
+@ModelActor
+actor TranscriptCacheReader: TranscriptCacheReading {
+    func cachedMessages(
+        serverURL: URL,
+        sessionID: String,
+        now: Date = Date(),
+        newestLimit: Int
+    ) throws -> TranscriptCachePage {
+        try Task.checkCancellation()
+        guard newestLimit > 0 else {
+            return TranscriptCachePage(messages: [])
+        }
+
+        let serverURLString = serverURL.absoluteString
+        let predicate = #Predicate<CachedMessage> { cachedMessage in
+            cachedMessage.serverURLString == serverURLString
+                && cachedMessage.sessionID == sessionID
+                && cachedMessage.expiresAt > now
+        }
+        var descriptor = FetchDescriptor<CachedMessage>(
+            predicate: predicate,
+            sortBy: [SortDescriptor(\.sortIndex, order: .reverse)]
+        )
+        descriptor.fetchLimit = newestLimit
+
+        let cachedMessages = try TranscriptPerformanceSignpost.interval(
+            "Transcript cache fetch",
+            sessionID: sessionID
+        ) {
+            try modelContext.fetch(descriptor)
+        }
+
+        try Task.checkCancellation()
+        let messages = TranscriptPerformanceSignpost.interval(
+            "Cached message mapping",
+            sessionID: sessionID
+        ) {
+            cachedMessages
+                .reversed()
+                .map(ChatMessage.init(cachedMessage:))
+        }
+        try Task.checkCancellation()
+
+        return TranscriptCachePage(messages: messages)
+    }
+}
 
 enum CacheStore {
     @MainActor
@@ -44,9 +152,21 @@ enum CacheStore {
             )
             descriptor.fetchLimit = newestLimit
 
-            return try context.fetch(descriptor)
-                .reversed()
-                .map(ChatMessage.init(cachedMessage:))
+            let cachedMessages = try TranscriptPerformanceSignpost.interval(
+                "Transcript cache fetch",
+                sessionID: sessionID
+            ) {
+                try context.fetch(descriptor)
+            }
+
+            return TranscriptPerformanceSignpost.interval(
+                "Cached message mapping",
+                sessionID: sessionID
+            ) {
+                cachedMessages
+                    .reversed()
+                    .map(ChatMessage.init(cachedMessage:))
+            }
         }
 
         let descriptor = FetchDescriptor<CachedMessage>(
@@ -54,8 +174,19 @@ enum CacheStore {
             sortBy: [SortDescriptor(\.sortIndex)]
         )
 
-        return try context.fetch(descriptor)
-            .map(ChatMessage.init(cachedMessage:))
+        let cachedMessages = try TranscriptPerformanceSignpost.interval(
+            "Transcript cache fetch",
+            sessionID: sessionID
+        ) {
+            try context.fetch(descriptor)
+        }
+
+        return TranscriptPerformanceSignpost.interval(
+            "Cached message mapping",
+            sessionID: sessionID
+        ) {
+            cachedMessages.map(ChatMessage.init(cachedMessage:))
+        }
     }
 
     @MainActor

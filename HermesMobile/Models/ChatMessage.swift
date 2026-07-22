@@ -1,6 +1,6 @@
 import Foundation
 
-struct ChatMessage: Decodable, Equatable, Identifiable {
+struct ChatMessage: Decodable, Equatable, Identifiable, Sendable {
     var id: String {
         messageId ?? "\(role ?? "unknown")-\(timestamp ?? 0)-\(content ?? "")"
     }

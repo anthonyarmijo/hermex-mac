@@ -3214,7 +3214,7 @@ final class ChatViewModelSendTests: XCTestCase {
     }
 
     @MainActor
-    func testPrepareInitialMessageLoadPrimesCacheWithoutStartingNetwork() throws {
+    func testPrepareInitialMessageLoadPrimesCacheWithoutStartingNetwork() async throws {
         let context = try makeContext()
         let serverURL = try XCTUnwrap(URL(string: "https://example.test"))
         try CacheStore.cacheMessages(
@@ -3232,7 +3232,7 @@ final class ChatViewModelSendTests: XCTestCase {
             throw URLError(.badURL)
         }
 
-        viewModel.prepareInitialMessageLoad(modelContext: context)
+        await viewModel.prepareInitialMessageLoad(modelContext: context)
 
         XCTAssertEqual(viewModel.messages.compactMap(\.content), ["Cached question", "Cached answer"])
         XCTAssertTrue(viewModel.isLoading)
@@ -3240,7 +3240,7 @@ final class ChatViewModelSendTests: XCTestCase {
     }
 
     @MainActor
-    func testPrepareInitialMessageLoadBoundsLargeCacheToNewestPage() throws {
+    func testPrepareInitialMessageLoadBoundsLargeCacheToNewestPage() async throws {
         let context = try makeContext()
         let serverURL = try XCTUnwrap(URL(string: "https://example.test"))
         let cachedMessages = makeCachedTranscript(count: 75)
@@ -3255,12 +3255,89 @@ final class ChatViewModelSendTests: XCTestCase {
             throw URLError(.badURL)
         }
 
-        viewModel.prepareInitialMessageLoad(modelContext: context)
+        await viewModel.prepareInitialMessageLoad(modelContext: context)
 
         XCTAssertEqual(viewModel.messages.count, 50)
         XCTAssertEqual(viewModel.messages.map(\.messageId), cachedMessages.suffix(50).map(\.messageId))
         XCTAssertTrue(viewModel.isLoading)
         XCTAssertFalse(viewModel.isViewingCachedData)
+    }
+
+    @MainActor
+    func testPrepareInitialMessageLoadPublishesOnlyAfterReturningToMainActor() async throws {
+        let context = try makeContext()
+        let cachedMessage = ChatMessage(
+            role: "assistant",
+            content: "Background-loaded cache value",
+            timestamp: 1,
+            messageId: "cached-1"
+        )
+        let reader = ImmediateTranscriptCacheReader(messages: [cachedMessage])
+        let viewModel = try makeViewModel { request in
+            XCTFail("Cache preparation must not start a request: \(request.url?.absoluteString ?? "nil")")
+            throw URLError(.badURL)
+        }
+
+        await viewModel.prepareInitialMessageLoad(modelContext: context, cacheReader: reader)
+
+        XCTAssertTrue(Thread.isMainThread)
+        XCTAssertEqual(viewModel.messages, [cachedMessage])
+        XCTAssertEqual(viewModel.displayedTranscriptMessages.map(\.message), [cachedMessage])
+    }
+
+    @MainActor
+    func testCancelledInitialCacheLoadDoesNotPublishAfterRapidNavigation() async throws {
+        let context = try makeContext()
+        let reader = SuspendingTranscriptCacheReader()
+        let viewModel = try makeViewModel { request in
+            XCTFail("Cancelled cache preparation must not start a request: \(request.url?.absoluteString ?? "nil")")
+            throw URLError(.badURL)
+        }
+        let loadTask = Task {
+            await viewModel.prepareInitialMessageLoad(modelContext: context, cacheReader: reader)
+        }
+        while !(await reader.hasStarted) {
+            await Task.yield()
+        }
+
+        loadTask.cancel()
+        await loadTask.value
+
+        XCTAssertTrue(viewModel.messages.isEmpty)
+        XCTAssertTrue(viewModel.displayedTranscriptMessages.isEmpty)
+    }
+
+    @MainActor
+    func testCacheReaderFailureContinuesToNormalNetworkPath() async throws {
+        let context = try makeContext()
+        let viewModel = try makeViewModel { request in
+            XCTAssertEqual(request.url?.path, "/api/session")
+            return apiTestJSONResponse("""
+            {
+              "session": {
+                "session_id": "session-abc",
+                "messages": [
+                  {
+                    "role": "assistant",
+                    "content": "Loaded from server after cache failure",
+                    "timestamp": 1770000001,
+                    "message_id": "server-1"
+                  }
+                ]
+              }
+            }
+            """, for: request)
+        }
+
+        await viewModel.loadMessages(
+            modelContext: context,
+            cacheReader: FailingTranscriptCacheReader()
+        )
+
+        XCTAssertEqual(viewModel.messages.map(\.messageId), ["server-1"])
+        XCTAssertFalse(viewModel.isViewingCachedData)
+        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertNotNil(viewModel.cacheErrorMessage)
     }
 
     @MainActor
@@ -7250,6 +7327,51 @@ final class ChatViewModelSendTests: XCTestCase {
             file: file,
             line: line
         )
+    }
+}
+
+private struct ImmediateTranscriptCacheReader: TranscriptCacheReading {
+    let messages: [ChatMessage]
+
+    func cachedMessages(
+        serverURL: URL,
+        sessionID: String,
+        now: Date,
+        newestLimit: Int
+    ) async throws -> TranscriptCachePage {
+        TranscriptCachePage(
+            messages: Array(messages.suffix(newestLimit))
+        )
+    }
+}
+
+private actor SuspendingTranscriptCacheReader: TranscriptCacheReading {
+    private(set) var hasStarted = false
+
+    func cachedMessages(
+        serverURL: URL,
+        sessionID: String,
+        now: Date,
+        newestLimit: Int
+    ) async throws -> TranscriptCachePage {
+        hasStarted = true
+        try await Task.sleep(for: .seconds(30))
+        return TranscriptCachePage(messages: [])
+    }
+}
+
+private struct FailingTranscriptCacheReader: TranscriptCacheReading {
+    struct CacheReadError: LocalizedError, Sendable {
+        var errorDescription: String? { "Injected cache read failure" }
+    }
+
+    func cachedMessages(
+        serverURL: URL,
+        sessionID: String,
+        now: Date,
+        newestLimit: Int
+    ) async throws -> TranscriptCachePage {
+        throw CacheReadError()
     }
 }
 

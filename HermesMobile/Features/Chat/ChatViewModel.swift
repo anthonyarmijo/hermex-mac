@@ -271,11 +271,20 @@ final class ChatViewModel {
     }
 
     private func recomputeDisplayedTranscriptMessages() {
+        let signpostID = TranscriptPerformanceSignpost.begin(
+            "Transcript display model",
+            sessionID: sessionID ?? "unknown"
+        )
         displayedTranscriptMessages = Self.transcriptMessages(
             from: messages,
             messageOffset: messagesOffset
         )
         recomputeCompressionReferenceCard()
+        TranscriptPerformanceSignpost.end(
+            "Transcript display model",
+            signpostID: signpostID,
+            sessionID: sessionID ?? "unknown"
+        )
     }
     /// Synthesized "Context compaction · Reference only" card resolved from the
     /// session's `compression_anchor_*` metadata; nil when the session has no
@@ -1145,11 +1154,16 @@ final class ChatViewModel {
         await attachmentCoordinator.transcriptMediaData(for: reference)
     }
 
-    func loadMessages(modelContext: ModelContext? = nil) async {
+    func loadMessages(
+        modelContext: ModelContext? = nil,
+        cacheReader injectedCacheReader: (any TranscriptCacheReading)? = nil
+    ) async {
         guard let sessionID else {
             errorMessage = String(localized: "The server did not provide a session ID.")
             return
         }
+        let cacheReader: (any TranscriptCacheReading)? = injectedCacheReader
+            ?? modelContext.map { TranscriptCacheReader(modelContainer: $0.container) }
 
         resetPendingStreamingContentBuffers()
         latestServerLoadHadAssistantResponseAfterLatestUser = false
@@ -1169,10 +1183,10 @@ final class ChatViewModel {
         let usesPrimedInitialCache = hasPrimedInitialCachedMessages && !previousMessages.isEmpty
         hasPrimedInitialCachedMessages = false
         let cacheFirstPlaceholder: [ChatMessage]
-        if previousMessages.isEmpty, let modelContext {
-            cacheFirstPlaceholder = renderCachedMessagesBeforeReload(
+        if previousMessages.isEmpty, let cacheReader {
+            cacheFirstPlaceholder = await renderCachedMessagesBeforeReload(
                 sessionID: sessionID,
-                modelContext: modelContext
+                cacheReader: cacheReader
             )
         } else if usesPrimedInitialCache {
             cacheFirstPlaceholder = previousMessages
@@ -1193,19 +1207,30 @@ final class ChatViewModel {
             let session = response.session
             let loadedMessages = session?.messages ?? []
             let loadedActiveStreamID = session?.activeStreamId?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let reconciliationSignpostID = TranscriptPerformanceSignpost.begin(
+                "Server reconciliation",
+                sessionID: sessionID
+            )
             let reloadedMessages: [ChatMessage]
-            if let modelContext {
+            if let cacheReader {
                 do {
-                    let cachedMessages = try CacheStore.cachedMessages(
+                    let cachedMessages = try await cacheReader.cachedMessages(
                         serverURL: server,
                         sessionID: sessionID,
-                        in: modelContext,
+                        now: Date(),
                         newestLimit: Self.messagePageLimit
-                    )
+                    ).messages
                     reloadedMessages = Self.mergingLoadedMessages(
                         loadedMessages,
                         withCachedLocalOptimisticMessages: cachedMessages
                     )
+                } catch is CancellationError {
+                    TranscriptPerformanceSignpost.end(
+                        "Server reconciliation",
+                        signpostID: reconciliationSignpostID,
+                        sessionID: sessionID
+                    )
+                    throw CancellationError()
                 } catch {
                     cacheErrorMessage = error.localizedDescription
                     reloadedMessages = loadedMessages
@@ -1265,17 +1290,24 @@ final class ChatViewModel {
                 preparation: streamLoadPreparation,
                 usedCacheFallback: false
             )
+            TranscriptPerformanceSignpost.end(
+                "Server reconciliation",
+                signpostID: reconciliationSignpostID,
+                sessionID: sessionID
+            )
+        } catch is CancellationError {
+            return
         } catch {
             lastError = error
             latestServerLoadHadAssistantResponseAfterLatestUser = false
-            if CacheFallbackPolicy.shouldUseCache(for: error), let modelContext {
+            if CacheFallbackPolicy.shouldUseCache(for: error), let cacheReader {
                 do {
-                    let cachedMessages = try CacheStore.cachedMessages(
+                    let cachedMessages = try await cacheReader.cachedMessages(
                         serverURL: server,
                         sessionID: sessionID,
-                        in: modelContext,
+                        now: Date(),
                         newestLimit: Self.messagePageLimit
-                    )
+                    ).messages
                     if !cachedMessages.isEmpty {
                         clearCompressionAnchorMetadata()
                         messages = cachedMessages
@@ -1313,6 +1345,8 @@ final class ChatViewModel {
                         isViewingCachedData = false
                         errorMessage = error.localizedDescription
                     }
+                } catch is CancellationError {
+                    return
                 } catch {
                     if renderedCacheFirst {
                         revertCacheFirstPlaceholder(
@@ -1339,20 +1373,25 @@ final class ChatViewModel {
         }
     }
 
-    /// Performs only the fast, local portion of an existing session's first
-    /// load. The network reconcile is intentionally started by `ChatView` after
-    /// its navigation appearance completes so rendering a richer transcript
-    /// cannot stall the system push animation.
-    func prepareInitialMessageLoad(modelContext: ModelContext) {
+    /// Performs only the local portion of an existing session's first load on a
+    /// SwiftData model actor. The network reconcile starts after publication so
+    /// neither cache materialization nor richer rendering stalls navigation.
+    func prepareInitialMessageLoad(
+        modelContext: ModelContext,
+        cacheReader injectedCacheReader: (any TranscriptCacheReading)? = nil
+    ) async {
         guard let sessionID else { return }
 
         isLoading = true
         guard messages.isEmpty else { return }
 
-        let cachedMessages = renderCachedMessagesBeforeReload(
+        let cacheReader = injectedCacheReader
+            ?? TranscriptCacheReader(modelContainer: modelContext.container)
+        let cachedMessages = await renderCachedMessagesBeforeReload(
             sessionID: sessionID,
-            modelContext: modelContext
+            cacheReader: cacheReader
         )
+        guard !Task.isCancelled else { return }
         hasPrimedInitialCachedMessages = !cachedMessages.isEmpty
     }
 
@@ -1366,28 +1405,39 @@ final class ChatViewModel {
     /// content — but only while the transcript is still that exact placeholder.
     private func renderCachedMessagesBeforeReload(
         sessionID: String,
-        modelContext: ModelContext
-    ) -> [ChatMessage] {
+        cacheReader: any TranscriptCacheReading
+    ) async -> [ChatMessage] {
         let cachedMessages: [ChatMessage]
         do {
-            cachedMessages = try CacheStore.cachedMessages(
+            cachedMessages = try await cacheReader.cachedMessages(
                 serverURL: server,
                 sessionID: sessionID,
-                in: modelContext,
+                now: Date(),
                 newestLimit: Self.messagePageLimit
-            )
+            ).messages
+        } catch is CancellationError {
+            return []
         } catch {
             // A cache read failure must not block the normal network load; fall back
             // to the existing skeleton-until-network behavior.
             return []
         }
 
-        guard !cachedMessages.isEmpty else { return [] }
+        guard !Task.isCancelled, !cachedMessages.isEmpty else { return [] }
 
+        let publicationSignpostID = TranscriptPerformanceSignpost.begin(
+            "Cache-first publication",
+            sessionID: sessionID
+        )
         messages = cachedMessages
         messagesOffset = 0
         hasOlderMessages = false
         isViewingCachedData = false
+        TranscriptPerformanceSignpost.end(
+            "Cache-first publication",
+            signpostID: publicationSignpostID,
+            sessionID: sessionID
+        )
         return cachedMessages
     }
 
