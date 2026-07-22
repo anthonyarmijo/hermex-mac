@@ -151,6 +151,49 @@ final class LocalizationCatalogTests: XCTestCase {
         }
     }
 
+    func testOnboardingTranslationsKeepAReplaceableIPhonePlatformName() throws {
+        let data = try Data(contentsOf: catalogURL())
+        let root = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let strings = try XCTUnwrap(root["strings"] as? [String: Any])
+        let platformSpecificKeys = [
+            "Chat with your Hermes agent from iPhone",
+            "Install Tailscale on iPhone",
+            "Install Tailscale on your iPhone and sign into the same tailnet as your server. Your agent will reply with the exact URL to use on the next screen.",
+            "Your Hermes agent, reachable from iPhone over Tailscale."
+        ]
+
+        for key in platformSpecificKeys {
+            XCTAssertEqual(key.components(separatedBy: "iPhone").count - 1, 1)
+
+            let entry = try XCTUnwrap(strings[key] as? [String: Any], key)
+            let localizations = try XCTUnwrap(entry["localizations"] as? [String: Any], key)
+
+            for language in Self.shippedLanguages {
+                let localization = try XCTUnwrap(
+                    localizations[language] as? [String: Any],
+                    "[\(language)] \(key)"
+                )
+                let stringUnit = try XCTUnwrap(
+                    localization["stringUnit"] as? [String: Any],
+                    "[\(language)] \(key)"
+                )
+                let value = try XCTUnwrap(
+                    stringUnit["value"] as? String,
+                    "[\(language)] \(key)"
+                )
+
+                let replaceablePlatformNameCount = ["iPhone", "iPhonie"].reduce(0) { count, token in
+                    count + value.components(separatedBy: token).count - 1
+                }
+                XCTAssertEqual(
+                    replaceablePlatformNameCount,
+                    1,
+                    "[\(language)] \(key) must keep one replaceable iPhone platform name."
+                )
+            }
+        }
+    }
+
     func testKanbanCardDetailCopyIsLocalizedInEveryShippedLanguage() throws {
         let data = try Data(contentsOf: catalogURL())
         let root = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])

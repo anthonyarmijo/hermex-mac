@@ -8,18 +8,28 @@ struct OnboardingTailscalePage: View {
             VStack(spacing: 28) {
                 OnboardingStepHeader(
                     stepNumber: 2,
-                    icon: "iphone.and.arrow.forward",
-                    title: String(localized: "Install Tailscale on iPhone"),
-                    description: String(localized: "Install Tailscale on your iPhone and sign into the same tailnet as your server. Your agent will reply with the exact URL to use on the next screen.")
+                    icon: PlatformCapabilities.isMacCatalyst ? "desktopcomputer" : "iphone.and.arrow.forward",
+                    title: OnboardingFlowPolicy.clientSpecificCopy(String(localized: "Install Tailscale on iPhone")),
+                    description: OnboardingFlowPolicy.clientSpecificCopy(String(localized: "Install Tailscale on your iPhone and sign into the same tailnet as your server. Your agent will reply with the exact URL to use on the next screen."))
                 )
 
                 VStack(alignment: .leading, spacing: 14) {
-                    tailscaleStep(number: "1", text: String(localized: "Install Tailscale from the App Store."))
+                    tailscaleStep(
+                        number: "1",
+                        text: PlatformCapabilities.isMacCatalyst
+                            ? OnboardingFlowPolicy.clientSpecificCopy(String(localized: "Install Tailscale on iPhone"))
+                            : String(localized: "Install Tailscale from the App Store.")
+                    )
                     tailscaleStep(number: "2", text: String(localized: "Sign in with the same account you used on your server."))
                     tailscaleStep(number: "3", text: String(localized: "Keep Tailscale connected while using Hermex."))
 
                     Button(action: openTailscaleInAppStore) {
-                        Label("Get Tailscale on the App Store", systemImage: "arrow.up.forward.square")
+                        Label(
+                            PlatformCapabilities.isMacCatalyst
+                                ? OnboardingFlowPolicy.clientSpecificCopy(String(localized: "Install Tailscale on iPhone"))
+                                : String(localized: "Get Tailscale on the App Store"),
+                            systemImage: "arrow.up.forward.square"
+                        )
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(Color(red: 1.0, green: 0.74, blue: 0.10))
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -32,7 +42,11 @@ struct OnboardingTailscalePage: View {
                             )
                     }
                     .buttonStyle(.plain)
-                    .accessibilityHint("Opens the Tailscale page in the App Store.")
+                    .accessibilityHint(
+                        PlatformCapabilities.isMacCatalyst
+                            ? ""
+                            : String(localized: "Opens the Tailscale page in the App Store.")
+                    )
                 }
             }
             .padding(.horizontal, 28)
@@ -43,8 +57,10 @@ struct OnboardingTailscalePage: View {
     }
 
     private func openTailscaleInAppStore() {
-        openURL(OnboardingFlowPolicy.tailscaleAppStoreURL, completion: { accepted in
+        let primaryURL = OnboardingFlowPolicy.tailscaleClientDownloadURL()
+        openURL(primaryURL, completion: { accepted in
             guard !accepted else { return }
+            guard !PlatformCapabilities.isMacCatalyst else { return }
             openURL(OnboardingFlowPolicy.tailscaleAppStoreFallbackURL)
         })
     }
