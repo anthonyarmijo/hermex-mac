@@ -386,6 +386,74 @@ final class CacheStoreTests: XCTestCase {
         XCTAssertEqual(cachedMessages.first?.reasoning, "Cached reasoning.")
     }
 
+    func testCachedMessagesNewestLimitReturnsNewestPageInAscendingOrderWithoutDeletingHistory() throws {
+        let context = try makeContext()
+        let serverURL = URL(string: "https://example.test")!
+        let cachedAt = Date(timeIntervalSince1970: 1_770_000_000)
+        let messages = (0..<75).map { index in
+            ChatMessage(
+                role: index.isMultiple(of: 2) ? "user" : "assistant",
+                content: "Message \(index)",
+                timestamp: 1_770_000_000 + Double(index),
+                messageId: "m\(index)"
+            )
+        }
+
+        try CacheStore.cacheMessages(
+            messages,
+            serverURL: serverURL,
+            sessionID: "long-session",
+            in: context,
+            cachedAt: cachedAt
+        )
+
+        let newestPage = try CacheStore.cachedMessages(
+            serverURL: serverURL,
+            sessionID: "long-session",
+            in: context,
+            now: cachedAt.addingTimeInterval(60),
+            newestLimit: 50
+        )
+
+        XCTAssertEqual(newestPage.count, 50)
+        XCTAssertEqual(newestPage.map(\.messageId), (25..<75).map { "m\($0)" })
+        XCTAssertEqual(try fetchCachedMessages(in: context).count, 75)
+    }
+
+    func testCachedMessagesNewestLimitReturnsExactlyOnePageOrFewer() throws {
+        let context = try makeContext()
+        let serverURL = URL(string: "https://example.test")!
+        let cachedAt = Date(timeIntervalSince1970: 1_770_000_000)
+
+        for (sessionID, count) in [("exact-page", 50), ("short-page", 12)] {
+            let messages = (0..<count).map { index in
+                ChatMessage(
+                    role: "assistant",
+                    content: "\(sessionID) \(index)",
+                    timestamp: 1_770_000_000 + Double(index),
+                    messageId: "\(sessionID)-m\(index)"
+                )
+            }
+            try CacheStore.cacheMessages(
+                messages,
+                serverURL: serverURL,
+                sessionID: sessionID,
+                in: context,
+                cachedAt: cachedAt
+            )
+
+            let cachedMessages = try CacheStore.cachedMessages(
+                serverURL: serverURL,
+                sessionID: sessionID,
+                in: context,
+                now: cachedAt.addingTimeInterval(60),
+                newestLimit: 50
+            )
+
+            XCTAssertEqual(cachedMessages.map(\.messageId), messages.map(\.messageId))
+        }
+    }
+
     func testCachedMessagesIgnoresExpiredMessages() throws {
         let context = try makeContext()
         let serverURL = URL(string: "https://example.test")!

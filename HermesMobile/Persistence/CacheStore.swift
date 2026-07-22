@@ -25,19 +25,36 @@ enum CacheStore {
         serverURL: URL,
         sessionID: String,
         in context: ModelContext,
-        now: Date = Date()
+        now: Date = Date(),
+        newestLimit: Int? = nil
     ) throws -> [ChatMessage] {
         let serverURLString = serverURL.absoluteString
+        let predicate = #Predicate<CachedMessage> { cachedMessage in
+            cachedMessage.serverURLString == serverURLString
+                && cachedMessage.sessionID == sessionID
+                && cachedMessage.expiresAt > now
+        }
+
+        if let newestLimit {
+            guard newestLimit > 0 else { return [] }
+
+            var descriptor = FetchDescriptor<CachedMessage>(
+                predicate: predicate,
+                sortBy: [SortDescriptor(\.sortIndex, order: .reverse)]
+            )
+            descriptor.fetchLimit = newestLimit
+
+            return try context.fetch(descriptor)
+                .reversed()
+                .map(ChatMessage.init(cachedMessage:))
+        }
+
         let descriptor = FetchDescriptor<CachedMessage>(
-            predicate: #Predicate { cachedMessage in
-                cachedMessage.serverURLString == serverURLString
-                    && cachedMessage.sessionID == sessionID
-            }
+            predicate: predicate,
+            sortBy: [SortDescriptor(\.sortIndex)]
         )
 
         return try context.fetch(descriptor)
-            .filter { $0.expiresAt > now }
-            .sorted { $0.sortIndex < $1.sortIndex }
             .map(ChatMessage.init(cachedMessage:))
     }
 

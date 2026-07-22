@@ -3240,6 +3240,108 @@ final class ChatViewModelSendTests: XCTestCase {
     }
 
     @MainActor
+    func testPrepareInitialMessageLoadBoundsLargeCacheToNewestPage() throws {
+        let context = try makeContext()
+        let serverURL = try XCTUnwrap(URL(string: "https://example.test"))
+        let cachedMessages = makeCachedTranscript(count: 75)
+        try CacheStore.cacheMessages(
+            cachedMessages,
+            serverURL: serverURL,
+            sessionID: "session-abc",
+            in: context
+        )
+        let viewModel = try makeViewModel { request in
+            XCTFail("Cache preparation must not start a request: \(request.url?.absoluteString ?? "nil")")
+            throw URLError(.badURL)
+        }
+
+        viewModel.prepareInitialMessageLoad(modelContext: context)
+
+        XCTAssertEqual(viewModel.messages.count, 50)
+        XCTAssertEqual(viewModel.messages.map(\.messageId), cachedMessages.suffix(50).map(\.messageId))
+        XCTAssertTrue(viewModel.isLoading)
+        XCTAssertFalse(viewModel.isViewingCachedData)
+    }
+
+    @MainActor
+    func testOfflineFallbackBoundsLargeCacheToNewestPage() async throws {
+        let context = try makeContext()
+        let serverURL = try XCTUnwrap(URL(string: "https://example.test"))
+        let cachedMessages = makeCachedTranscript(count: 75)
+        try CacheStore.cacheMessages(
+            cachedMessages,
+            serverURL: serverURL,
+            sessionID: "session-abc",
+            in: context
+        )
+        let viewModel = try makeViewModel { request in
+            XCTAssertEqual(request.url?.path, "/api/session")
+            throw URLError(.timedOut)
+        }
+
+        await viewModel.loadMessages(modelContext: context)
+
+        XCTAssertEqual(viewModel.messages.count, 50)
+        XCTAssertEqual(viewModel.messages.map(\.messageId), cachedMessages.suffix(50).map(\.messageId))
+        XCTAssertTrue(viewModel.isViewingCachedData)
+        XCTAssertNil(viewModel.errorMessage)
+    }
+
+    @MainActor
+    func testReloadOptimisticReconciliationReadsOnlyNewestCachePage() async throws {
+        let context = try makeContext()
+        let serverURL = try XCTUnwrap(URL(string: "https://example.test"))
+        var cachedMessages = makeCachedTranscript(count: 59)
+        cachedMessages.insert(
+            ChatMessage(
+                role: "user",
+                content: "Old optimistic message",
+                timestamp: 1_769_999_999,
+                messageId: "local-old"
+            ),
+            at: 0
+        )
+        cachedMessages.append(
+            ChatMessage(
+                role: "user",
+                content: "Newest optimistic message",
+                timestamp: 1_770_000_100,
+                messageId: "local-new"
+            )
+        )
+        try CacheStore.cacheMessages(
+            cachedMessages,
+            serverURL: serverURL,
+            sessionID: "session-abc",
+            in: context
+        )
+        let viewModel = try makeViewModel { request in
+            XCTAssertEqual(request.url?.path, "/api/session")
+            return apiTestJSONResponse("""
+            {
+              "session": {
+                "session_id": "session-abc",
+                "messages": [
+                  {
+                    "role": "assistant",
+                    "content": "Server response",
+                    "timestamp": 1770000099,
+                    "message_id": "server-assistant"
+                  }
+                ]
+              }
+            }
+            """, for: request)
+        }
+
+        await viewModel.loadMessages(modelContext: context)
+
+        XCTAssertFalse(viewModel.messages.contains { $0.messageId == "local-old" })
+        XCTAssertTrue(viewModel.messages.contains { $0.messageId == "local-new" })
+        XCTAssertTrue(viewModel.messages.contains { $0.messageId == "server-assistant" })
+    }
+
+    @MainActor
     func testLoadMessagesKeepsTranscriptEmptyDuringNetworkWhenCacheIsEmpty() async throws {
         let context = try makeContext()
 
@@ -7066,6 +7168,17 @@ final class ChatViewModelSendTests: XCTestCase {
             configurations: configuration
         )
         return ModelContext(container)
+    }
+
+    private func makeCachedTranscript(count: Int) -> [ChatMessage] {
+        (0..<count).map { index in
+            ChatMessage(
+                role: index.isMultiple(of: 2) ? "user" : "assistant",
+                content: "Cached message \(index)",
+                timestamp: 1_770_000_000 + Double(index),
+                messageId: "cached-\(index)"
+            )
+        }
     }
 
     private func makeJPEGData(size: CGSize) throws -> Data {
