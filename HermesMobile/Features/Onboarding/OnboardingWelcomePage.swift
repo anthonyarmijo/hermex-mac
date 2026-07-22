@@ -6,7 +6,8 @@ struct OnboardingWelcomePage: View {
     private var title: String {
         if PlatformCapabilities.isMacCatalyst {
             return OnboardingFlowPolicy.clientSpecificCopy(
-                String(localized: "Chat with your Hermes agent from iPhone")
+                iPhone: "Chat with your Hermes agent from iPhone",
+                mac: "Chat with your Hermes agent from Mac"
             )
         }
         return String(localized: "Control your Hermes agent from iPhone or iPad.")

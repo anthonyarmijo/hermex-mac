@@ -106,15 +106,21 @@ final class OnboardingFlowTests: XCTestCase {
         XCTAssertFalse(macPrompt.contains("my iPhone"))
     }
 
-    func testClientSpecificCopyPreservesIPhoneAndAdaptsMac() {
-        let copy = "Install Tailscale on iPhone"
-
+    func testClientSpecificCopySelectsCompletePlatformLocalizationKey() {
         XCTAssertEqual(
-            OnboardingFlowPolicy.clientSpecificCopy(copy, isMacCatalyst: false),
-            copy
+            OnboardingFlowPolicy.clientSpecificCopy(
+                iPhone: "Install Tailscale on iPhone",
+                mac: "Install Tailscale on Mac",
+                isMacCatalyst: false
+            ),
+            "Install Tailscale on iPhone"
         )
         XCTAssertEqual(
-            OnboardingFlowPolicy.clientSpecificCopy(copy, isMacCatalyst: true),
+            OnboardingFlowPolicy.clientSpecificCopy(
+                iPhone: "Install Tailscale on iPhone",
+                mac: "Install Tailscale on Mac",
+                isMacCatalyst: true
+            ),
             "Install Tailscale on Mac"
         )
     }

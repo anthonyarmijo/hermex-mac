@@ -5,7 +5,7 @@ struct OnboardingFeaturesPage: View {
 
     private var features: [(icon: String, color: Color, title: String, subtitle: String)] {
         [
-            ("bubble.left.and.bubble.right.fill", Color(red: 1.0, green: 0.74, blue: 0.10), OnboardingFlowPolicy.clientSpecificCopy(String(localized: "Chat with your Hermes agent from iPhone")), String(localized: "Drive conversations from anywhere on your tailnet.")),
+            ("bubble.left.and.bubble.right.fill", Color(red: 1.0, green: 0.74, blue: 0.10), OnboardingFlowPolicy.clientSpecificCopy(iPhone: "Chat with your Hermes agent from iPhone", mac: "Chat with your Hermes agent from Mac"), String(localized: "Drive conversations from anywhere on your tailnet.")),
             ("list.bullet.rectangle.portrait.fill", .green, String(localized: "Manage sessions, tasks, and files remotely"), String(localized: "Browse workspaces and stay on top of agent work.")),
             ("mic.fill", .purple, String(localized: "Voice input and mobile-friendly composer controls"), String(localized: "Compose naturally with touch-first controls.")),
             ("checkmark.shield.fill", .cyan, String(localized: "Review approvals and clarifications inline"), String(localized: "Respond to agent prompts without switching apps.")),
@@ -15,7 +15,8 @@ struct OnboardingFeaturesPage: View {
 
     private var platformSubtitle: String {
         OnboardingFlowPolicy.clientSpecificCopy(
-            String(localized: "Your Hermes agent, reachable from iPhone over Tailscale.")
+            iPhone: "Your Hermes agent, reachable from iPhone over Tailscale.",
+            mac: "Your Hermes agent, reachable from Mac over Tailscale."
         )
     }
 

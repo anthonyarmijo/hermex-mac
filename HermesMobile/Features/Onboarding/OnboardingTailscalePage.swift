@@ -9,15 +9,18 @@ struct OnboardingTailscalePage: View {
                 OnboardingStepHeader(
                     stepNumber: 2,
                     icon: PlatformCapabilities.isMacCatalyst ? "desktopcomputer" : "iphone.and.arrow.forward",
-                    title: OnboardingFlowPolicy.clientSpecificCopy(String(localized: "Install Tailscale on iPhone")),
-                    description: OnboardingFlowPolicy.clientSpecificCopy(String(localized: "Install Tailscale on your iPhone and sign into the same tailnet as your server. Your agent will reply with the exact URL to use on the next screen."))
+                    title: OnboardingFlowPolicy.clientSpecificCopy(iPhone: "Install Tailscale on iPhone", mac: "Install Tailscale on Mac"),
+                    description: OnboardingFlowPolicy.clientSpecificCopy(
+                        iPhone: "Install Tailscale on your iPhone and sign into the same tailnet as your server. Your agent will reply with the exact URL to use on the next screen.",
+                        mac: "Install Tailscale on your Mac and sign into the same tailnet as your server. Your agent will reply with the exact URL to use on the next screen."
+                    )
                 )
 
                 VStack(alignment: .leading, spacing: 14) {
                     tailscaleStep(
                         number: "1",
                         text: PlatformCapabilities.isMacCatalyst
-                            ? OnboardingFlowPolicy.clientSpecificCopy(String(localized: "Install Tailscale on iPhone"))
+                            ? OnboardingFlowPolicy.clientSpecificCopy(iPhone: "Install Tailscale on iPhone", mac: "Install Tailscale on Mac")
                             : String(localized: "Install Tailscale from the App Store.")
                     )
                     tailscaleStep(number: "2", text: String(localized: "Sign in with the same account you used on your server."))
@@ -26,7 +29,7 @@ struct OnboardingTailscalePage: View {
                     Button(action: openTailscaleInAppStore) {
                         Label(
                             PlatformCapabilities.isMacCatalyst
-                                ? OnboardingFlowPolicy.clientSpecificCopy(String(localized: "Install Tailscale on iPhone"))
+                                ? OnboardingFlowPolicy.clientSpecificCopy(iPhone: "Install Tailscale on iPhone", mac: "Install Tailscale on Mac")
                                 : String(localized: "Get Tailscale on the App Store"),
                             systemImage: "arrow.up.forward.square"
                         )

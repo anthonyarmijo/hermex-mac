@@ -45,17 +45,14 @@ Do not use Cloudflare. Optimize for Tailscale + \(clientDevice).
         isMacCatalyst ? tailscaleMacDownloadURL : tailscaleAppStoreURL
     }
 
-    /// The onboarding catalog deliberately keeps Apple's platform names literal
-    /// across translations, allowing Catalyst to reuse upstream iPhone copy while
-    /// changing only the client device name.
+    /// Selects a complete localized sentence for the current client platform.
+    /// Separate keys preserve language-specific articles and grammatical cases.
     static func clientSpecificCopy(
-        _ iPhoneCopy: String,
+        iPhone iPhoneKey: String.LocalizationValue,
+        mac macKey: String.LocalizationValue,
         isMacCatalyst: Bool = PlatformCapabilities.isMacCatalyst
     ) -> String {
-        guard isMacCatalyst else { return iPhoneCopy }
-        return iPhoneCopy
-            .replacingOccurrences(of: "iPhonie", with: "Macu")
-            .replacingOccurrences(of: "iPhone", with: "Mac")
+        String(localized: isMacCatalyst ? macKey : iPhoneKey)
     }
 
     static func primaryButtonTitle(for page: Int) -> String {
