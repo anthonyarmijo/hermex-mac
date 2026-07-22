@@ -504,3 +504,39 @@ final class AssistantTurnTimestampFormatterTests: XCTestCase {
         XCTAssertNotNil(AssistantTurnTimestampFormatter.shortTime(forUnixTimestamp: fixedTimestamp))
     }
 }
+
+final class ChatTranscriptViewPerformanceGuardTests: XCTestCase {
+    func testTranscriptLazilyRealizesLongConversationRows() throws {
+        let testFileURL = URL(fileURLWithPath: #filePath)
+        let sourceURL = testFileURL
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("HermesMobile/Features/Chat/ChatTranscriptView.swift")
+        let source = try String(contentsOf: sourceURL, encoding: .utf8)
+        let sourceWithoutComments = source
+            .replacingOccurrences(of: #"(?s)/\*.*?\*/"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"(?m)//.*$"#, with: "", options: .regularExpression)
+
+        XCTAssertNotNil(
+            sourceWithoutComments.range(
+                of: #"\bLazyVStack\s*\(\s*spacing:\s*transcriptMessageSpacing\s*\)"#,
+                options: .regularExpression
+            ),
+            "Long transcripts should not eagerly construct and lay out every Markdown-heavy row."
+        )
+        XCTAssertNil(
+            sourceWithoutComments.range(
+                of: #"\bVStack\s*\(\s*spacing:\s*transcriptMessageSpacing\s*\)"#,
+                options: .regularExpression
+            ),
+            "A plain VStack regresses long-session scroll performance by eagerly realizing every transcript row."
+        )
+        XCTAssertNil(
+            sourceWithoutComments.range(
+                of: #"\.scrollPosition\s*\("#,
+                options: .regularExpression
+            ),
+            "Keep ScrollViewProxy as the transcript's single programmatic-scroll mechanism; a second scroll-position binding races scroll-to-top and scroll-to-bottom commands."
+        )
+    }
+}
