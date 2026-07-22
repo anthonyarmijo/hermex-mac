@@ -3,6 +3,15 @@ import SwiftUI
 struct OnboardingWelcomePage: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
+    private var title: String {
+        if PlatformCapabilities.isMacCatalyst {
+            return OnboardingFlowPolicy.clientSpecificCopy(
+                String(localized: "Chat with your Hermes agent from iPhone")
+            )
+        }
+        return String(localized: "Control your Hermes agent from iPhone or iPad.")
+    }
+
     private var iconSize: CGFloat {
         dynamicTypeSize.isAccessibilitySize ? 108 : 124
     }
@@ -67,7 +76,7 @@ struct OnboardingWelcomePage: View {
                 Spacer(minLength: 32)
 
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("Control your Hermes agent from iPhone or iPad.")
+                    Text(title)
                         .font(.system(size: dynamicTypeSize.isAccessibilitySize ? 27 : 31, weight: .bold))
                         .foregroundStyle(.white)
                         .lineLimit(3)

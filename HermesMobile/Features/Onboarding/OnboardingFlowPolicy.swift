@@ -5,27 +5,58 @@ enum OnboardingFlowPolicy {
     static let connectPageIndex = 4
     static let agentPromptPageIndex = 2
 
-    static let agentSetupPrompt = """
-Set up Hermes Web UI on this machine for access from my iPhone via Tailscale.
+    static var agentSetupPrompt: String {
+        agentSetupPrompt(isMacCatalyst: PlatformCapabilities.isMacCatalyst)
+    }
 
-Clone and install https://github.com/nesquena/hermes-webui — it's a Node.js web app. Install dependencies and start it on port 8787.
-Enable password authentication by setting the HERMES_WEBUI_PASSWORD environment variable. Generate a secure random password and save it — I'll need it for the iPhone app.
-Install Tailscale on this machine. Search the web for the correct install method for this OS if you're unsure. Authenticate to my Tailscale account — if this requires opening a URL or an auth key, tell me exactly what to do.
-Make the WebUI reachable over Tailscale:
-- Try tailscale serve --bg 8787 first (gives HTTPS + nice hostname).
-- If Tailscale Serve is disabled on my tailnet, fall back: bind the server to 0.0.0.0 instead of localhost so it listens on the tailnet interface. Before doing this, confirm password auth is active — never expose an unauthenticated WebUI.
-Set up auto-start appropriate for this OS so the WebUI survives reboots.
-Verify it works: curl http://$(tailscale ip -4):8787/health should return a success response.
+    static func agentSetupPrompt(isMacCatalyst: Bool) -> String {
+        let clientDevice = isMacCatalyst ? "Mac" : "iPhone"
+
+        return """
+Set up Hermes Web UI on this machine for access from Hermex on my \(clientDevice) via Tailscale.
+
+Before making changes, read https://github.com/nesquena/hermes-webui/blob/main/docs/onboarding-agent-checklist.md and inspect this machine for an existing Hermes Agent or Hermes Web UI installation. Preserve existing configuration, credentials, sessions, memory, and other Hermes data.
+Use the supported Python bootstrap flow from https://github.com/nesquena/hermes-webui: clone the repository if it is not already installed, then use python3 bootstrap.py and the Web UI's first-run wizard. Do not treat Hermes Web UI as a Node.js app.
+Enable password authentication with HERMES_WEBUI_PASSWORD before making the Web UI reachable from another device. Ask me to choose and enter the password; do not print the password, auth keys, cookies, or other secrets in your final reply.
+Install Tailscale on this machine using the documented method for its OS. Pause for me to authenticate this machine to my tailnet; do not ask me to paste an auth key or login token into chat.
+Make the Web UI reachable over Tailscale while keeping it bound to 127.0.0.1:
+- Prefer tailscale serve --bg 8787 so Tailscale provides a private HTTPS URL for the local Web UI.
+- If Tailscale Serve is unavailable, explain the alternatives and get my approval before changing the bind address or exposing a new network listener. Never expose an unauthenticated Web UI.
+Ask before installing an auto-start service, then configure one appropriate for this OS if I approve it.
+Verify the local service with curl http://127.0.0.1:8787/health, verify the Tailscale URL from the tailnet, and confirm password authentication is active.
 Reply with:
 - The exact server URL I enter in Hermex
-- The password
-- Any setup steps I still need to do on my iPhone
-Do not use Cloudflare. Optimize for Tailscale + iPhone.
+- What you installed or changed
+- Any setup steps I still need to do on my \(clientDevice)
+Do not include passwords or tokens in the reply.
+Do not use Cloudflare. Optimize for Tailscale + \(clientDevice).
 """
+    }
 
     static let tailscaleAppStoreURL = URL(string: "itms-apps://apps.apple.com/us/app/tailscale/id1470499037")!
 
     static let tailscaleAppStoreFallbackURL = URL(string: "https://apps.apple.com/us/app/tailscale/id1470499037")!
+
+    static let tailscaleMacDownloadURL = URL(string: "https://tailscale.com/download/mac")!
+
+    static func tailscaleClientDownloadURL(
+        isMacCatalyst: Bool = PlatformCapabilities.isMacCatalyst
+    ) -> URL {
+        isMacCatalyst ? tailscaleMacDownloadURL : tailscaleAppStoreURL
+    }
+
+    /// The onboarding catalog deliberately keeps Apple's platform names literal
+    /// across translations, allowing Catalyst to reuse upstream iPhone copy while
+    /// changing only the client device name.
+    static func clientSpecificCopy(
+        _ iPhoneCopy: String,
+        isMacCatalyst: Bool = PlatformCapabilities.isMacCatalyst
+    ) -> String {
+        guard isMacCatalyst else { return iPhoneCopy }
+        return iPhoneCopy
+            .replacingOccurrences(of: "iPhonie", with: "Macu")
+            .replacingOccurrences(of: "iPhone", with: "Mac")
+    }
 
     static func primaryButtonTitle(for page: Int) -> String {
         switch page {
