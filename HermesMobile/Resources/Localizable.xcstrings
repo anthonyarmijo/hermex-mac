@@ -14802,6 +14802,112 @@
         }
       }
     },
+    "Chat with your Hermes agent from Mac" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "تحدّث مع وكيل Hermes من جهاز Mac"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Chatte von deinem Mac aus mit deinem Hermes-Agenten"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Chatea con tu agente Hermes desde tu Mac"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Discutez avec votre agent Hermes depuis votre Mac"
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "שוחח עם סוכן Hermes שלך מה-Mac"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Chatta con il tuo agente Hermes dal tuo Mac"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "MacからHermesエージェントとチャット"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mac에서 Hermes 에이전트와 채팅하세요"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Chat met uw Hermes-agent vanaf uw Mac"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Czatuj z agentem Hermes na Macu"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Converse com seu agente Hermes pelo Mac"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Общайтесь с агентом Hermes с Mac"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mac'inizden Hermes ajanınızla sohbet edin"
+          }
+        },
+        "ur" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "اپنے Mac سے اپنے Hermes ایجنٹ کے ساتھ چیٹ کریں"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "在 Mac 上與你的 Hermes 代理聊天"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "在 Mac 上与你的 Hermes 智能体聊天"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "在 Mac 上與你的 Hermes 代理人聊天"
+          }
+        }
+      }
+    },
     "Chat with your Hermes agent from iPhone" : {
       "localizations" : {
         "ar" : {
@@ -38704,6 +38810,112 @@
         }
       }
     },
+    "Install Tailscale on Mac" : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "تثبيت Tailscale على جهاز Mac"
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tailscale auf dem Mac installieren"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Instalar Tailscale en Mac"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Installer Tailscale sur Mac"
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "התקנת Tailscale ב-Mac"
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Installa Tailscale sul Mac"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mac に Tailscale をインストール"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mac에 Tailscale 설치"
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Installeer Tailscale op Mac"
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zainstaluj Tailscale na Macu"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Instalar o Tailscale no Mac"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Установите Tailscale на Mac"
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tailscale'i Mac'e yükleyin"
+          }
+        },
+        "ur" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mac پر Tailscale انسٹال کریں"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "在 Mac 上安裝 Tailscale"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "在 Mac 上安装 Tailscale"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "在 Mac 上安裝 Tailscale"
+          }
+        }
+      }
+    },
     "Install Tailscale on iPhone" : {
       "localizations" : {
         "ar" : {
@@ -38806,6 +39018,112 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "在 iPhone 上安裝 Tailscale"
+          }
+        }
+      }
+    },
+    "Install Tailscale on your Mac and sign into the same tailnet as your server. Your agent will reply with the exact URL to use on the next screen." : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "ثبّت Tailscale على جهاز Mac وسجّل الدخول إلى الشبكة tailnet نفسها التي يستخدمها خادمك. سيردّ وكيلك بعنوان URL الدقيق لاستخدامه في الشاشة التالية."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Installiere Tailscale auf deinem Mac und melde dich im selben Tailnet wie dein Server an. Dein Agent antwortet mit der genauen URL, die du auf dem nächsten Bildschirm verwenden sollst."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Instala Tailscale en tu Mac e inicia sesión en el mismo tailnet que tu servidor. Tu agente responderá con la URL exacta que debes usar en la siguiente pantalla."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Installez Tailscale sur votre Mac et connectez-vous au même tailnet que votre serveur. Votre agent vous indiquera l'URL exacte à utiliser à l'écran suivant."
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "התקן את Tailscale ב-Mac שלך והתחבר לאותו tailnet שאליו מחובר השרת שלך. הסוכן שלך ישיב עם כתובת ה-URL המדויקת לשימוש במסך הבא."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Installa Tailscale sul tuo Mac e accedi alla stessa tailnet del server. Il tuo agente risponderà con l'URL esatto da usare nella schermata successiva."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mac に Tailscale をインストールし、サーバと同じ tailnet にサインインしてください。次の画面で使用する正確な URL をエージェントが返信します。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Mac에 Tailscale을 설치하고 서버와 같은 tailnet에 로그인하세요. 에이전트가 다음 화면에서 사용할 정확한 URL로 응답합니다."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Installeer Tailscale op uw Mac en log in op hetzelfde tailnet als uw server. Uw agent antwoordt met de exacte URL die u op het volgende scherm gebruikt."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Zainstaluj Tailscale na swoim Macu i zaloguj się do tej samej sieci tailnet co serwer. Agent poda dokładny adres URL do użycia na następnym ekranie."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Instale o Tailscale no seu Mac e entre na mesma tailnet do seu servidor. Seu agente responderá com a URL exata a ser usada na próxima tela."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Установите Tailscale на Mac и войдите в тот же tailnet, что и ваш сервер. Ваш агент сообщит точный URL для использования на следующем экране."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tailscale'i Mac'inize yükleyin ve sunucunuzla aynı tailnet'te oturum açın. Aracınız, bir sonraki ekranda kullanacağınız tam URL'yi yanıtlayacaktır."
+          }
+        },
+        "ur" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "اپنے Mac پر Tailscale انسٹال کریں اور اپنے سرور والے اسی tailnet میں سائن اِن کریں۔ اگلی اسکرین پر آپ کا ایجنٹ استعمال کرنے کے لیے درست URL کے ساتھ جواب دے گا۔"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "在 Mac 上安裝 Tailscale，並登入與伺服器相同的 tailnet。代理會回覆下一個畫面要使用的確切 URL。"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "在 Mac 上安装 Tailscale，并登录与服务器相同的 tailnet。智能体会回复下一屏要使用的准确 URL。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "在 Mac 上安裝 Tailscale，並登入與伺服器相同的 tailnet。代理人會回覆下一個畫面要使用的確切 URL。"
           }
         }
       }
@@ -98686,6 +99004,112 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "你的 Hermes Web UI 始終執行在你掌控的硬體上。"
+          }
+        }
+      }
+    },
+    "Your Hermes agent, reachable from Mac over Tailscale." : {
+      "localizations" : {
+        "ar" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "وكيل Hermes الخاص بك، يمكن الوصول إليه من جهاز Mac عبر Tailscale."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Dein Hermes-Agent, erreichbar von deinem Mac aus über Tailscale."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tu agente Hermes, accesible desde tu Mac a través de Tailscale."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Votre agent Hermes, accessible depuis votre Mac via Tailscale."
+          }
+        },
+        "he" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "סוכן Hermes שלך, נגיש מה-Mac שלך דרך Tailscale."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Il tuo agente Hermes, raggiungibile dal tuo Mac tramite Tailscale."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tailscale経由でMacからアクセスできるHermesエージェント。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Tailscale을 통해 Mac에서 접근할 수 있는 Hermes 에이전트."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Uw Hermes-agent, bereikbaar vanaf uw Mac via Tailscale."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Twój agent Hermes, dostępny z Maca przez Tailscale."
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Seu agente Hermes, acessível pelo Mac via Tailscale."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ваш агент Hermes, доступный с Mac через Tailscale."
+          }
+        },
+        "tr" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hermes aracınıza Mac'inizden Tailscale üzerinden erişebilirsiniz."
+          }
+        },
+        "ur" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "آپ کا Hermes ایجنٹ، Mac سے Tailscale کے ذریعے قابلِ رسائی۔"
+          }
+        },
+        "zh-HK" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "你的 Hermes 代理，可透過 Tailscale 從 Mac 存取。"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "你的 Hermes 智能体，可通过 Tailscale 从 Mac 访问。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "你的 Hermes 代理人，可透過 Tailscale 從 Mac 存取。"
           }
         }
       }

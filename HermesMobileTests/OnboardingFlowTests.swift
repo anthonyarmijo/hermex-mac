@@ -81,15 +81,59 @@ final class OnboardingFlowTests: XCTestCase {
         XCTAssertFalse(OnboardingFlowPolicy.showsServerShortcut(for: OnboardingFlowPolicy.connectPageIndex))
     }
 
-    func testAgentSetupPromptIncludesTailscaleRequirements() {
-        let prompt = OnboardingFlowPolicy.agentSetupPrompt
+    func testAgentSetupPromptIncludesCurrentSafeTailscaleRequirements() {
+        let iPhonePrompt = OnboardingFlowPolicy.agentSetupPrompt(isMacCatalyst: false)
+        let macPrompt = OnboardingFlowPolicy.agentSetupPrompt(isMacCatalyst: true)
 
-        XCTAssertTrue(prompt.contains("hermes-webui"))
-        XCTAssertTrue(prompt.contains("HERMES_WEBUI_PASSWORD"))
-        XCTAssertTrue(prompt.contains("tailscale serve --bg 8787"))
-        XCTAssertTrue(prompt.contains("curl http://$(tailscale ip -4):8787/health"))
-        XCTAssertTrue(prompt.contains("Do not use Cloudflare. Optimize for Tailscale + iPhone."))
-        XCTAssertTrue(prompt.contains("Hermex"))
+        for prompt in [iPhonePrompt, macPrompt] {
+            XCTAssertTrue(prompt.contains("hermes-webui"))
+            XCTAssertTrue(prompt.contains("onboarding-agent-checklist.md"))
+            XCTAssertTrue(prompt.contains("python3 bootstrap.py"))
+            XCTAssertTrue(prompt.contains("HERMES_WEBUI_PASSWORD"))
+            XCTAssertTrue(prompt.contains("tailscale serve --bg 8787"))
+            XCTAssertTrue(prompt.contains("curl http://127.0.0.1:8787/health"))
+            XCTAssertTrue(prompt.contains("Do not include passwords or tokens in the reply."))
+            XCTAssertTrue(prompt.contains("Do not use Cloudflare."))
+            XCTAssertTrue(prompt.contains("Hermex"))
+            XCTAssertFalse(prompt.contains("it's a Node.js web app"))
+            XCTAssertFalse(prompt.contains("bind the server to 0.0.0.0"))
+        }
+
+        XCTAssertTrue(iPhonePrompt.contains("Hermex on my iPhone"))
+        XCTAssertTrue(iPhonePrompt.contains("Tailscale + iPhone."))
+        XCTAssertTrue(macPrompt.contains("Hermex on my Mac"))
+        XCTAssertTrue(macPrompt.contains("Tailscale + Mac."))
+        XCTAssertFalse(macPrompt.contains("my iPhone"))
+    }
+
+    func testClientSpecificCopySelectsCompletePlatformLocalizationKey() {
+        XCTAssertEqual(
+            OnboardingFlowPolicy.clientSpecificCopy(
+                iPhone: "Install Tailscale on iPhone",
+                mac: "Install Tailscale on Mac",
+                isMacCatalyst: false
+            ),
+            "Install Tailscale on iPhone"
+        )
+        XCTAssertEqual(
+            OnboardingFlowPolicy.clientSpecificCopy(
+                iPhone: "Install Tailscale on iPhone",
+                mac: "Install Tailscale on Mac",
+                isMacCatalyst: true
+            ),
+            "Install Tailscale on Mac"
+        )
+    }
+
+    func testTailscaleDownloadURLMatchesClientPlatform() {
+        XCTAssertEqual(
+            OnboardingFlowPolicy.tailscaleClientDownloadURL(isMacCatalyst: false).absoluteString,
+            "itms-apps://apps.apple.com/us/app/tailscale/id1470499037"
+        )
+        XCTAssertEqual(
+            OnboardingFlowPolicy.tailscaleClientDownloadURL(isMacCatalyst: true).absoluteString,
+            "https://tailscale.com/download/mac"
+        )
     }
 
     func testTailscaleAppStoreURLUsesITMSDeepLink() {

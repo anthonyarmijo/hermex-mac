@@ -151,6 +151,42 @@ final class LocalizationCatalogTests: XCTestCase {
         }
     }
 
+    func testOnboardingHasCompleteLocalizedCopyForEachClientPlatform() throws {
+        let data = try Data(contentsOf: catalogURL())
+        let root = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let strings = try XCTUnwrap(root["strings"] as? [String: Any])
+        let platformSpecificKeyPairs = [
+            ("Chat with your Hermes agent from iPhone", "Chat with your Hermes agent from Mac"),
+            ("Install Tailscale on iPhone", "Install Tailscale on Mac"),
+            (
+                "Install Tailscale on your iPhone and sign into the same tailnet as your server. Your agent will reply with the exact URL to use on the next screen.",
+                "Install Tailscale on your Mac and sign into the same tailnet as your server. Your agent will reply with the exact URL to use on the next screen."
+            ),
+            ("Your Hermes agent, reachable from iPhone over Tailscale.", "Your Hermes agent, reachable from Mac over Tailscale.")
+        ]
+
+        for (iPhoneKey, macKey) in platformSpecificKeyPairs {
+            for key in [iPhoneKey, macKey] {
+                let entry = try XCTUnwrap(strings[key] as? [String: Any], key)
+                let localizations = try XCTUnwrap(entry["localizations"] as? [String: Any], key)
+
+                for language in Self.shippedLanguages {
+                    let localization = try XCTUnwrap(
+                        localizations[language] as? [String: Any],
+                        "[\(language)] \(key)"
+                    )
+                    XCTAssertTrue(hasNonEmptyValue(localization), "[\(language)] \(key) is empty")
+
+                    if key == macKey {
+                        let value = ((localization["stringUnit"] as? [String: Any])?["value"] as? String) ?? ""
+                        XCTAssertFalse(value.contains("iPhone"), "[\(language)] \(key) still contains iPhone copy")
+                        XCTAssertFalse(value.contains("iPhonie"), "[\(language)] \(key) still contains iPhone copy")
+                    }
+                }
+            }
+        }
+    }
+
     func testKanbanCardDetailCopyIsLocalizedInEveryShippedLanguage() throws {
         let data = try Data(contentsOf: catalogURL())
         let root = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])

@@ -89,6 +89,47 @@ final class TranscriptMediaParserTests: XCTestCase {
         )
     }
 
+    func testNoMediaMarkerPreservesMultilineMarkdownByteForByte() {
+        let markdown = """
+        # Result
+
+        Ordinary prose with `inline code`.
+        ```swift
+        let value = 42
+        ```
+        lowercase media:/tmp/not-a-supported-marker.png remains text.
+        """
+
+        XCTAssertEqual(TranscriptMediaParser.segments(in: markdown), [.text(markdown)])
+    }
+
+    func testNoMediaTranscriptParsingPerformanceDiagnostic() {
+        let markdown = (0..<40)
+            .map { "Long cached assistant paragraph \($0) with ordinary prose and punctuation." }
+            .joined(separator: "\n")
+        let clock = ContinuousClock()
+        var batchMilliseconds: [Double] = []
+
+        for _ in 0..<10 {
+            let start = clock.now
+            for _ in 0..<100 {
+                XCTAssertEqual(
+                    TranscriptMediaParser.segments(in: markdown),
+                    [.text(markdown)]
+                )
+            }
+            let duration = start.duration(to: clock.now)
+            batchMilliseconds.append(
+                Double(duration.components.seconds) * 1_000
+                    + Double(duration.components.attoseconds) / 1_000_000_000_000_000
+            )
+        }
+
+        XCTContext.runActivity(
+            named: "NoMediaTranscriptParserBenchmark hundredPassMilliseconds=\(batchMilliseconds)"
+        ) { _ in }
+    }
+
     func testFencedCodeKeepsLiteralMediaText() {
         let markdown = """
         Before
