@@ -55,8 +55,16 @@ truth — if a request conflicts with it, stop and ask. Read by every agent
   (see `TESTFLIGHT.md`) and strips entitlements, so Keychain writes fail with
   `errSecMissingEntitlement` and login breaks. Put the app on the sim via XcodeBuildMCP
   `build_run_sim` or a plain signed Debug build (no signing-disabling flags), then install/launch.
-- Before asking for review or committing a slice: run the full iPhone and Mac
-  Catalyst XCTest suites, and build + launch the signed Mac app when UI changed.
+- Keep validation proportional to the change. During implementation, run focused
+  Mac Catalyst tests for the touched behavior. Before asking for review or
+  committing a code slice, run the full Mac Catalyst XCTest suite. For shared
+  source, target/build-setting, or platform-conditional changes, add focused
+  iPhone tests or an iPhone compile check. Reserve the full iPhone XCTest suite
+  for upstream Hermex syncs, explicit compatibility work, and periodic CI; do
+  not rerun an unchanged green suite in the same slice. Documentation,
+  workflow-only, and version-only changes do not require app suites. Keep full
+  build logs in files and report summaries or relevant failures so they do not
+  consume agent context. Build + launch the signed Mac app when UI changed.
 
 ## App identity
 Mac bundle ID and Keychain service `com.anthonyarmijo.hermex.mac` · shared iPhone

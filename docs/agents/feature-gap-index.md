@@ -158,8 +158,10 @@ implementation**, not pre-cached in this index. When you pick up a `roadmap` row
    enforces them.
 6. Add focused tests for endpoint path/query/body construction and tolerant model
    decoding.
-7. Run focused tests for the touched area, then the full XCTest suite before
-   asking for review.
+7. Run focused Mac Catalyst tests for the touched area, then the full Mac
+   Catalyst suite before review. Add focused iPhone validation for shared or
+   platform-sensitive changes; reserve the full iPhone suite for upstream
+   Hermex syncs and explicit compatibility work.
 8. For `write`/`exec`/`secret`/`admin`/`privacy` surfaces, add explicit
    confirmation copy and avoid default-on dangerous behavior.
 9. At wrap-up or completed-slice handoff, update `CURRENT.md`,
