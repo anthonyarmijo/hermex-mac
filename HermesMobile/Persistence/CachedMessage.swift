@@ -28,18 +28,37 @@ final class CachedMessage {
         sortIndex: Int,
         cachedAt: Date = Date()
     ) {
-        self.cacheKey = Self.cacheKey(
+        let cacheKey = Self.cacheKey(
             serverURLString: serverURLString,
             sessionID: sessionID,
             message: message,
             sortIndex: sortIndex
         )
+        let value = CachedMessageValueSnapshot(message: message, encoder: JSONEncoder())
+        self.cacheKey = cacheKey
         self.serverURLString = serverURLString
         self.sessionID = sessionID
         self.sortIndex = sortIndex
         self.cachedAt = cachedAt
         self.expiresAt = cachedAt.addingTimeInterval(CachePolicy.ttl)
-        apply(message, sortIndex: sortIndex, cachedAt: cachedAt)
+        apply(value, sortIndex: sortIndex, cachedAt: cachedAt)
+    }
+
+    init(
+        cacheKey: String,
+        serverURLString: String,
+        sessionID: String,
+        value: CachedMessageValueSnapshot,
+        sortIndex: Int,
+        cachedAt: Date
+    ) {
+        self.cacheKey = cacheKey
+        self.serverURLString = serverURLString
+        self.sessionID = sessionID
+        self.sortIndex = sortIndex
+        self.cachedAt = cachedAt
+        self.expiresAt = cachedAt.addingTimeInterval(CachePolicy.ttl)
+        apply(value, sortIndex: sortIndex, cachedAt: cachedAt)
     }
 
     static func cacheKey(
@@ -53,30 +72,26 @@ final class CachedMessage {
     }
 
     func apply(_ message: ChatMessage, sortIndex: Int, cachedAt: Date = Date()) {
+        apply(
+            CachedMessageValueSnapshot(message: message, encoder: JSONEncoder()),
+            sortIndex: sortIndex,
+            cachedAt: cachedAt
+        )
+    }
+
+    func apply(_ value: CachedMessageValueSnapshot, sortIndex: Int, cachedAt: Date = Date()) {
         self.sortIndex = sortIndex
-        role = message.role
-        content = message.content
-        timestamp = message.timestamp
-        messageId = message.messageId
-        name = message.name
-        toolCallId = message.toolCallId
-        toolUseId = message.toolUseId
-        if let toolCalls = message.toolCalls, !toolCalls.isEmpty {
-            toolCallsData = try? JSONEncoder().encode(toolCalls)
-        } else {
-            toolCallsData = nil
-        }
-        if let contentParts = message.contentParts, !contentParts.isEmpty {
-            contentPartsData = try? JSONEncoder().encode(contentParts)
-        } else {
-            contentPartsData = nil
-        }
-        reasoning = message.reasoning
-        if let attachments = message.attachments, !attachments.isEmpty {
-            attachmentsData = try? JSONEncoder().encode(attachments)
-        } else {
-            attachmentsData = nil
-        }
+        role = value.role
+        content = value.content
+        timestamp = value.timestamp
+        messageId = value.messageID
+        name = value.name
+        toolCallId = value.toolCallID
+        toolUseId = value.toolUseID
+        toolCallsData = value.toolCallsData
+        contentPartsData = value.contentPartsData
+        reasoning = value.reasoning
+        attachmentsData = value.attachmentsData
         self.cachedAt = cachedAt
         expiresAt = cachedAt.addingTimeInterval(CachePolicy.ttl)
     }

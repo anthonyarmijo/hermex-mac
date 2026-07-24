@@ -2933,7 +2933,7 @@ final class ChatViewModelSendTests: XCTestCase {
         let serverURL = try XCTUnwrap(URL(string: "https://example.test"))
         let otherServerURL = try XCTUnwrap(URL(string: "https://other.example.test"))
         let streamClient = SpySSEStreamingClient()
-        try CacheStore.cacheMessages(
+        try await TestCacheStore.cacheMessages(
             [
                 ChatMessage(role: "user", content: "Cached question", timestamp: 1_770_000_001, messageId: "cached-user"),
                 ChatMessage(role: "assistant", content: "Cached answer", timestamp: 1_770_000_002, messageId: "cached-assistant")
@@ -2942,7 +2942,7 @@ final class ChatViewModelSendTests: XCTestCase {
             sessionID: "session-abc",
             in: context
         )
-        try CacheStore.cacheMessages(
+        try await TestCacheStore.cacheMessages(
             [
                 ChatMessage(role: "assistant", content: "Wrong session", timestamp: 1_770_000_003, messageId: "wrong-session")
             ],
@@ -2950,7 +2950,7 @@ final class ChatViewModelSendTests: XCTestCase {
             sessionID: "other-session",
             in: context
         )
-        try CacheStore.cacheMessages(
+        try await TestCacheStore.cacheMessages(
             [
                 ChatMessage(role: "assistant", content: "Wrong server", timestamp: 1_770_000_004, messageId: "wrong-server")
             ],
@@ -3015,7 +3015,7 @@ final class ChatViewModelSendTests: XCTestCase {
     func testLoadMessagesUsesCachedTranscriptForNetworkTimeout() async throws {
         let context = try makeContext()
         let serverURL = try XCTUnwrap(URL(string: "https://example.test"))
-        try CacheStore.cacheMessages(
+        try await TestCacheStore.cacheMessages(
             [
                 ChatMessage(role: "user", content: "Cached question", timestamp: 1_770_000_001, messageId: "cached-user"),
                 ChatMessage(role: "assistant", content: "Cached answer", timestamp: 1_770_000_002, messageId: "cached-assistant")
@@ -3067,7 +3067,7 @@ final class ChatViewModelSendTests: XCTestCase {
     func testLoadMessagesDoesNotUseCachedTranscriptForRealServerError() async throws {
         let context = try makeContext()
         let serverURL = try XCTUnwrap(URL(string: "https://example.test"))
-        try CacheStore.cacheMessages(
+        try await TestCacheStore.cacheMessages(
             [
                 ChatMessage(role: "assistant", content: "Stale cached answer", timestamp: 1_770_000_001, messageId: "stale")
             ],
@@ -3098,7 +3098,7 @@ final class ChatViewModelSendTests: XCTestCase {
     func testLoadMessagesDoesNotReplaceSuccessfulOnlineTranscriptWithStaleCache() async throws {
         let context = try makeContext()
         let serverURL = try XCTUnwrap(URL(string: "https://example.test"))
-        try CacheStore.cacheMessages(
+        try await TestCacheStore.cacheMessages(
             [
                 ChatMessage(role: "assistant", content: "Stale cached answer", timestamp: 1_770_000_001, messageId: "stale")
             ],
@@ -3151,7 +3151,7 @@ final class ChatViewModelSendTests: XCTestCase {
     func testLoadMessagesRendersCachedMessagesBeforeNetworkReconcile() async throws {
         let context = try makeContext()
         let serverURL = try XCTUnwrap(URL(string: "https://example.test"))
-        try CacheStore.cacheMessages(
+        try await TestCacheStore.cacheMessages(
             [
                 ChatMessage(role: "user", content: "Cached question", timestamp: 1_770_000_001, messageId: "cached-user"),
                 ChatMessage(role: "assistant", content: "Cached answer", timestamp: 1_770_000_002, messageId: "cached-assistant")
@@ -3217,7 +3217,7 @@ final class ChatViewModelSendTests: XCTestCase {
     func testPrepareInitialMessageLoadPrimesCacheWithoutStartingNetwork() async throws {
         let context = try makeContext()
         let serverURL = try XCTUnwrap(URL(string: "https://example.test"))
-        try CacheStore.cacheMessages(
+        try await TestCacheStore.cacheMessages(
             [
                 ChatMessage(role: "user", content: "Cached question", timestamp: 1_770_000_001, messageId: "cached-user"),
                 ChatMessage(role: "assistant", content: "Cached answer", timestamp: 1_770_000_002, messageId: "cached-assistant")
@@ -3244,7 +3244,7 @@ final class ChatViewModelSendTests: XCTestCase {
         let context = try makeContext()
         let serverURL = try XCTUnwrap(URL(string: "https://example.test"))
         let cachedMessages = makeCachedTranscript(count: 75)
-        try CacheStore.cacheMessages(
+        try await TestCacheStore.cacheMessages(
             cachedMessages,
             serverURL: serverURL,
             sessionID: "session-abc",
@@ -3458,7 +3458,7 @@ final class ChatViewModelSendTests: XCTestCase {
         let context = try makeContext()
         let serverURL = try XCTUnwrap(URL(string: "https://example.test"))
         let cachedMessages = makeCachedTranscript(count: 75)
-        try CacheStore.cacheMessages(
+        try await TestCacheStore.cacheMessages(
             cachedMessages,
             serverURL: serverURL,
             sessionID: "session-abc",
@@ -3499,7 +3499,7 @@ final class ChatViewModelSendTests: XCTestCase {
                 messageId: "local-new"
             )
         )
-        try CacheStore.cacheMessages(
+        try await TestCacheStore.cacheMessages(
             cachedMessages,
             serverURL: serverURL,
             sessionID: "session-abc",
@@ -3580,7 +3580,7 @@ final class ChatViewModelSendTests: XCTestCase {
     func testCacheFirstReconcileBumpsScrollTokenForSmoothSettle() async throws {
         let context = try makeContext()
         let serverURL = try XCTUnwrap(URL(string: "https://example.test"))
-        try CacheStore.cacheMessages(
+        try await TestCacheStore.cacheMessages(
             [
                 ChatMessage(role: "user", content: "Cached question", timestamp: 1_770_000_001, messageId: "cached-user"),
                 ChatMessage(role: "assistant", content: "Cached answer", timestamp: 1_770_000_002, messageId: "cached-assistant")
@@ -3657,7 +3657,7 @@ final class ChatViewModelSendTests: XCTestCase {
     func testCacheFirstRevertPreservesOptimisticSendOnNonCacheableError() async throws {
         let context = try makeContext()
         let serverURL = try XCTUnwrap(URL(string: "https://example.test"))
-        try CacheStore.cacheMessages(
+        try await TestCacheStore.cacheMessages(
             [
                 ChatMessage(role: "user", content: "Cached question", timestamp: 1_770_000_001, messageId: "cached-user"),
                 ChatMessage(role: "assistant", content: "Cached answer", timestamp: 1_770_000_002, messageId: "cached-assistant")
@@ -3726,7 +3726,7 @@ final class ChatViewModelSendTests: XCTestCase {
     func testReloadDoesNotDuplicateCachedOptimisticAttachmentMessageWhenServerReturnsIt() async throws {
         let context = try makeContext()
         let serverURL = URL(string: "https://example.test")!
-        try CacheStore.cacheMessages(
+        try await TestCacheStore.cacheMessages(
             [
                 ChatMessage(
                     role: "user",

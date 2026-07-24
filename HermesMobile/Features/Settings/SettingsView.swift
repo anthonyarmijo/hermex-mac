@@ -86,6 +86,7 @@ struct SettingsView: View {
     @AppStorage(SessionIdentitySettings.displayNameKey) private var identityDisplayName = ""
     @AppStorage(SessionIdentitySettings.initialsKey) private var identityInitials = ""
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.cacheWriter) private var cacheWriter
     @Environment(\.dismiss) private var dismiss
     #if targetEnvironment(macCatalyst)
     @Environment(\.macInterfaceScale) private var macInterfaceScale
@@ -578,7 +579,8 @@ struct SettingsView: View {
                     // would otherwise be orphaned. Mirrors the server-detail
                     // remove path (#18). Best-effort: the cache is server-keyed,
                     // so a leftover row can never surface as another server's.
-                    try? CacheStore.clearCache(for: server, in: modelContext)
+                    let writer = cacheWriter ?? CacheWriter(modelContainer: modelContext.container)
+                    _ = try? await writer.write(.clearServer(serverURLString: server.absoluteString))
                     await authManager.signOut()
                     dismiss()
                 }
@@ -1166,7 +1168,8 @@ struct SettingsView: View {
         do {
             // Scoped to the active server only, so clearing one server's cache
             // never wipes another configured server's offline data (#18).
-            try CacheStore.clearCache(for: server, in: modelContext)
+            let writer = cacheWriter ?? CacheWriter(modelContainer: modelContext.container)
+            _ = try await writer.write(.clearServer(serverURLString: server.absoluteString))
             cacheStatusMessage = String(localized: "This server's offline cache was cleared.")
         } catch {
             cacheStatusMessage = String(localized: "Could not clear offline cache.")
@@ -2027,6 +2030,7 @@ private struct ServerDetailView: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.cacheWriter) private var cacheWriter
     @State private var displayName: String
     @State private var initials: String
     @State private var colorHex: String
@@ -2112,7 +2116,10 @@ private struct ServerDetailView: View {
                     // row can never surface as another server's content (#18, PR
                     // #286 W2).
                     if let removedServerURL = URL(string: account.urlString) {
-                        try? CacheStore.clearCache(for: removedServerURL, in: modelContext)
+                        let writer = cacheWriter ?? CacheWriter(modelContainer: modelContext.container)
+                        _ = try? await writer.write(.clearServer(
+                            serverURLString: removedServerURL.absoluteString
+                        ))
                     }
                     await authManager.removeServer(account)
                     // Only a non-active removal leaves this view alive to reset its

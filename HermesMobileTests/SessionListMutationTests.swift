@@ -17,7 +17,7 @@ final class SessionListMutationTests: XCTestCase {
         let context = try makeContext()
         let serverURL = try XCTUnwrap(URL(string: "https://example.test"))
         let otherServerURL = try XCTUnwrap(URL(string: "https://other.example.test"))
-        try CacheStore.cacheSessions(
+        try await TestCacheStore.cacheSessions(
             [
                 SessionSummary(
                     sessionId: "cached-project-one",
@@ -46,7 +46,7 @@ final class SessionListMutationTests: XCTestCase {
             serverURL: serverURL,
             in: context
         )
-        try CacheStore.cacheSessions(
+        try await TestCacheStore.cacheSessions(
             [
                 SessionSummary(sessionId: "other-server", title: "Other server", archived: false)
             ],
@@ -147,7 +147,7 @@ final class SessionListMutationTests: XCTestCase {
     func testLoadDoesNotReplaceSuccessfulOnlineSessionsWithStaleCache() async throws {
         let context = try makeContext()
         let serverURL = try XCTUnwrap(URL(string: "https://example.test"))
-        try CacheStore.cacheSessions(
+        try await TestCacheStore.cacheSessions(
             [
                 SessionSummary(sessionId: "stale-session", title: "Stale planning", archived: false)
             ],
@@ -271,7 +271,7 @@ final class SessionListMutationTests: XCTestCase {
     func testLoadDoesNotUseCachedSessionsForRealServerError() async throws {
         let context = try makeContext()
         let serverURL = try XCTUnwrap(URL(string: "https://example.test"))
-        try CacheStore.cacheSessions(
+        try await TestCacheStore.cacheSessions(
             [
                 SessionSummary(sessionId: "cached-session", title: "Cached planning", archived: false)
             ],
@@ -432,7 +432,7 @@ final class SessionListMutationTests: XCTestCase {
         let created = await viewModel.createSession(modelContext: context)
         XCTAssertTrue(try XCTUnwrap(created).isEmptySidebarPlaceholder)
 
-        viewModel.markCreatedSessionAsStarted(
+        await viewModel.markCreatedSessionAsStarted(
             sessionID: created?.sessionId,
             modelContext: context
         )
@@ -1198,7 +1198,7 @@ final class SessionListMutationTests: XCTestCase {
             pinned: false,
             archived: false
         )
-        try CacheStore.cacheSession(cachedSession, serverURL: server, in: context)
+        try await TestCacheStore.cacheSession(cachedSession, serverURL: server, in: context)
 
         let viewModel = try makeViewModel { request in
             let path = request.url?.path ?? "nil"

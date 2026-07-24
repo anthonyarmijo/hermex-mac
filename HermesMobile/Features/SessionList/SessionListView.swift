@@ -15,6 +15,7 @@ struct SessionListView: View {
     @Binding private var requestedNewChat: NewChatRequest?
 
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.cacheWriter) private var cacheWriter
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -228,6 +229,7 @@ struct SessionListView: View {
                 AddServerView(authManager: authManager)
             }
             .task {
+                await viewModel.configureCacheWriter(cacheWriter)
                 await refreshSessionsAndActiveProfile()
                 didCompleteInitialLoad = true
                 restoreLastSelectedSessionIfNeeded()
@@ -1488,7 +1490,7 @@ private struct PendingNewChatView: View {
                     server: server,
                     onAPIError: onAPIError,
                     onMessageSubmitted: {
-                        viewModel.markCreatedSessionAsStarted(
+                        await viewModel.markCreatedSessionAsStarted(
                             sessionID: createdSession.sessionId,
                             modelContext: modelContext
                         )

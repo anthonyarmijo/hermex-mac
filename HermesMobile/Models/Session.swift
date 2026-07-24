@@ -141,7 +141,7 @@ struct SessionStatusResponse: Decodable, Equatable {
     let error: String?
 }
 
-struct SessionSummary: Decodable, Equatable, Hashable, Identifiable {
+struct SessionSummary: Decodable, Equatable, Hashable, Identifiable, Sendable {
     var id: String {
         if let sessionId, !sessionId.isEmpty {
             return sessionId

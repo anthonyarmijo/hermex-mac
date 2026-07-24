@@ -264,6 +264,7 @@ struct ChatView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.cacheWriter) private var cacheWriter
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage(AppHaptics.isEnabledKey) private var isHapticsEnabled = true
     @AppStorage(StreamingSendBehavior.storageKey) private var streamingSendBehaviorRawValue = StreamingSendBehavior.steer.rawValue
@@ -275,7 +276,7 @@ struct ChatView: View {
     let session: SessionSummary
     let server: URL
     let onAPIError: (Error) -> Void
-    let onMessageSubmitted: () -> Void
+    let onMessageSubmitted: () async -> Void
     let onResponseCompleted: () -> Void
     let loadsInitialMessages: Bool
     /// When true, the composer auto-starts voice dictation on appear — set by the
@@ -329,7 +330,7 @@ struct ChatView: View {
         session: SessionSummary,
         server: URL,
         onAPIError: @escaping (Error) -> Void,
-        onMessageSubmitted: @escaping () -> Void = {},
+        onMessageSubmitted: @escaping () async -> Void = {},
         onResponseCompleted: @escaping () -> Void = {},
         initialDraft: String = "",
         initialAttachments: [SharedAttachmentImport] = [],
@@ -1341,6 +1342,7 @@ struct ChatView: View {
 
     private func handleInitialAppearanceTask() async {
         prepareInitialAppearance()
+        await viewModel.configureCacheWriter(cacheWriter)
 
         guard ChatInitialAppearancePolicy.shouldBeginAsyncWork(
             hasCompletedAppearance: didCompleteInitialAppearance
@@ -1488,7 +1490,7 @@ struct ChatView: View {
         }
 
         if didStart {
-            onMessageSubmitted()
+            await onMessageSubmitted()
             ChatHaptics.messageSent(isEnabled: isHapticsEnabled)
             if shouldRestoreFocusAfterSend {
                 requestComposerFocusIfPossible()
@@ -1512,7 +1514,7 @@ struct ChatView: View {
         )
 
         if didSend {
-            onMessageSubmitted()
+            await onMessageSubmitted()
             ChatHaptics.messageSent(isEnabled: isHapticsEnabled)
         }
 

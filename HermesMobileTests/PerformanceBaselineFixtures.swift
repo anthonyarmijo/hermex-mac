@@ -322,6 +322,8 @@ final class PerformanceBaselineFixtureTests: XCTestCase {
             let clock = ContinuousClock()
             var coldWrites: [UInt64] = []
             var warmWrites: [UInt64] = []
+            var mainThreadSnapshotCaptures: [UInt64] = []
+            var maintenanceDurations: [UInt64] = []
             var lastDiagnostic = CacheWriteDiagnosticSnapshot()
             var retainedContainer: ModelContainer?
             let iterations = PerformanceBaselineFixtures.warmupCount + PerformanceBaselineFixtures.sampleCount
@@ -332,33 +334,54 @@ final class PerformanceBaselineFixtureTests: XCTestCase {
                     CachedMessage.self,
                     configurations: configuration
                 )
-                let coldContext = ModelContext(container)
-                try CacheStore.cacheSessions(
-                    sessions,
-                    serverURL: server,
-                    in: coldContext,
-                    cachedAt: Date()
+                let writer = CacheWriter(modelContainer: container)
+                let sessionGeneration = UUID()
+                let messageGeneration = UUID()
+                await writer.activate(
+                    scope: .sessions(serverURLString: server.absoluteString),
+                    generation: sessionGeneration
                 )
-                let coldStart = clock.now
-                try CacheStore.cacheMessages(
-                    messages,
+                await writer.activate(
+                    scope: .messages(serverURLString: server.absoluteString, sessionID: sessionID),
+                    generation: messageGeneration
+                )
+                _ = try await writer.write(.replaceSessions(CacheSessionListSnapshot(
+                    serverURL: server,
+                    sessions: sessions,
+                    generation: sessionGeneration
+                )))
+
+                let coldCaptureStart = clock.now
+                let coldSnapshot = CacheMessageListSnapshot(
                     serverURL: server,
                     sessionID: sessionID,
-                    in: coldContext
-                ) { lastDiagnostic = $0 }
+                    messages: messages,
+                    generation: messageGeneration
+                )
+                let coldCaptureDuration = Self.nanoseconds(coldCaptureStart.duration(to: clock.now))
+                let coldStart = clock.now
+                let coldDiagnostic = try await writer.write(.replaceMessages(coldSnapshot))
                 let coldDuration = Self.nanoseconds(coldStart.duration(to: clock.now))
 
-                let warmStart = clock.now
-                try CacheStore.cacheMessages(
-                    messages,
+                let warmCaptureStart = clock.now
+                let warmSnapshot = CacheMessageListSnapshot(
                     serverURL: server,
                     sessionID: sessionID,
-                    in: coldContext
-                ) { lastDiagnostic = $0 }
+                    messages: messages,
+                    generation: messageGeneration
+                )
+                let warmCaptureDuration = Self.nanoseconds(warmCaptureStart.duration(to: clock.now))
+                let warmStart = clock.now
+                lastDiagnostic = try await writer.write(.replaceMessages(warmSnapshot))
                 let warmDuration = Self.nanoseconds(warmStart.duration(to: clock.now))
                 if iteration >= PerformanceBaselineFixtures.warmupCount {
                     coldWrites.append(coldDuration)
                     warmWrites.append(warmDuration)
+                    mainThreadSnapshotCaptures.append(contentsOf: [coldCaptureDuration, warmCaptureDuration])
+                    maintenanceDurations.append(contentsOf: [
+                        coldDiagnostic.maintenanceNanoseconds,
+                        lastDiagnostic.maintenanceNanoseconds
+                    ])
                 }
                 retainedContainer = container
             }
@@ -409,10 +432,12 @@ final class PerformanceBaselineFixtureTests: XCTestCase {
 
             let coldWriteSummary = PerformanceSampleSummary(nanoseconds: coldWrites)
             let warmWriteSummary = PerformanceSampleSummary(nanoseconds: warmWrites)
+            let mainThreadSummary = PerformanceSampleSummary(nanoseconds: mainThreadSnapshotCaptures)
+            let maintenanceSummary = PerformanceSampleSummary(nanoseconds: maintenanceDurations)
             let coldOpenSummary = PerformanceSampleSummary(nanoseconds: coldOpen)
             let warmOpenSummary = PerformanceSampleSummary(nanoseconds: warmOpen)
             let offlineOpenSummary = PerformanceSampleSummary(nanoseconds: offlineOpen)
-            let result = "CacheBaseline fixture=\(PerformanceBaselineFixtures.identity) messages=\(messageCount) samples=\(PerformanceBaselineFixtures.sampleCount) coldWriteMedianMs=\(coldWriteSummary.medianMilliseconds) coldWriteP95Ms=\(coldWriteSummary.p95Milliseconds) warmWriteMedianMs=\(warmWriteSummary.medianMilliseconds) warmWriteP95Ms=\(warmWriteSummary.p95Milliseconds) coldOpenMedianMs=\(coldOpenSummary.medianMilliseconds) coldOpenP95Ms=\(coldOpenSummary.p95Milliseconds) warmOpenMedianMs=\(warmOpenSummary.medianMilliseconds) warmOpenP95Ms=\(warmOpenSummary.p95Milliseconds) offlineOpenMedianMs=\(offlineOpenSummary.medianMilliseconds) offlineOpenP95Ms=\(offlineOpenSummary.p95Milliseconds) fetches=\(lastDiagnostic.fetchCount) fetched=\(lastDiagnostic.objectsFetched) updated=\(lastDiagnostic.objectsUpdated) inserted=\(lastDiagnostic.objectsInserted) deleted=\(lastDiagnostic.objectsDeleted) maintenanceDeleted=\(lastDiagnostic.maintenanceDeleted) mainActor=\(lastDiagnostic.ranOnMainActor)"
+            let result = "CacheBaseline fixture=\(PerformanceBaselineFixtures.identity) messages=\(messageCount) samples=\(PerformanceBaselineFixtures.sampleCount) coldWriteMedianMs=\(coldWriteSummary.medianMilliseconds) coldWriteP95Ms=\(coldWriteSummary.p95Milliseconds) warmWriteMedianMs=\(warmWriteSummary.medianMilliseconds) warmWriteP95Ms=\(warmWriteSummary.p95Milliseconds) mainThreadMedianMs=\(mainThreadSummary.medianMilliseconds) mainThreadP95Ms=\(mainThreadSummary.p95Milliseconds) maintenanceMedianMs=\(maintenanceSummary.medianMilliseconds) maintenanceP95Ms=\(maintenanceSummary.p95Milliseconds) coldOpenMedianMs=\(coldOpenSummary.medianMilliseconds) coldOpenP95Ms=\(coldOpenSummary.p95Milliseconds) warmOpenMedianMs=\(warmOpenSummary.medianMilliseconds) warmOpenP95Ms=\(warmOpenSummary.p95Milliseconds) offlineOpenMedianMs=\(offlineOpenSummary.medianMilliseconds) offlineOpenP95Ms=\(offlineOpenSummary.p95Milliseconds) fetches=\(lastDiagnostic.fetchCount) fetched=\(lastDiagnostic.objectsFetched) updated=\(lastDiagnostic.objectsUpdated) inserted=\(lastDiagnostic.objectsInserted) deleted=\(lastDiagnostic.objectsDeleted) maintenanceDeleted=\(lastDiagnostic.maintenanceDeleted) actorTotalNs=\(lastDiagnostic.totalNanoseconds) encodingNs=\(lastDiagnostic.encodingNanoseconds) maintenanceNs=\(lastDiagnostic.maintenanceNanoseconds) mainActor=\(lastDiagnostic.ranOnMainActor)"
             print("[PERF] \(result)")
             XCTContext.runActivity(named: result) { _ in }
         }
@@ -434,7 +459,7 @@ final class PerformanceBaselineFixtureTests: XCTestCase {
             let server = try XCTUnwrap(URL(string: "https://performance.example.invalid"))
             let sessionID = "synthetic-open-session-\(messageCount)"
             var coldWriteDiagnostic = CacheWriteDiagnosticSnapshot()
-            try CacheStore.cacheMessages(
+            try await TestCacheStore.cacheMessages(
                 PerformanceBaselineFixtures.cachedMessages(count: messageCount),
                 serverURL: server,
                 sessionID: sessionID,

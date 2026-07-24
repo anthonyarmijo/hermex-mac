@@ -3,8 +3,90 @@ import XCTest
 @testable import HermesMobile
 
 @MainActor
+enum TestCacheStore {
+    @discardableResult
+    static func cacheSessions(
+        _ sessions: [SessionSummary],
+        serverURL: URL,
+        in context: ModelContext,
+        cachedAt: Date = Date()
+    ) async throws -> CacheWriteDiagnosticSnapshot {
+        let writer = CacheWriter(modelContainer: context.container)
+        let generation = UUID()
+        await writer.activate(
+            scope: .sessions(serverURLString: serverURL.absoluteString),
+            generation: generation
+        )
+        return try await writer.write(.replaceSessions(CacheSessionListSnapshot(
+            serverURL: serverURL,
+            sessions: sessions,
+            cachedAt: cachedAt,
+            generation: generation
+        )))
+    }
+
+    @discardableResult
+    static func cacheSession(
+        _ session: SessionSummary,
+        serverURL: URL,
+        in context: ModelContext,
+        cachedAt: Date = Date()
+    ) async throws -> CacheWriteDiagnosticSnapshot {
+        let writer = CacheWriter(modelContainer: context.container)
+        return try await writer.write(.upsertSession(CacheSessionSnapshot(
+            serverURL: serverURL,
+            session: session,
+            cachedAt: cachedAt,
+            generation: UUID()
+        )))
+    }
+
+    @discardableResult
+    static func cacheMessages(
+        _ messages: [ChatMessage],
+        serverURL: URL,
+        sessionID: String,
+        in context: ModelContext,
+        cachedAt: Date = Date(),
+        diagnostics: ((CacheWriteDiagnosticSnapshot) -> Void)? = nil
+    ) async throws -> CacheWriteDiagnosticSnapshot {
+        let writer = CacheWriter(modelContainer: context.container)
+        let generation = UUID()
+        await writer.activate(
+            scope: .messages(serverURLString: serverURL.absoluteString, sessionID: sessionID),
+            generation: generation
+        )
+        let diagnostic = try await writer.write(.replaceMessages(CacheMessageListSnapshot(
+            serverURL: serverURL,
+            sessionID: sessionID,
+            messages: messages,
+            cachedAt: cachedAt,
+            generation: generation
+        )))
+        diagnostics?(diagnostic)
+        return diagnostic
+    }
+
+    static func clearAll(in context: ModelContext) async throws {
+        let writer = CacheWriter(modelContainer: context.container)
+        _ = try await writer.write(.clearAll)
+    }
+
+    static func clearCache(for serverURL: URL, in context: ModelContext) async throws {
+        let writer = CacheWriter(modelContainer: context.container)
+        _ = try await writer.write(.clearServer(serverURLString: serverURL.absoluteString))
+    }
+
+    @discardableResult
+    static func performMaintenance(in context: ModelContext, now: Date) async throws -> CacheWriteDiagnosticSnapshot {
+        let writer = CacheWriter(modelContainer: context.container)
+        return try await writer.write(.maintenance(now: now))
+    }
+}
+
+@MainActor
 final class CacheStoreTests: XCTestCase {
-    func testCacheSessionsWritesVisibleSessionsAndRemovesStaleEntries() throws {
+    func testCacheSessionsWritesVisibleSessionsAndRemovesStaleEntries() async throws {
         let context = try makeContext()
         let serverURL = URL(string: "https://example.test")!
         let firstCachedAt = Date(timeIntervalSince1970: 1_770_000_000)
@@ -21,7 +103,7 @@ final class CacheStoreTests: XCTestCase {
         }
         """)
 
-        try CacheStore.cacheSessions(
+        try await TestCacheStore.cacheSessions(
             try XCTUnwrap(firstResponse.sessions),
             serverURL: serverURL,
             in: context,
@@ -41,7 +123,7 @@ final class CacheStoreTests: XCTestCase {
         }
         """)
 
-        try CacheStore.cacheSessions(
+        try await TestCacheStore.cacheSessions(
             try XCTUnwrap(secondResponse.sessions),
             serverURL: serverURL,
             in: context,
@@ -58,7 +140,7 @@ final class CacheStoreTests: XCTestCase {
         XCTAssertEqual(updatedSession.expiresAt, secondCachedAt.addingTimeInterval(CachePolicy.ttl))
     }
 
-    func testCachedSessionsPreserveSubagentClassificationAndReadOnlySafety() throws {
+    func testCachedSessionsPreserveSubagentClassificationAndReadOnlySafety() async throws {
         let context = try makeContext()
         let serverURL = URL(string: "https://example.test")!
         let cachedAt = Date(timeIntervalSince1970: 1_770_000_000)
@@ -82,7 +164,7 @@ final class CacheStoreTests: XCTestCase {
         }
         """)
 
-        try CacheStore.cacheSessions(
+        try await TestCacheStore.cacheSessions(
             try XCTUnwrap(response.sessions),
             serverURL: serverURL,
             in: context,
@@ -101,7 +183,7 @@ final class CacheStoreTests: XCTestCase {
         XCTAssertTrue(AutomatedSessionVisibility.showAll.shows(cached))
     }
 
-    func testCachedSessionsPreserveClaudeCodeClassificationAndVisibility() throws {
+    func testCachedSessionsPreserveClaudeCodeClassificationAndVisibility() async throws {
         let context = try makeContext()
         let serverURL = URL(string: "https://example.test")!
         let cachedAt = Date(timeIntervalSince1970: 1_770_000_000)
@@ -128,7 +210,7 @@ final class CacheStoreTests: XCTestCase {
         }
         """)
 
-        try CacheStore.cacheSessions(
+        try await TestCacheStore.cacheSessions(
             try XCTUnwrap(response.sessions),
             serverURL: serverURL,
             in: context,
@@ -150,7 +232,7 @@ final class CacheStoreTests: XCTestCase {
         XCTAssertEqual(cached.filter(hidden.shows).compactMap(\.sessionId), ["ordinary-cli"])
     }
 
-    func testCacheMessagesWritesLoadedWindowAndRemovesStaleMessages() throws {
+    func testCacheMessagesWritesLoadedWindowAndRemovesStaleMessages() async throws {
         let context = try makeContext()
         let serverURL = URL(string: "https://example.test")!
         let firstCachedAt = Date(timeIntervalSince1970: 1_770_000_000)
@@ -171,7 +253,7 @@ final class CacheStoreTests: XCTestCase {
             )
         ]
 
-        try CacheStore.cacheMessages(
+        try await TestCacheStore.cacheMessages(
             firstMessages,
             serverURL: serverURL,
             sessionID: "abc123",
@@ -200,7 +282,7 @@ final class CacheStoreTests: XCTestCase {
             )
         ]
 
-        try CacheStore.cacheMessages(
+        try await TestCacheStore.cacheMessages(
             secondMessages,
             serverURL: serverURL,
             sessionID: "abc123",
@@ -218,7 +300,7 @@ final class CacheStoreTests: XCTestCase {
         XCTAssertEqual(updatedMessage.expiresAt, secondCachedAt.addingTimeInterval(CachePolicy.ttl))
     }
 
-    func testCacheSessionUpsertsOneSessionWithoutRemovingExistingSessions() throws {
+    func testCacheSessionUpsertsOneSessionWithoutRemovingExistingSessions() async throws {
         let context = try makeContext()
         let serverURL = URL(string: "https://example.test")!
         let firstCachedAt = Date(timeIntervalSince1970: 1_770_000_000)
@@ -231,7 +313,7 @@ final class CacheStoreTests: XCTestCase {
           ]
         }
         """)
-        try CacheStore.cacheSessions(
+        try await TestCacheStore.cacheSessions(
             try XCTUnwrap(existingResponse.sessions),
             serverURL: serverURL,
             in: context,
@@ -247,7 +329,7 @@ final class CacheStoreTests: XCTestCase {
         """)
         let fork = try XCTUnwrap(forkResponse.sessions?.first)
 
-        try CacheStore.cacheSession(
+        try await TestCacheStore.cacheSession(
             fork,
             serverURL: serverURL,
             in: context,
@@ -262,7 +344,7 @@ final class CacheStoreTests: XCTestCase {
         XCTAssertEqual(forkedSession.cachedAt, secondCachedAt)
     }
 
-    func testCachedSessionsReturnsOnlyUnexpiredVisibleSessionsForServer() throws {
+    func testCachedSessionsReturnsOnlyUnexpiredVisibleSessionsForServer() async throws {
         let context = try makeContext()
         let serverURL = URL(string: "https://example.test")!
         let otherServerURL = URL(string: "https://other.example.test")!
@@ -278,7 +360,7 @@ final class CacheStoreTests: XCTestCase {
         }
         """)
 
-        try CacheStore.cacheSessions(
+        try await TestCacheStore.cacheSessions(
             try XCTUnwrap(response.sessions),
             serverURL: serverURL,
             in: context,
@@ -293,7 +375,7 @@ final class CacheStoreTests: XCTestCase {
         }
         """)
 
-        try CacheStore.cacheSessions(
+        try await TestCacheStore.cacheSessions(
             try XCTUnwrap(otherResponse.sessions),
             serverURL: otherServerURL,
             in: context,
@@ -306,7 +388,7 @@ final class CacheStoreTests: XCTestCase {
         XCTAssertEqual(cachedSessions.first?.title, "Fresh thread")
     }
 
-    func testCachedSessionsIgnoresExpiredSessions() throws {
+    func testCachedSessionsIgnoresExpiredSessions() async throws {
         let context = try makeContext()
         let serverURL = URL(string: "https://example.test")!
         let cachedAt = Date(timeIntervalSince1970: 1_770_000_000)
@@ -319,7 +401,7 @@ final class CacheStoreTests: XCTestCase {
         }
         """)
 
-        try CacheStore.cacheSessions(
+        try await TestCacheStore.cacheSessions(
             try XCTUnwrap(response.sessions),
             serverURL: serverURL,
             in: context,
@@ -331,7 +413,7 @@ final class CacheStoreTests: XCTestCase {
         XCTAssertTrue(cachedSessions.isEmpty)
     }
 
-    func testCachedMessagesReturnsUnexpiredMessagesInStoredOrderForSession() throws {
+    func testCachedMessagesReturnsUnexpiredMessagesInStoredOrderForSession() async throws {
         let context = try makeContext()
         let serverURL = URL(string: "https://example.test")!
         let cachedAt = Date(timeIntervalSince1970: 1_770_000_000)
@@ -352,7 +434,7 @@ final class CacheStoreTests: XCTestCase {
             )
         ]
 
-        try CacheStore.cacheMessages(
+        try await TestCacheStore.cacheMessages(
             messages,
             serverURL: serverURL,
             sessionID: "abc123",
@@ -360,7 +442,7 @@ final class CacheStoreTests: XCTestCase {
             cachedAt: cachedAt
         )
 
-        try CacheStore.cacheMessages(
+        try await TestCacheStore.cacheMessages(
             [
                 ChatMessage(
                     role: "user",
@@ -386,7 +468,7 @@ final class CacheStoreTests: XCTestCase {
         XCTAssertEqual(cachedMessages.first?.reasoning, "Cached reasoning.")
     }
 
-    func testCachedMessagesNewestLimitReturnsNewestPageInAscendingOrderWithoutDeletingHistory() throws {
+    func testCachedMessagesNewestLimitReturnsNewestPageInAscendingOrderWithoutDeletingHistory() async throws {
         let context = try makeContext()
         let serverURL = URL(string: "https://example.test")!
         let cachedAt = Date(timeIntervalSince1970: 1_770_000_000)
@@ -399,7 +481,7 @@ final class CacheStoreTests: XCTestCase {
             )
         }
 
-        try CacheStore.cacheMessages(
+        try await TestCacheStore.cacheMessages(
             messages,
             serverURL: serverURL,
             sessionID: "long-session",
@@ -420,7 +502,7 @@ final class CacheStoreTests: XCTestCase {
         XCTAssertEqual(try fetchCachedMessages(in: context).count, 75)
     }
 
-    func testCachedMessagesNewestLimitReturnsExactlyOnePageOrFewer() throws {
+    func testCachedMessagesNewestLimitReturnsExactlyOnePageOrFewer() async throws {
         let context = try makeContext()
         let serverURL = URL(string: "https://example.test")!
         let cachedAt = Date(timeIntervalSince1970: 1_770_000_000)
@@ -434,7 +516,7 @@ final class CacheStoreTests: XCTestCase {
                     messageId: "\(sessionID)-m\(index)"
                 )
             }
-            try CacheStore.cacheMessages(
+            try await TestCacheStore.cacheMessages(
                 messages,
                 serverURL: serverURL,
                 sessionID: sessionID,
@@ -470,7 +552,7 @@ final class CacheStoreTests: XCTestCase {
                 attachments: [MessageAttachment(name: "file-\(index).txt", path: "/tmp/file-\(index).txt")]
             )
         }
-        try CacheStore.cacheMessages(
+        try await TestCacheStore.cacheMessages(
             messages,
             serverURL: serverURL,
             sessionID: "long-session",
@@ -490,7 +572,7 @@ final class CacheStoreTests: XCTestCase {
         XCTAssertEqual(try fetchCachedMessages(in: context).count, 75)
     }
 
-    func testTranscriptCacheReaderRemainsModelActorIsolated() throws {
+    func testTranscriptCacheReaderRemainsModelActorIsolated() async throws {
         let testFileURL = URL(fileURLWithPath: #filePath)
         let sourceURL = testFileURL
             .deletingLastPathComponent()
@@ -519,7 +601,7 @@ final class CacheStoreTests: XCTestCase {
         let serverURL = URL(string: "https://example.test")!
         let cachedAt = Date()
         for (sessionID, count) in [("exact", 50), ("short", 12), ("expired", 8)] {
-            try CacheStore.cacheMessages(
+            try await TestCacheStore.cacheMessages(
                 (0..<count).map { index in
                     ChatMessage(
                         role: "assistant",
@@ -667,13 +749,13 @@ final class CacheStoreTests: XCTestCase {
         XCTContext.runActivity(named: "TranscriptCacheBenchmark milliseconds=\(milliseconds)") { _ in }
     }
 
-    func testCachedMessagesIgnoresExpiredMessages() throws {
+    func testCachedMessagesIgnoresExpiredMessages() async throws {
         let context = try makeContext()
         let serverURL = URL(string: "https://example.test")!
         let cachedAt = Date(timeIntervalSince1970: 1_770_000_000)
         let expiredNow = cachedAt.addingTimeInterval(CachePolicy.ttl + 1)
 
-        try CacheStore.cacheMessages(
+        try await TestCacheStore.cacheMessages(
             [
                 ChatMessage(
                     role: "user",
@@ -698,7 +780,7 @@ final class CacheStoreTests: XCTestCase {
         XCTAssertTrue(cachedMessages.isEmpty)
     }
 
-    func testCacheMaintenanceDeletesExpiredSessionsAndMessagesOnWrite() throws {
+    func testCacheMaintenanceDeletesExpiredSessionsAndMessagesOnWrite() async throws {
         let context = try makeContext()
         let oldServerURL = URL(string: "https://old.example.test")!
         let triggerServerURL = URL(string: "https://trigger.example.test")!
@@ -713,14 +795,14 @@ final class CacheStoreTests: XCTestCase {
         }
         """)
 
-        try CacheStore.cacheSessions(
+        try await TestCacheStore.cacheSessions(
             try XCTUnwrap(oldSessions.sessions),
             serverURL: oldServerURL,
             in: context,
             cachedAt: oldCachedAt
         )
 
-        try CacheStore.cacheMessages(
+        try await TestCacheStore.cacheMessages(
             [
                 ChatMessage(
                     role: "user",
@@ -743,7 +825,7 @@ final class CacheStoreTests: XCTestCase {
         }
         """)
 
-        try CacheStore.cacheSessions(
+        try await TestCacheStore.cacheSessions(
             try XCTUnwrap(triggerSessions.sessions),
             serverURL: triggerServerURL,
             in: context,
@@ -754,7 +836,40 @@ final class CacheStoreTests: XCTestCase {
         XCTAssertTrue(try fetchCachedMessages(in: context).isEmpty)
     }
 
-    func testCacheMaintenanceEvictsOldestMessagesAboveLimit() throws {
+    func testMaintenanceDoesNotDeleteRowsRefreshedFromExpiredTimestamp() async throws {
+        let context = try makeContext()
+        let server = try XCTUnwrap(URL(string: "https://refresh-expired.example.test"))
+        let oldDate = Date(timeIntervalSince1970: 1_770_000_000)
+        let refreshedDate = oldDate.addingTimeInterval(CachePolicy.ttl + 1)
+        let message = ChatMessage(
+            role: "user",
+            content: "Still current",
+            timestamp: 1_770_000_000,
+            messageId: "refresh-me"
+        )
+
+        try await TestCacheStore.cacheMessages(
+            [message],
+            serverURL: server,
+            sessionID: "s",
+            in: context,
+            cachedAt: oldDate
+        )
+        try await TestCacheStore.cacheMessages(
+            [message],
+            serverURL: server,
+            sessionID: "s",
+            in: context,
+            cachedAt: refreshedDate
+        )
+
+        let cached = try fetchCachedMessages(in: context)
+        XCTAssertEqual(cached.map(\.messageId), ["refresh-me"])
+        XCTAssertEqual(cached.first?.cachedAt, refreshedDate)
+        XCTAssertEqual(cached.first?.expiresAt, refreshedDate.addingTimeInterval(CachePolicy.ttl))
+    }
+
+    func testCacheMaintenanceEvictsOldestMessagesAboveLimit() async throws {
         let context = try makeContext()
         let serverURL = URL(string: "https://example.test")!
         let cachedAt = Date(timeIntervalSince1970: 1_770_000_000)
@@ -775,6 +890,7 @@ final class CacheStoreTests: XCTestCase {
                 )
             )
         }
+        try context.save()
 
         let triggerSessions = try decodeSessions("""
         {
@@ -784,7 +900,7 @@ final class CacheStoreTests: XCTestCase {
         }
         """)
 
-        try CacheStore.cacheSessions(
+        try await TestCacheStore.cacheSessions(
             try XCTUnwrap(triggerSessions.sessions),
             serverURL: serverURL,
             in: context,
@@ -799,7 +915,7 @@ final class CacheStoreTests: XCTestCase {
         XCTAssertNotNil(cachedMessages.first { $0.messageId == "message-\(CachePolicy.maxMessages)" })
     }
 
-    func testClearAllDeletesCachedSessionsAndMessages() throws {
+    func testClearAllDeletesCachedSessionsAndMessages() async throws {
         let context = try makeContext()
         let serverURL = URL(string: "https://example.test")!
         let cachedAt = Date(timeIntervalSince1970: 1_770_000_000)
@@ -811,14 +927,14 @@ final class CacheStoreTests: XCTestCase {
         }
         """)
 
-        try CacheStore.cacheSessions(
+        try await TestCacheStore.cacheSessions(
             try XCTUnwrap(response.sessions),
             serverURL: serverURL,
             in: context,
             cachedAt: cachedAt
         )
 
-        try CacheStore.cacheMessages(
+        try await TestCacheStore.cacheMessages(
             [
                 ChatMessage(
                     role: "user",
@@ -833,13 +949,13 @@ final class CacheStoreTests: XCTestCase {
             cachedAt: cachedAt
         )
 
-        try CacheStore.clearAll(in: context)
+        try await TestCacheStore.clearAll(in: context)
 
         XCTAssertTrue(try fetchCachedSessions(in: context).isEmpty)
         XCTAssertTrue(try fetchCachedMessages(in: context).isEmpty)
     }
 
-    func testCacheMessagesRoundTripsAttachments() throws {
+    func testCacheMessagesRoundTripsAttachments() async throws {
         let context = try makeContext()
         let serverURL = URL(string: "https://example.test")!
         let cachedAt = Date(timeIntervalSince1970: 1_770_000_000)
@@ -863,7 +979,7 @@ final class CacheStoreTests: XCTestCase {
             )
         ]
 
-        try CacheStore.cacheMessages(
+        try await TestCacheStore.cacheMessages(
             messages,
             serverURL: serverURL,
             sessionID: "abc123",
@@ -887,7 +1003,7 @@ final class CacheStoreTests: XCTestCase {
         XCTAssertEqual(attachment.isImage, true)
     }
 
-    func testCacheMessagesRoundTripsToolCallAndStructuredContentFields() throws {
+    func testCacheMessagesRoundTripsToolCallAndStructuredContentFields() async throws {
         let context = try makeContext()
         let serverURL = URL(string: "https://example.test")!
         let cachedAt = Date(timeIntervalSince1970: 1_770_000_000)
@@ -919,7 +1035,7 @@ final class CacheStoreTests: XCTestCase {
             )
         ]
 
-        try CacheStore.cacheMessages(
+        try await TestCacheStore.cacheMessages(
             messages,
             serverURL: serverURL,
             sessionID: "abc123",
@@ -943,21 +1059,21 @@ final class CacheStoreTests: XCTestCase {
 
     // MARK: - Per-server isolation (#18)
 
-    func testCachedMessagesAreScopedToTheirServerForTheSameSessionID() throws {
+    func testCachedMessagesAreScopedToTheirServerForTheSameSessionID() async throws {
         let context = try makeContext()
         let serverA = URL(string: "https://a.example.test")!
         let serverB = URL(string: "https://b.example.test")!
         let cachedAt = Date(timeIntervalSince1970: 1_770_000_000)
         let now = cachedAt.addingTimeInterval(60)
 
-        try CacheStore.cacheMessages(
+        try await TestCacheStore.cacheMessages(
             [ChatMessage(role: "user", content: "From A", timestamp: 1_770_000_000, messageId: "m1")],
             serverURL: serverA,
             sessionID: "shared",
             in: context,
             cachedAt: cachedAt
         )
-        try CacheStore.cacheMessages(
+        try await TestCacheStore.cacheMessages(
             [ChatMessage(role: "user", content: "From B", timestamp: 1_770_000_000, messageId: "m1")],
             serverURL: serverB,
             sessionID: "shared",
@@ -972,14 +1088,14 @@ final class CacheStoreTests: XCTestCase {
         XCTAssertEqual(bMessages.map(\.content), ["From B"])
     }
 
-    func testCacheSessionsForOneServerDoesNotDeleteAnotherServersStaleSessions() throws {
+    func testCacheSessionsForOneServerDoesNotDeleteAnotherServersStaleSessions() async throws {
         let context = try makeContext()
         let serverA = URL(string: "https://a.example.test")!
         let serverB = URL(string: "https://b.example.test")!
         let cachedAt = Date(timeIntervalSince1970: 1_770_000_000)
         let now = cachedAt.addingTimeInterval(60)
 
-        try CacheStore.cacheSessions(
+        try await TestCacheStore.cacheSessions(
             try XCTUnwrap(decodeSessions("""
             {"sessions": [{"session_id": "a1", "title": "A one", "last_message_at": 1770000000, "archived": false}]}
             """).sessions),
@@ -987,7 +1103,7 @@ final class CacheStoreTests: XCTestCase {
             in: context,
             cachedAt: cachedAt
         )
-        try CacheStore.cacheSessions(
+        try await TestCacheStore.cacheSessions(
             try XCTUnwrap(decodeSessions("""
             {"sessions": [{"session_id": "b1", "title": "B one", "last_message_at": 1770000000, "archived": false}]}
             """).sessions),
@@ -998,7 +1114,7 @@ final class CacheStoreTests: XCTestCase {
 
         // Re-cache server A with a different set so its stale-removal pass runs.
         // It must drop A's "a1" without touching server B's "b1".
-        try CacheStore.cacheSessions(
+        try await TestCacheStore.cacheSessions(
             try XCTUnwrap(decodeSessions("""
             {"sessions": [{"session_id": "a2", "title": "A two", "last_message_at": 1770000100, "archived": false}]}
             """).sessions),
@@ -1014,21 +1130,21 @@ final class CacheStoreTests: XCTestCase {
         XCTAssertEqual(bSessions.map(\.sessionId), ["b1"])
     }
 
-    func testCacheMessagesForOneServerDoesNotDeleteAnotherServersMessages() throws {
+    func testCacheMessagesForOneServerDoesNotDeleteAnotherServersMessages() async throws {
         let context = try makeContext()
         let serverA = URL(string: "https://a.example.test")!
         let serverB = URL(string: "https://b.example.test")!
         let cachedAt = Date(timeIntervalSince1970: 1_770_000_000)
         let now = cachedAt.addingTimeInterval(60)
 
-        try CacheStore.cacheMessages(
+        try await TestCacheStore.cacheMessages(
             [ChatMessage(role: "user", content: "From A", timestamp: 1_770_000_000, messageId: "m1")],
             serverURL: serverA,
             sessionID: "shared",
             in: context,
             cachedAt: cachedAt
         )
-        try CacheStore.cacheMessages(
+        try await TestCacheStore.cacheMessages(
             [ChatMessage(role: "user", content: "From B", timestamp: 1_770_000_000, messageId: "m1")],
             serverURL: serverB,
             sessionID: "shared",
@@ -1038,7 +1154,7 @@ final class CacheStoreTests: XCTestCase {
 
         // Re-cache server A's session with no messages so its stale-removal pass
         // wipes A's window; server B's identically-keyed session must survive.
-        try CacheStore.cacheMessages(
+        try await TestCacheStore.cacheMessages(
             [],
             serverURL: serverA,
             sessionID: "shared",
@@ -1053,7 +1169,7 @@ final class CacheStoreTests: XCTestCase {
         XCTAssertEqual(bMessages.map(\.content), ["From B"])
     }
 
-    func testClearCacheRemovesOnlyTheGivenServersData() throws {
+    func testClearCacheRemovesOnlyTheGivenServersData() async throws {
         let context = try makeContext()
         let serverA = URL(string: "https://a.example.test")!
         let serverB = URL(string: "https://b.example.test")!
@@ -1061,7 +1177,7 @@ final class CacheStoreTests: XCTestCase {
         let now = cachedAt.addingTimeInterval(60)
 
         for (server, title) in [(serverA, "A one"), (serverB, "B one")] {
-            try CacheStore.cacheSessions(
+            try await TestCacheStore.cacheSessions(
                 try XCTUnwrap(decodeSessions("""
                 {"sessions": [{"session_id": "s1", "title": "\(title)", "last_message_at": 1770000000, "archived": false}]}
                 """).sessions),
@@ -1069,7 +1185,7 @@ final class CacheStoreTests: XCTestCase {
                 in: context,
                 cachedAt: cachedAt
             )
-            try CacheStore.cacheMessages(
+            try await TestCacheStore.cacheMessages(
                 [ChatMessage(role: "user", content: title, timestamp: 1_770_000_000, messageId: "m1")],
                 serverURL: server,
                 sessionID: "s1",
@@ -1078,7 +1194,7 @@ final class CacheStoreTests: XCTestCase {
             )
         }
 
-        try CacheStore.clearCache(for: serverA, in: context)
+        try await TestCacheStore.clearCache(for: serverA, in: context)
 
         XCTAssertTrue(try CacheStore.cachedSessions(serverURL: serverA, in: context, now: now).isEmpty)
         XCTAssertTrue(try CacheStore.cachedMessages(serverURL: serverA, sessionID: "s1", in: context, now: now).isEmpty)
@@ -1090,6 +1206,262 @@ final class CacheStoreTests: XCTestCase {
             try CacheStore.cachedMessages(serverURL: serverB, sessionID: "s1", in: context, now: now).map(\.content),
             ["B one"]
         )
+    }
+
+    func testActorWriterUsesBoundedFetchesForFiveHundredMessagesOffMainThread() async throws {
+        let context = try makeContext()
+        let writer = CacheWriter(modelContainer: context.container)
+        let server = try XCTUnwrap(URL(string: "https://bounded.example.test"))
+        let sessionID = "bounded"
+        let generation = UUID()
+        await writer.activate(
+            scope: .messages(serverURLString: server.absoluteString, sessionID: sessionID),
+            generation: generation
+        )
+
+        let messages = (0..<500).map { index in
+            ChatMessage(
+                role: index.isMultiple(of: 2) ? "user" : "assistant",
+                content: "Bounded message \(index)",
+                timestamp: Double(index),
+                messageId: "bounded-\(index)"
+            )
+        }
+        let diagnostic = try await writer.write(.replaceMessages(CacheMessageListSnapshot(
+            serverURL: server,
+            sessionID: sessionID,
+            messages: messages,
+            generation: generation
+        )))
+
+        XCTAssertLessThanOrEqual(diagnostic.fetchCount, 5)
+        XCTAssertEqual(diagnostic.objectsInserted, 500)
+        XCTAssertFalse(diagnostic.ranOnMainActor)
+        XCTAssertGreaterThan(diagnostic.totalNanoseconds, 0)
+        XCTAssertEqual(try fetchCachedMessages(in: context).count, 500)
+    }
+
+    func testAutomaticMaintenanceCoalescesTinyWriteBurstAndRunsAtThreshold() async throws {
+        let context = try makeContext()
+        let writer = CacheWriter(modelContainer: context.container)
+        let server = try XCTUnwrap(URL(string: "https://maintenance.example.test"))
+        let generation = UUID()
+        let now = Date(timeIntervalSince1970: 1_770_000_000)
+        await writer.activate(
+            scope: .sessions(serverURLString: server.absoluteString),
+            generation: generation
+        )
+
+        let initial = try await writer.write(.replaceSessions(CacheSessionListSnapshot(
+            serverURL: server,
+            sessions: [SessionSummary(sessionId: "s", title: "Initial")],
+            cachedAt: now,
+            generation: generation
+        )))
+        XCTAssertGreaterThan(initial.fetchCount, 1)
+
+        var diagnostic = CacheWriteDiagnosticSnapshot()
+        for index in 1..<CachePersistenceWriter.maintenanceWriteThreshold {
+            diagnostic = try await writer.write(.upsertSession(CacheSessionSnapshot(
+                serverURL: server,
+                session: SessionSummary(sessionId: "s", title: "Update \(index)"),
+                cachedAt: now.addingTimeInterval(Double(index)),
+                generation: generation
+            )))
+            XCTAssertEqual(diagnostic.fetchCount, 1)
+        }
+
+        diagnostic = try await writer.write(.upsertSession(CacheSessionSnapshot(
+            serverURL: server,
+            session: SessionSummary(sessionId: "s", title: "Threshold"),
+            cachedAt: now.addingTimeInterval(20),
+            generation: generation
+        )))
+        XCTAssertGreaterThan(diagnostic.fetchCount, 1)
+    }
+
+    func testPendingMessageSnapshotsCoalesceToNewestValue() async throws {
+        let persistence = ControlledCachePersistenceWriter(suspendsFirstRequest: true)
+        let writer = CacheWriter(persistence: persistence)
+        let server = try XCTUnwrap(URL(string: "https://coalesce.example.test"))
+        let generation = UUID()
+        let scope = CacheWriteScope.messages(serverURLString: server.absoluteString, sessionID: "same")
+        await writer.activate(scope: scope, generation: generation)
+
+        let blocker = Task { try await writer.write(.maintenance(now: Date())) }
+        await persistence.waitUntilFirstRequestStarts()
+
+        let older = Task {
+            try await writer.write(.replaceMessages(CacheMessageListSnapshot(
+                serverURL: server,
+                sessionID: "same",
+                messages: [ChatMessage(role: "user", content: "older", timestamp: 1, messageId: "m")],
+                generation: generation
+            )))
+        }
+        await waitForPendingWriteCount(1, in: writer)
+
+        let newest = Task {
+            try await writer.write(.replaceMessages(CacheMessageListSnapshot(
+                serverURL: server,
+                sessionID: "same",
+                messages: [ChatMessage(role: "user", content: "newest", timestamp: 2, messageId: "m")],
+                generation: generation
+            )))
+        }
+        await waitForPendingWriteCount(1, in: writer)
+        await persistence.resumeFirstRequest()
+
+        _ = try await blocker.value
+        let olderDiagnostic = try await older.value
+        let newestDiagnostic = try await newest.value
+        let finalContents = await persistence.messageContents(for: scope)
+        let executedRequestCount = await persistence.executedRequestCount()
+        XCTAssertEqual(olderDiagnostic.coalescedSnapshots, 1)
+        XCTAssertEqual(newestDiagnostic.coalescedSnapshots, 1)
+        XCTAssertEqual(finalContents, ["newest"])
+        XCTAssertEqual(executedRequestCount, 2)
+    }
+
+    func testClearServerIsBarrierForOlderQueuedWrite() async throws {
+        let persistence = ControlledCachePersistenceWriter(suspendsFirstRequest: true)
+        let writer = CacheWriter(persistence: persistence)
+        let server = try XCTUnwrap(URL(string: "https://barrier.example.test"))
+        let generation = UUID()
+        let scope = CacheWriteScope.messages(serverURLString: server.absoluteString, sessionID: "s")
+        await writer.activate(scope: scope, generation: generation)
+
+        let blocker = Task { try await writer.write(.maintenance(now: Date())) }
+        await persistence.waitUntilFirstRequestStarts()
+        let oldWrite = Task {
+            try await writer.write(.replaceMessages(CacheMessageListSnapshot(
+                serverURL: server,
+                sessionID: "s",
+                messages: [ChatMessage(role: "user", content: "old", timestamp: 1, messageId: "old")],
+                generation: generation
+            )))
+        }
+        await waitForPendingWriteCount(1, in: writer)
+        let clear = Task {
+            try await writer.write(.clearServer(serverURLString: server.absoluteString))
+        }
+        await waitForPendingWriteCount(2, in: writer)
+        await persistence.resumeFirstRequest()
+
+        _ = try await blocker.value
+        let oldDiagnostic = try await oldWrite.value
+        _ = try await clear.value
+        let finalContents = await persistence.messageContents(for: scope)
+        let executedRequestCount = await persistence.executedRequestCount()
+        XCTAssertTrue(oldDiagnostic.skippedStaleGeneration)
+        XCTAssertEqual(finalContents, [])
+        XCTAssertEqual(executedRequestCount, 2)
+    }
+
+    func testNewGenerationDropsOlderQueuedSnapshotAcrossRapidSwitching() async throws {
+        let persistence = ControlledCachePersistenceWriter(suspendsFirstRequest: true)
+        let writer = CacheWriter(persistence: persistence)
+        let server = try XCTUnwrap(URL(string: "https://switch.example.test"))
+        let scopeA = CacheWriteScope.messages(serverURLString: server.absoluteString, sessionID: "A")
+        let scopeB = CacheWriteScope.messages(serverURLString: server.absoluteString, sessionID: "B")
+        let generationA1 = UUID()
+        let generationA2 = UUID()
+        let generationB = UUID()
+        await writer.activate(scope: scopeA, generation: generationA1)
+        await writer.activate(scope: scopeB, generation: generationB)
+
+        let blocker = Task { try await writer.write(.maintenance(now: Date())) }
+        await persistence.waitUntilFirstRequestStarts()
+        let staleA = Task {
+            try await writer.write(.replaceMessages(CacheMessageListSnapshot(
+                serverURL: server,
+                sessionID: "A",
+                messages: [ChatMessage(role: "user", content: "stale A", timestamp: 1, messageId: "a")],
+                generation: generationA1
+            )))
+        }
+        await waitForPendingWriteCount(1, in: writer)
+
+        await writer.activate(scope: scopeA, generation: generationA2)
+        let bWrite = Task {
+            try await writer.write(.replaceMessages(CacheMessageListSnapshot(
+                serverURL: server,
+                sessionID: "B",
+                messages: [ChatMessage(role: "user", content: "B", timestamp: 2, messageId: "b")],
+                generation: generationB
+            )))
+        }
+        let newestA = Task {
+            try await writer.write(.replaceMessages(CacheMessageListSnapshot(
+                serverURL: server,
+                sessionID: "A",
+                messages: [ChatMessage(role: "user", content: "newest A", timestamp: 3, messageId: "a")],
+                generation: generationA2
+            )))
+        }
+        await persistence.resumeFirstRequest()
+
+        _ = try await blocker.value
+        let staleDiagnostic = try await staleA.value
+        _ = try await bWrite.value
+        _ = try await newestA.value
+        let finalA = await persistence.messageContents(for: scopeA)
+        let finalB = await persistence.messageContents(for: scopeB)
+        XCTAssertTrue(staleDiagnostic.skippedStaleGeneration)
+        XCTAssertEqual(finalA, ["newest A"])
+        XCTAssertEqual(finalB, ["B"])
+    }
+
+    func testCancellingQueuedWritePreventsPersistence() async throws {
+        let persistence = ControlledCachePersistenceWriter(suspendsFirstRequest: true)
+        let writer = CacheWriter(persistence: persistence)
+        let server = try XCTUnwrap(URL(string: "https://cancel.example.test"))
+        let generation = UUID()
+        let scope = CacheWriteScope.messages(serverURLString: server.absoluteString, sessionID: "s")
+        await writer.activate(scope: scope, generation: generation)
+
+        let blocker = Task { try await writer.write(.maintenance(now: Date())) }
+        await persistence.waitUntilFirstRequestStarts()
+        let cancelled = Task {
+            try await writer.write(.replaceMessages(CacheMessageListSnapshot(
+                serverURL: server,
+                sessionID: "s",
+                messages: [ChatMessage(role: "user", content: "cancelled", timestamp: 1, messageId: "m")],
+                generation: generation
+            )))
+        }
+        await waitForPendingWriteCount(1, in: writer)
+        cancelled.cancel()
+        do {
+            _ = try await cancelled.value
+            XCTFail("The queued cache write should be cancelled.")
+        } catch is CancellationError {
+            // Expected.
+        }
+        await persistence.resumeFirstRequest()
+        _ = try await blocker.value
+        let finalContents = await persistence.messageContents(for: scope)
+        XCTAssertEqual(finalContents, [])
+    }
+
+    func testWriterErrorPropagatesWithoutBecomingSuccessfulPersistence() async throws {
+        let writer = CacheWriter(persistence: FailingCachePersistenceWriter())
+        do {
+            _ = try await writer.write(.maintenance(now: Date()))
+            XCTFail("Expected the injected persistence error.")
+        } catch let error as ControlledCachePersistenceError {
+            XCTAssertEqual(error, .injected)
+        }
+    }
+
+    private func waitForPendingWriteCount(_ expected: Int, in writer: CacheWriter) async {
+#if DEBUG
+        for _ in 0..<1_000 {
+            if await writer.pendingWriteCountForTesting() == expected { return }
+            await Task.yield()
+        }
+        XCTFail("Timed out waiting for \(expected) queued cache writes.")
+#endif
     }
 
     private func makeContext() throws -> ModelContext {
@@ -1114,5 +1486,76 @@ final class CacheStoreTests: XCTestCase {
 
     private func fetchCachedMessages(in context: ModelContext) throws -> [CachedMessage] {
         try context.fetch(FetchDescriptor<CachedMessage>())
+    }
+}
+
+private enum ControlledCachePersistenceError: Error, Equatable {
+    case injected
+}
+
+private struct FailingCachePersistenceWriter: CachePersistenceWriting {
+    func execute(_ request: CacheWriteRequest) async throws -> CacheWriteDiagnosticSnapshot {
+        throw ControlledCachePersistenceError.injected
+    }
+}
+
+private actor ControlledCachePersistenceWriter: CachePersistenceWriting {
+    private let suspendsFirstRequest: Bool
+    private var didStartFirstRequest = false
+    private var firstStartWaiters: [CheckedContinuation<Void, Never>] = []
+    private var firstResumeContinuation: CheckedContinuation<Void, Never>?
+    private var executedRequests: [CacheWriteRequest] = []
+    private var messagesByScope: [CacheWriteScope: [String]] = [:]
+
+    init(suspendsFirstRequest: Bool) {
+        self.suspendsFirstRequest = suspendsFirstRequest
+    }
+
+    func execute(_ request: CacheWriteRequest) async throws -> CacheWriteDiagnosticSnapshot {
+        executedRequests.append(request)
+        if suspendsFirstRequest, !didStartFirstRequest {
+            didStartFirstRequest = true
+            for waiter in firstStartWaiters { waiter.resume() }
+            firstStartWaiters = []
+            await withCheckedContinuation { continuation in
+                firstResumeContinuation = continuation
+            }
+        }
+
+        switch request {
+        case .replaceMessages(let snapshot):
+            let scope = CacheWriteScope.messages(
+                serverURLString: snapshot.serverURLString,
+                sessionID: snapshot.sessionID
+            )
+            messagesByScope[scope] = snapshot.messages.compactMap(\.content)
+        case .clearServer(let serverURLString):
+            messagesByScope = messagesByScope.filter { $0.key.serverURLString != serverURLString }
+        case .clearAll:
+            messagesByScope = [:]
+        case .replaceSessions, .upsertSession, .maintenance:
+            break
+        }
+        return CacheWriteDiagnosticSnapshot()
+    }
+
+    func waitUntilFirstRequestStarts() async {
+        guard !didStartFirstRequest else { return }
+        await withCheckedContinuation { continuation in
+            firstStartWaiters.append(continuation)
+        }
+    }
+
+    func resumeFirstRequest() {
+        firstResumeContinuation?.resume()
+        firstResumeContinuation = nil
+    }
+
+    func messageContents(for scope: CacheWriteScope) -> [String] {
+        messagesByScope[scope] ?? []
+    }
+
+    func executedRequestCount() -> Int {
+        executedRequests.count
     }
 }
