@@ -1,6 +1,8 @@
-# Contributor CI: build and run the full iPhone and Mac Catalyst XCTest suites on every pull request
-# that touches app code. Docs-only PRs (markdown, docs/, community files) skip
-# the macOS runner entirely and pass via the cheap gate job.
+# Contributor CI: run the full Mac Catalyst XCTest suite for app-code pull
+# requests. The shared iPhone target gets a compile check by default and runs
+# its full suite only when the PR has the `full-iphone-tests` label or comes from
+# an upstream-sync branch. Docs, workflow-only, and version-only PRs skip the
+# macOS runners and pass via the cheap gate job.
 #
 # The required branch-protection check is "CI Gate", not "Build and Test":
 # a skipped required check would block merges forever, so the gate always
@@ -15,6 +17,7 @@ name: PR CI
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
 
 permissions:
   contents: read
@@ -31,31 +34,64 @@ jobs:
     timeout-minutes: 5
     outputs:
       run_tests: ${{ steps.filter.outputs.run_tests }}
+      run_iphone_tests: ${{ steps.filter.outputs.run_iphone_tests }}
     steps:
       - name: Classify changed files
         id: filter
         env:
           GH_TOKEN: ${{ github.token }}
+          HEAD_REF: ${{ github.head_ref }}
         run: |
           set -euo pipefail
           files=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" \
             --paginate --jq '.[].filename')
           echo "Changed files:"
           echo "${files}"
-          # Fail closed: anything NOT on the docs-only allowlist triggers the
-          # full suite (including workflow, project, and config changes).
-          non_docs=$(echo "${files}" | grep -vE '^(docs/.*|LICENSE|\.gitignore|\.github/ISSUE_TEMPLATE/.*|\.github/CODEOWNERS|\.github/dependabot\.yml|\.github/FUNDING\.yml|.*\.md)$' || true)
-          if [[ -n "${non_docs}" ]]; then
-            echo "Non-docs changes detected — running the full suite:"
-            echo "${non_docs}"
+          # Fail closed for application/config changes. Documentation and
+          # workflow-only changes do not validate application behavior.
+          app_changes=$(echo "${files}" | grep -vE '^(docs/.*|LICENSE|\.gitignore|\.github/.*|.*\.md)$' || true)
+
+          # A project-file-only marketing/build version bump cannot affect
+          # compilation or runtime behavior, so avoid spending two macOS
+          # runners on it. Any other project-file edit still fails closed.
+          if [[ "${app_changes}" == "HermesMobile.xcodeproj/project.pbxproj" ]]; then
+            project_patch=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files?per_page=100" \
+              --jq '.[] | select(.filename == "HermesMobile.xcodeproj/project.pbxproj") | (.patch // "")')
+            non_version_lines=$(printf '%s\n' "${project_patch}" | awk '
+              /^[+-]/ && !/^\+\+\+/ && !/^---/ {
+                line = substr($0, 2)
+                if (line !~ /^[[:space:]]*(MARKETING_VERSION|CURRENT_PROJECT_VERSION)[[:space:]]*=/) print line
+              }
+            ')
+            if [[ -n "${project_patch}" && -z "${non_version_lines}" ]]; then
+              echo "Version-only project change — skipping app validation."
+              app_changes=""
+            fi
+          fi
+
+          if [[ -n "${app_changes}" ]]; then
+            echo "Application changes detected — running Mac tests and an iPhone compile check:"
+            echo "${app_changes}"
             echo "run_tests=true" >> "$GITHUB_OUTPUT"
           else
-            echo "Docs-only change — skipping the macOS runner."
+            echo "No application behavior changed — skipping macOS runners."
             echo "run_tests=false" >> "$GITHUB_OUTPUT"
           fi
 
+          labels=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}" \
+            --jq '.labels[].name')
+          head_ref="${HEAD_REF}"
+          if grep -Fxq "full-iphone-tests" <<< "${labels}" \
+            || [[ "${head_ref}" == upstream/* ]] \
+            || [[ "${head_ref}" == sync/upstream-* ]]; then
+            echo "Full iPhone compatibility validation requested."
+            echo "run_iphone_tests=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run_iphone_tests=false" >> "$GITHUB_OUTPUT"
+          fi
+
   test_ios:
-    name: iPhone Build and Test
+    name: iPhone Compatibility
     needs: changes
     if: needs.changes.outputs.run_tests == 'true'
     runs-on: macos-26
@@ -65,7 +101,7 @@ jobs:
       PROJECT_PATH: HermesMobile.xcodeproj
       SCHEME: HermesMobile
       DERIVED_DATA_PATH: DerivedData
-      RESULT_BUNDLE_PATH: TestResults.xcresult
+      RESULT_BUNDLE_PATH: TestResults-iPhone.xcresult
       TEST_WORKER_COUNT: 1
 
     steps:
@@ -118,7 +154,8 @@ jobs:
           echo "### PR CI timing" >> "${GITHUB_STEP_SUMMARY}"
           echo "- Build for testing: ${duration_seconds}s" >> "${GITHUB_STEP_SUMMARY}"
 
-      - name: Test without building
+      - name: Run full compatibility suite when requested
+        if: needs.changes.outputs.run_iphone_tests == 'true'
         env:
           SIMULATOR_NAME: ${{ steps.sim.outputs.name }}
         run: |
@@ -138,7 +175,7 @@ jobs:
           echo "- Test without building (${TEST_WORKER_COUNT} workers): ${duration_seconds}s" >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Report slowest tests
-        if: always()
+        if: always() && needs.changes.outputs.run_iphone_tests == 'true'
         continue-on-error: true
         run: |
           set -euo pipefail
@@ -186,7 +223,7 @@ jobs:
           } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Upload test results on failure
-        if: failure()
+        if: failure() && needs.changes.outputs.run_iphone_tests == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: test-results

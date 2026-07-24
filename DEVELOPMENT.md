@@ -96,7 +96,9 @@ lsof -i :8787
 
 ## Local Validation With XcodeBuildMCP
 
-XcodeBuildMCP is the preferred local validation path for feature and bug-fix slices. The repo config lives in `.xcodebuildmcp/config.yaml` and sets:
+XcodeBuildMCP is available for focused iPhone compatibility checks. Mac Catalyst
+is the primary local validation platform for this fork. The repo config lives in
+`.xcodebuildmcp/config.yaml` and sets:
 
 - Project: `HermesMobile.xcodeproj`
 - Scheme: `HermesMobile`
@@ -104,14 +106,20 @@ XcodeBuildMCP is the preferred local validation path for feature and bug-fix sli
 - Simulator: `iPhone 17`
 - Bundle ID: `com.anthonyarmijo.hermex`
 
-After each completed implementation slice:
+For each implementation slice:
 
-1. Confirm XcodeBuildMCP sees the repo defaults.
-2. Run focused tests for the changed behavior when available.
-3. Run the full XCTest suite before asking for review or committing.
-4. Build and launch the app in Simulator when UI or runtime behavior changed.
-5. Capture a screenshot or logs if the slice needs visual/runtime evidence.
-6. Let the owner run the manual simulator checklist for the slice.
+1. Run focused Mac Catalyst tests for the changed behavior while iterating.
+2. Run the full Mac Catalyst XCTest suite before asking for review or committing
+   a code slice.
+3. For shared source, target/build-setting, or platform-conditional changes, run
+   focused iPhone tests or an iPhone compile check. Run the full iPhone suite only
+   for upstream Hermex syncs or explicit compatibility work; periodic CI supplies
+   the broader compatibility signal.
+4. Do not run app suites for documentation, workflow-only, or version-only changes.
+5. Build and launch the signed Mac app when UI or runtime behavior changed.
+6. Keep full build logs and result bundles out of agent context; report the
+   summary and only the relevant failure output.
+7. Capture a screenshot or logs if the slice needs visual/runtime evidence.
 
 Agent/MCP flow:
 

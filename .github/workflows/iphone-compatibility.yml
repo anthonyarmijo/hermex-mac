@@ -1,0 +1,85 @@
+# Periodic compatibility coverage for the shared iPhone target. Pull requests
+# compile this target, but the full suite runs here to keep routine Mac-focused
+# development fast. Run this workflow manually after an upstream Hermex sync.
+
+name: iPhone Compatibility
+
+on:
+  schedule:
+    - cron: "0 15 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: iphone-compatibility-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Full iPhone XCTest Suite
+    runs-on: macos-26
+    timeout-minutes: 90
+
+    env:
+      PROJECT_PATH: HermesMobile.xcodeproj
+      SCHEME: HermesMobile
+      DERIVED_DATA_PATH: DerivedData-iPhone-Compatibility
+      RESULT_BUNDLE_PATH: TestResults-iPhone-Compatibility.xcresult
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Select simulator
+        id: sim
+        run: |
+          set -euo pipefail
+          name=$(xcrun simctl list devices available --json | python3 -c '
+          import json, sys
+          data = json.load(sys.stdin)
+          phones = [
+              device["name"]
+              for runtime, devices in data["devices"].items()
+              if "iOS" in runtime
+              for device in devices
+              if device.get("isAvailable") and device["name"].startswith("iPhone")
+          ]
+          preferred = "iPhone 17"
+          print(preferred if preferred in phones else phones[0] if phones else "")
+          ')
+          if [[ -z "${name}" ]]; then
+            echo "No available iPhone simulator found:" >&2
+            xcrun simctl list devices available >&2
+            exit 1
+          fi
+          echo "Using simulator: ${name}"
+          echo "name=${name}" >> "$GITHUB_OUTPUT"
+
+      - name: Run full iPhone suite
+        env:
+          SIMULATOR_NAME: ${{ steps.sim.outputs.name }}
+        run: |
+          set -euo pipefail
+          xcodebuild test \
+            -project "${PROJECT_PATH}" \
+            -scheme "${SCHEME}" \
+            -destination "platform=iOS Simulator,name=${SIMULATOR_NAME}" \
+            -derivedDataPath "${DERIVED_DATA_PATH}" \
+            -resultBundlePath "${RESULT_BUNDLE_PATH}" \
+            -parallel-testing-enabled YES \
+            -parallel-testing-worker-count 1 \
+            -showBuildTimingSummary \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Upload test results on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: iphone-compatibility-test-results
+          path: ${{ env.RESULT_BUNDLE_PATH }}
+          if-no-files-found: ignore

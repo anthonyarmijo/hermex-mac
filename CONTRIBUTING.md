@@ -21,14 +21,9 @@ read the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Running tests
 
-The full XCTest suite is the repo's green bar — it must pass before any PR:
-
-```zsh
-xcodebuild test -project HermesMobile.xcodeproj -scheme HermesMobile -destination 'platform=iOS Simulator,name=iPhone 17'
-```
-
-Run the Mac Catalyst suite with coverage disabled to avoid Xcode instrumenting
-the C targets in `swift-cmark` without linking its coverage runtime:
+Mac Catalyst is this fork's primary green bar. Run the full Mac Catalyst suite
+before a code PR, with coverage disabled to avoid Xcode instrumenting the C
+targets in `swift-cmark` without linking its coverage runtime:
 
 ```zsh
 xcodebuild test -project HermesMobile.xcodeproj -scheme HermesMobile \
@@ -36,9 +31,13 @@ xcodebuild test -project HermesMobile.xcodeproj -scheme HermesMobile \
   -enableCodeCoverage NO
 ```
 
-If that simulator name isn't installed, pick a nearby iPhone from
-`xcrun simctl list devices available`. The same suite runs in CI on every pull
-request with code signing disabled, so forks get green CI without any secrets.
+When a change affects shared source, target/build settings, or platform-specific
+behavior, also run focused iPhone tests or an iPhone compile check. Full iPhone
+tests are reserved for upstream Hermex syncs, explicit compatibility work, and
+periodic CI. Add the `full-iphone-tests` label to a PR when that compatibility
+gate is needed immediately. If `iPhone 17` is not installed, pick a nearby iPhone from
+`xcrun simctl list devices available`. Documentation, workflow-only, and
+version-only PRs do not require app suites.
 
 ## Code signing for contributors
 
@@ -103,7 +102,8 @@ bug here, reproduce it in the hermes-webui **web UI** against the same server:
    - **Never invent API endpoints or JSON shapes** — verify against the pinned
      upstream `hermes-webui` source or your own running server.
    - **No new third-party dependencies** without approval.
-4. **Run the full test suite** (command above) and make sure it passes.
+4. **Run proportional validation** using the policy above; the full Mac Catalyst
+   suite is required for code changes.
 5. **Open a PR** against `master` using the PR template — link the issue with
    `Fixes #<number>`, describe what changed and how you tested it. CI must be
    green; automated review bots may comment, and the maintainer reviews and
