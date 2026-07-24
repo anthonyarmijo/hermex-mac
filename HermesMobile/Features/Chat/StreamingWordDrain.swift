@@ -108,6 +108,9 @@ struct StreamingTextBuffer {
 
     var isEmpty: Bool { headIndex >= chunks.count }
     var chunkCount: Int { chunks.count - headIndex }
+    var maximumChunkCharacterCount: Int {
+        chunks[headIndex...].map(\.characterCount).max() ?? 0
+    }
 
     /// Adds a token and returns the number of newly scanned Characters.
     @discardableResult
@@ -115,9 +118,15 @@ struct StreamingTextBuffer {
         guard !text.isEmpty else { return 0 }
 
         var scanned = 0
-        let previousUnitCount = unitCount
-        for character in text {
+        var pieceStart = text.startIndex
+        var pieceCharacterCount = 0
+        var pieceStartUnitCount = unitCount
+        var index = text.startIndex
+
+        while index < text.endIndex {
+            let character = text[index]
             scanned += 1
+            pieceCharacterCount += 1
             let isWhitespace = character.isWhitespace
             if unitCount == 0 {
                 unitCount = 1
@@ -128,23 +137,50 @@ struct StreamingTextBuffer {
                 hasSeenNonWhitespace = true
             }
             previousWasWhitespace = isWhitespace
+
+            let nextIndex = text.index(after: index)
+            if pieceCharacterCount == Self.targetChunkCharacterCount {
+                appendStorageChunk(
+                    String(text[pieceStart..<nextIndex]),
+                    characterCount: pieceCharacterCount,
+                    unitContribution: unitCount - pieceStartUnitCount
+                )
+                pieceStart = nextIndex
+                pieceCharacterCount = 0
+                pieceStartUnitCount = unitCount
+            }
+            index = nextIndex
         }
-        let contribution = unitCount - previousUnitCount
+
+        if pieceStart < text.endIndex {
+            appendStorageChunk(
+                String(text[pieceStart...]),
+                characterCount: pieceCharacterCount,
+                unitContribution: unitCount - pieceStartUnitCount
+            )
+        }
+        return scanned
+    }
+
+    private mutating func appendStorageChunk(
+        _ text: String,
+        characterCount: Int,
+        unitContribution: Int
+    ) {
         if !isEmpty,
-           chunks[chunks.count - 1].characterCount + scanned <= Self.targetChunkCharacterCount {
+           chunks[chunks.count - 1].characterCount + characterCount <= Self.targetChunkCharacterCount {
             chunks[chunks.count - 1].text.append(contentsOf: text)
-            chunks[chunks.count - 1].unitContribution += contribution
-            chunks[chunks.count - 1].characterCount += scanned
+            chunks[chunks.count - 1].unitContribution += unitContribution
+            chunks[chunks.count - 1].characterCount += characterCount
         } else {
             chunks.append(
                 Chunk(
                     text: text,
-                    unitContribution: contribution,
-                    characterCount: scanned
+                    unitContribution: unitContribution,
+                    characterCount: characterCount
                 )
             )
         }
-        return scanned
     }
 
     /// Materializes all pending text only for reconnect replay comparison.

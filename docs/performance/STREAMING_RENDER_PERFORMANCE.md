@@ -23,6 +23,8 @@ reported 118,953,425 copied or scanned characters.
 
 - scans only the arriving token to update word-unit state;
 - coalesces tiny tokens into bounded ~2,048-character storage chunks;
+- splits a single oversized SSE/replay token at Character boundaries so it
+  cannot bypass that storage bound;
 - retains per-chunk unit contributions and drains only enough leading chunks to
   cross the requested word boundary;
 - materializes the full pending response only while replay dedup is armed;

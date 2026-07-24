@@ -228,4 +228,17 @@ final class StreamingWordDrainTests: XCTestCase {
         XCTAssertEqual(buffer.unitCount, 1_000)
         XCTAssertEqual(buffer.replayContent(), String(repeating: "word ", count: 1_000))
     }
+
+    func testStreamingTextBufferSplitsOneOversizedTokenIntoBoundedChunks() {
+        let token = String(repeating: "word ", count: 5_000)
+        var buffer = StreamingTextBuffer()
+
+        buffer.append(token)
+
+        XCTAssertGreaterThan(buffer.chunkCount, 1)
+        XCTAssertLessThanOrEqual(buffer.maximumChunkCharacterCount, 2_048)
+        XCTAssertEqual(buffer.unitCount, 5_000)
+        XCTAssertEqual(buffer.replayContent(), token)
+        XCTAssertEqual(buffer.drain().text, token)
+    }
 }
