@@ -200,6 +200,17 @@ struct CacheFirstRenderMarker: Equatable, Sendable {
     let generation: Int
 }
 
+#if DEBUG
+struct StreamingPerformanceDiagnosticSnapshot: Equatable {
+    var bufferedCharacters = 0
+    var scannedCharacters = 0
+    var pacedDrainCount = 0
+    var messagePublicationCount = 0
+    var publishedCharacters = 0
+    var publicationNanoseconds: [UInt64] = []
+}
+#endif
+
 @MainActor
 @Observable
 final class ChatViewModel {
@@ -247,6 +258,9 @@ final class ChatViewModel {
     private var hasPrimedInitialCachedMessages = false
     @ObservationIgnored private var pendingStreamingScrollTriggerTask: Task<Void, Never>?
     @ObservationIgnored private var pendingAssistantTokenChunks: [String] = []
+#if DEBUG
+    @ObservationIgnored private var streamingPerformanceDiagnostics = StreamingPerformanceDiagnosticSnapshot()
+#endif
     @ObservationIgnored private var pendingReasoningChunks: [String] = []
     @ObservationIgnored private var pendingStreamingContentFlushTask: Task<Void, Never>?
     private(set) var completedToolCallGroups: [ToolCallGroup] = []
@@ -565,6 +579,16 @@ final class ChatViewModel {
         await pendingStreamingScrollTriggerTask?.value
     }
 
+#if DEBUG
+    func resetStreamingPerformanceDiagnostics() {
+        streamingPerformanceDiagnostics = StreamingPerformanceDiagnosticSnapshot()
+    }
+
+    func streamingPerformanceDiagnosticSnapshot() -> StreamingPerformanceDiagnosticSnapshot {
+        streamingPerformanceDiagnostics
+    }
+#endif
+
     private struct ActiveStreamMessageMerge {
         let messages: [ChatMessage]
         let streamingAssistantMessageID: String?
@@ -665,9 +689,24 @@ final class ChatViewModel {
     /// Completion paths (done/cancel/error/interim/snapshot) bypass pacing via
     /// `flushPendingStreamingContent()`, which cancels any scheduled tick.
     private func drainStreamingContentTick() {
+        let signpostID = TranscriptPerformanceSignpost.begin("Paced stream drain")
+        defer {
+            TranscriptPerformanceSignpost.end(
+                "Paced stream drain",
+                signpostID: signpostID,
+                count: pendingAssistantTokenChunks.count
+            )
+        }
+#if DEBUG
+        streamingPerformanceDiagnostics.pacedDrainCount += 1
+#endif
         var didMutate = false
+        let pendingText = pendingAssistantTokenChunks.joined()
+#if DEBUG
+        streamingPerformanceDiagnostics.scannedCharacters += pendingText.count
+#endif
         let quota = StreamingWordDrain.drainQuota(
-            backlogUnitCount: StreamingWordDrain.unitCount(in: pendingAssistantTokenChunks.joined()),
+            backlogUnitCount: StreamingWordDrain.unitCount(in: pendingText),
             cadenceNanoseconds: streamingWordRevealCadenceNanoseconds,
             maxLagNanoseconds: streamingMaxRevealLagNanoseconds
         )
@@ -4410,6 +4449,15 @@ final class ChatViewModel {
     private func appendAssistantToken(_ token: String) -> Bool {
         guard !token.isEmpty else { return false }
 
+        let signpostID = TranscriptPerformanceSignpost.begin("Streamed token buffering")
+        defer {
+            TranscriptPerformanceSignpost.end(
+                "Streamed token buffering",
+                signpostID: signpostID,
+                count: token.utf8.count
+            )
+        }
+
         // Dedup at append time against effective content (flushed + pending) so the
         // return value stays a synchronous progress signal for the reconnect watchdog
         // while transcript mutation stays batched behind the coalesced flush.
@@ -4420,6 +4468,10 @@ final class ChatViewModel {
         guard !remainder.isEmpty else { return false }
 
         pendingAssistantTokenChunks.append(remainder)
+#if DEBUG
+        streamingPerformanceDiagnostics.bufferedCharacters += remainder.count
+        streamingPerformanceDiagnostics.scannedCharacters += token.count + effectiveContent.count
+#endif
         scheduleStreamingContentFlush()
         return true
     }
@@ -4427,6 +4479,24 @@ final class ChatViewModel {
     @discardableResult
     private func flushAssistantTokens(maxWordUnits: Int? = nil) -> Bool {
         guard !pendingAssistantTokenChunks.isEmpty else { return false }
+
+        let publicationSignpostID = TranscriptPerformanceSignpost.begin("Stream message publication")
+        let publicationClock = ContinuousClock()
+        let publicationStart = publicationClock.now
+        defer {
+            TranscriptPerformanceSignpost.end(
+                "Stream message publication",
+                signpostID: publicationSignpostID
+            )
+#if DEBUG
+            let elapsed = publicationStart.duration(to: publicationClock.now)
+            let components = elapsed.components
+            let nanoseconds = UInt64(max(components.seconds, 0)) * 1_000_000_000
+                + UInt64(max(components.attoseconds, 0)) / 1_000_000_000
+            streamingPerformanceDiagnostics.messagePublicationCount += 1
+            streamingPerformanceDiagnostics.publicationNanoseconds.append(nanoseconds)
+#endif
+        }
 
         // Chunks were deduplicated at append time, so flushing is pure concatenation.
         // A word-unit limit moves only the head of the buffer into the visible
@@ -4443,6 +4513,9 @@ final class ChatViewModel {
             appendedContent = pendingText
             pendingAssistantTokenChunks = []
         }
+#if DEBUG
+        streamingPerformanceDiagnostics.publishedCharacters += appendedContent.count
+#endif
 
         let messageID = ensureStreamingAssistantMessage()
         if !liveReasoningText.isEmpty && reasoningAnchorMessageID == nil {

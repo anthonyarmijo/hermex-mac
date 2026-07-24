@@ -151,6 +151,52 @@ final class ChatViewModelStreamingPaceTests: XCTestCase {
         )
     }
 
+    @MainActor
+    func testSyntheticLongStreamingPerformanceBaseline() async throws {
+#if DEBUG
+        for characterCount in [256, 10_000, 50_000] {
+            let streamClient = PacingSpySSEStreamingClient()
+            let viewModel = try makeViewModel(
+                streamClient: streamClient,
+                wordCadenceNanoseconds: 1_000_000,
+                maxLagNanoseconds: 20_000_000
+            )
+            let didStart = await viewModel.sendMessage("Run synthetic streaming baseline")
+            XCTAssertTrue(didStart)
+            viewModel.resetStreamingPerformanceDiagnostics()
+
+            let target = PerformanceBaselineFixtures.streamingText(characterCount: characterCount)
+            let chunks = PerformanceBaselineFixtures.awkwardSSEChunks(for: target)
+            for chunk in chunks {
+                streamClient.emit(.token(chunk))
+            }
+            _ = try await observeAssistantContent(
+                viewModel,
+                until: target,
+                timeoutNanoseconds: 20_000_000_000
+            )
+
+            let finalContent = try XCTUnwrap(assistantContent(of: viewModel))
+            XCTAssertEqual(Array(finalContent.utf8), Array(target.utf8))
+            let snapshot = viewModel.streamingPerformanceDiagnosticSnapshot()
+            XCTAssertEqual(snapshot.bufferedCharacters, target.count)
+            XCTAssertEqual(snapshot.publishedCharacters, target.count)
+            XCTAssertGreaterThan(snapshot.pacedDrainCount, 0)
+            XCTAssertEqual(snapshot.pacedDrainCount, snapshot.messagePublicationCount)
+            XCTAssertGreaterThanOrEqual(snapshot.scannedCharacters, target.count)
+
+            let updateSummary = PerformanceSampleSummary(
+                nanoseconds: snapshot.publicationNanoseconds
+            )
+            let result = "StreamingBaseline fixture=\(PerformanceBaselineFixtures.identity) characters=\(characterCount) sseChunks=\(chunks.count) pacedUpdates=\(snapshot.pacedDrainCount) updateP50Ms=\(updateSummary.medianMilliseconds) updateP95Ms=\(updateSummary.p95Milliseconds) bufferedCharacters=\(snapshot.bufferedCharacters) copiedOrScannedCharacters=\(snapshot.scannedCharacters) finalUTF8Bytes=\(finalContent.utf8.count)"
+            print("[PERF] \(result)")
+            XCTContext.runActivity(named: result) { _ in }
+        }
+#else
+        throw XCTSkip("Streaming diagnostic counters are intentionally Debug-only.")
+#endif
+    }
+
     // MARK: - Helpers
 
     /// 60s cadence with a far larger lag bound keeps the quota at one word per

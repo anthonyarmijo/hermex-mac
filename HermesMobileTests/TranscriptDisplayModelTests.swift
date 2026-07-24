@@ -10,22 +10,16 @@ import UniformTypeIdentifiers
 final class TranscriptMessageTests: XCTestCase {
     @MainActor
     func testCacheFirstTranscriptFrameCommitPerformanceDiagnostic() async throws {
-        let messages = (0..<50).map { index in
-            ChatMessage(
-                role: index.isMultiple(of: 2) ? "user" : "assistant",
-                content: String(repeating: "Long cached transcript content \(index). ", count: 30)
-                    .trimmingCharacters(in: .whitespaces),
-                timestamp: Double(index),
-                messageId: "message-\(index)"
-            )
-        }
+        let messages = PerformanceBaselineFixtures.transcriptMessages()
         let transcriptMessages = ChatViewModel.transcriptMessages(from: messages)
         let clock = ContinuousClock()
         var milliseconds: [Double] = []
         var synchronousLayoutMilliseconds: [Double] = []
         var evaluatedRowCounts: [Int] = []
 
-        for generation in 1...15 {
+        let totalIterations = PerformanceBaselineFixtures.warmupCount
+            + PerformanceBaselineFixtures.sampleCount
+        for generation in 1...totalIterations {
             var evaluatedRowCount = 0
             let marker = CacheFirstRenderMarker(sessionID: "diagnostic", generation: generation)
             let committed = expectation(description: "cache-first frame committed \(generation)")
@@ -38,9 +32,11 @@ final class TranscriptMessageTests: XCTestCase {
             ) { committedMarker in
                 XCTAssertEqual(committedMarker, marker)
                 let duration = start.duration(to: clock.now)
-                milliseconds.append(Double(duration.components.seconds) * 1_000
-                    + Double(duration.components.attoseconds) / 1_000_000_000_000_000)
-                evaluatedRowCounts.append(evaluatedRowCount)
+                if generation > PerformanceBaselineFixtures.warmupCount {
+                    milliseconds.append(Double(duration.components.seconds) * 1_000
+                        + Double(duration.components.attoseconds) / 1_000_000_000_000_000)
+                    evaluatedRowCounts.append(evaluatedRowCount)
+                }
                 committed.fulfill()
             }
             let windowScene = try XCTUnwrap(
@@ -52,19 +48,27 @@ final class TranscriptMessageTests: XCTestCase {
             window.makeKeyAndVisible()
             window.layoutIfNeeded()
             let layoutDuration = start.duration(to: clock.now)
-            synchronousLayoutMilliseconds.append(
-                Double(layoutDuration.components.seconds) * 1_000
-                    + Double(layoutDuration.components.attoseconds) / 1_000_000_000_000_000
-            )
+            if generation > PerformanceBaselineFixtures.warmupCount {
+                synchronousLayoutMilliseconds.append(
+                    Double(layoutDuration.components.seconds) * 1_000
+                        + Double(layoutDuration.components.attoseconds) / 1_000_000_000_000_000
+                )
+            }
 
             await fulfillment(of: [committed], timeout: 2)
             window.isHidden = true
         }
 
         XCTAssertEqual(milliseconds.count, 15)
-        XCTContext.runActivity(
-            named: "TranscriptCommittedFrameBenchmark milliseconds=\(milliseconds) synchronousLayoutMilliseconds=\(synchronousLayoutMilliseconds) evaluatedRows=\(evaluatedRowCounts)"
-        ) { _ in }
+        let commitSummary = PerformanceSampleSummary(
+            nanoseconds: milliseconds.map { UInt64($0 * 1_000_000) }
+        )
+        let layoutSummary = PerformanceSampleSummary(
+            nanoseconds: synchronousLayoutMilliseconds.map { UInt64($0 * 1_000_000) }
+        )
+        let result = "TranscriptCommittedFrameBaseline fixture=\(PerformanceBaselineFixtures.identity) samples=\(commitSummary.sampleCount) commitMedianMs=\(commitSummary.medianMilliseconds) commitP95Ms=\(commitSummary.p95Milliseconds) layoutMedianMs=\(layoutSummary.medianMilliseconds) layoutP95Ms=\(layoutSummary.p95Milliseconds) evaluatedRows=\(evaluatedRowCounts)"
+        print("[PERF] \(result)")
+        XCTContext.runActivity(named: result) { _ in }
     }
 
     func testTranscriptDisplayModelConstructionPerformanceDiagnostic() {

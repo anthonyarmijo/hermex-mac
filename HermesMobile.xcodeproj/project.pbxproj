@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		C0BA5E000000000000000001 /* PerformanceBaselineFixtures.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0BA5E000000000000000002 /* PerformanceBaselineFixtures.swift */; };
 		05814DEA5DE4690F730B1E15 /* InsightsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 931EC010A2D940B0E42287A4 /* InsightsViewModel.swift */; };
 		26AB000000000000000000B1 /* ProvidersViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26AB000000000000000000F1 /* ProvidersViewModel.swift */; };
 		26AB000000000000000000B2 /* ProvidersView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26AB000000000000000000F2 /* ProvidersView.swift */; };
@@ -358,6 +359,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		C0BA5E000000000000000002 /* PerformanceBaselineFixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PerformanceBaselineFixtures.swift; sourceTree = "<group>"; };
 		0485E1E1FFB64A24BB729CD4 /* SlashCommandTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SlashCommandTests.swift; sourceTree = "<group>"; };
 		351C0F1600000000000000A1 /* Shared.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = Shared.xcconfig; path = Config/Shared.xcconfig; sourceTree = "<group>"; };
 		1A2B3C4D5E6F700000000301 /* ServerAccount.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerAccount.swift; sourceTree = "<group>"; };
@@ -764,6 +766,7 @@
 		1A2B3C4D5E6F700000000034 /* HermesMobileTests */ = {
 			isa = PBXGroup;
 			children = (
+				C0BA5E000000000000000002 /* PerformanceBaselineFixtures.swift */,
 				C0CA71000000000000000004 /* PlatformCapabilitiesTests.swift */,
 				10CA110C0DE000000000C002 /* LocalizationCatalogTests.swift */,
 				1A2B3C4D5E6F7000000000BC /* APIClientTests.swift */,
@@ -1634,6 +1637,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C0BA5E000000000000000001 /* PerformanceBaselineFixtures.swift in Sources */,
 				10CA110C0DE000000000C001 /* LocalizationCatalogTests.swift in Sources */,
 				1A2B3C4D5E6F7000000000AC /* APIClientTests.swift in Sources */,
 				B5A1000000000000000000A0 /* ServerRegistryTests.swift in Sources */,

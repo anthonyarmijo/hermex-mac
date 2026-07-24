@@ -8,47 +8,66 @@ enum TranscriptPerformanceSignpost {
         category: .pointsOfInterest
     )
 
-    static func begin(_ name: StaticString, sessionID: String) -> OSSignpostID {
+    /// Starts a privacy-safe Points of Interest interval. Callers may continue to
+    /// pass a session identifier so the instrumentation API stays convenient, but
+    /// identifiers are deliberately never emitted to the unified log.
+    static func begin(_ name: StaticString, sessionID _: String = "") -> OSSignpostID {
         let signpostID = OSSignpostID(log: log)
-        os_signpost(
-            .begin,
-            log: log,
-            name: name,
-            signpostID: signpostID,
-            "session=%{public}@",
-            sessionID
-        )
+        os_signpost(.begin, log: log, name: name, signpostID: signpostID)
         return signpostID
     }
 
-    static func end(_ name: StaticString, signpostID: OSSignpostID, sessionID: String) {
-        os_signpost(
-            .end,
-            log: log,
-            name: name,
-            signpostID: signpostID,
-            "session=%{public}@",
-            sessionID
-        )
+    static func end(
+        _ name: StaticString,
+        signpostID: OSSignpostID,
+        sessionID _: String = "",
+        count: Int? = nil
+    ) {
+        if let count {
+            os_signpost(.end, log: log, name: name, signpostID: signpostID, "count=%{public}ld", count)
+        } else {
+            os_signpost(.end, log: log, name: name, signpostID: signpostID)
+        }
     }
 
-    static func event(_ name: StaticString, sessionID: String) {
-        os_signpost(.event, log: log, name: name, "session=%{public}@", sessionID)
+    static func event(_ name: StaticString, sessionID _: String = "", count: Int? = nil) {
+        if let count {
+            os_signpost(.event, log: log, name: name, "count=%{public}ld", count)
+        } else {
+            os_signpost(.event, log: log, name: name)
+        }
     }
 
     static func interval<Value>(
         _ name: StaticString,
-        sessionID: String,
+        sessionID: String = "",
+        count: Int? = nil,
         operation: () throws -> Value
     ) rethrows -> Value {
         let signpostID = begin(name, sessionID: sessionID)
-        defer { end(name, signpostID: signpostID, sessionID: sessionID) }
+        defer { end(name, signpostID: signpostID, sessionID: sessionID, count: count) }
         return try operation()
     }
 }
 
 struct TranscriptCachePage: Sendable {
     let messages: [ChatMessage]
+}
+
+struct CacheWriteDiagnosticSnapshot: Equatable, Sendable {
+    var fetchCount = 0
+    var objectsFetched = 0
+    var objectsUpdated = 0
+    var objectsInserted = 0
+    var objectsDeleted = 0
+    var maintenanceDeleted = 0
+    var ranOnMainActor = false
+}
+
+private struct CacheMaintenanceDiagnostic {
+    let fetchCount: Int
+    let objectsFetched: Int
+    let objectsDeleted: Int
 }
 
 protocol TranscriptCacheReading: Sendable {
@@ -200,6 +219,15 @@ enum CacheStore {
         in context: ModelContext,
         cachedAt: Date = Date()
     ) throws {
+        let reconciliationSignpost = TranscriptPerformanceSignpost.begin("Cache write total")
+        defer {
+            TranscriptPerformanceSignpost.end(
+                "Cache write total",
+                signpostID: reconciliationSignpost,
+                count: sessions.count
+            )
+        }
+        let writeStageSignpost = TranscriptPerformanceSignpost.begin("Cache write reconciliation")
         let serverURLString = serverURL.absoluteString
         let cacheableSessions = sessions.filter { $0.archived != true && $0.sessionId != nil }
         let freshKeys = Set(cacheableSessions.compactMap { session -> String? in
@@ -226,9 +254,18 @@ enum CacheStore {
         for staleSession in staleSessions {
             context.delete(staleSession)
         }
+        TranscriptPerformanceSignpost.end(
+            "Cache write reconciliation",
+            signpostID: writeStageSignpost,
+            count: cacheableSessions.count
+        )
 
-        try performMaintenance(in: context, now: cachedAt)
-        try context.save()
+        _ = try TranscriptPerformanceSignpost.interval("Cache maintenance") {
+            try performMaintenance(in: context, now: cachedAt)
+        }
+        try TranscriptPerformanceSignpost.interval("Cache save") {
+            try context.save()
+        }
     }
 
     @MainActor
@@ -239,6 +276,15 @@ enum CacheStore {
         cachedAt: Date = Date()
     ) throws {
         guard let sessionID = session.sessionId else { return }
+        let reconciliationSignpost = TranscriptPerformanceSignpost.begin("Cache write total")
+        defer {
+            TranscriptPerformanceSignpost.end(
+                "Cache write total",
+                signpostID: reconciliationSignpost,
+                count: 1
+            )
+        }
+        let writeStageSignpost = TranscriptPerformanceSignpost.begin("Cache write reconciliation")
 
         let serverURLString = serverURL.absoluteString
         let cacheKey = CachedSession.cacheKey(serverURLString: serverURLString, sessionID: sessionID)
@@ -252,9 +298,18 @@ enum CacheStore {
         } else {
             context.insert(CachedSession(serverURLString: serverURLString, session: session, cachedAt: cachedAt))
         }
+        TranscriptPerformanceSignpost.end(
+            "Cache write reconciliation",
+            signpostID: writeStageSignpost,
+            count: 1
+        )
 
-        try performMaintenance(in: context, now: cachedAt)
-        try context.save()
+        _ = try TranscriptPerformanceSignpost.interval("Cache maintenance") {
+            try performMaintenance(in: context, now: cachedAt)
+        }
+        try TranscriptPerformanceSignpost.interval("Cache save") {
+            try context.save()
+        }
     }
 
     @MainActor
@@ -263,8 +318,20 @@ enum CacheStore {
         serverURL: URL,
         sessionID: String,
         in context: ModelContext,
-        cachedAt: Date = Date()
+        cachedAt: Date = Date(),
+        diagnostics: ((CacheWriteDiagnosticSnapshot) -> Void)? = nil
     ) throws {
+        var diagnostic = CacheWriteDiagnosticSnapshot(ranOnMainActor: Thread.isMainThread)
+        defer { diagnostics?(diagnostic) }
+        let reconciliationSignpost = TranscriptPerformanceSignpost.begin("Cache write total")
+        defer {
+            TranscriptPerformanceSignpost.end(
+                "Cache write total",
+                signpostID: reconciliationSignpost,
+                count: messages.count
+            )
+        }
+        let writeStageSignpost = TranscriptPerformanceSignpost.begin("Cache write reconciliation")
         let serverURLString = serverURL.absoluteString
         let freshKeys = Set(messages.enumerated().map { offset, message in
             CachedMessage.cacheKey(
@@ -282,9 +349,13 @@ enum CacheStore {
                 message: message,
                 sortIndex: offset
             )
+            diagnostic.fetchCount += 1
             if let cachedMessage = try cachedMessage(cacheKey: cacheKey, in: context) {
+                diagnostic.objectsFetched += 1
+                diagnostic.objectsUpdated += 1
                 cachedMessage.apply(message, sortIndex: offset, cachedAt: cachedAt)
             } else {
+                diagnostic.objectsInserted += 1
                 context.insert(CachedMessage(
                     serverURLString: serverURLString,
                     sessionID: sessionID,
@@ -301,13 +372,30 @@ enum CacheStore {
                     && cachedMessage.sessionID == sessionID
             }
         )
-        let staleMessages = try context.fetch(descriptor).filter { !freshKeys.contains($0.cacheKey) }
+        diagnostic.fetchCount += 1
+        let fetchedMessages = try context.fetch(descriptor)
+        diagnostic.objectsFetched += fetchedMessages.count
+        let staleMessages = fetchedMessages.filter { !freshKeys.contains($0.cacheKey) }
         for staleMessage in staleMessages {
+            diagnostic.objectsDeleted += 1
             context.delete(staleMessage)
         }
+        TranscriptPerformanceSignpost.end(
+            "Cache write reconciliation",
+            signpostID: writeStageSignpost,
+            count: messages.count
+        )
 
-        try performMaintenance(in: context, now: cachedAt)
-        try context.save()
+        let maintenance = try TranscriptPerformanceSignpost.interval("Cache maintenance") {
+            try performMaintenance(in: context, now: cachedAt)
+        }
+        diagnostic.fetchCount += maintenance.fetchCount
+        diagnostic.objectsFetched += maintenance.objectsFetched
+        diagnostic.objectsDeleted += maintenance.objectsDeleted
+        diagnostic.maintenanceDeleted = maintenance.objectsDeleted
+        try TranscriptPerformanceSignpost.interval("Cache save") {
+            try context.save()
+        }
     }
 
     @MainActor
@@ -354,36 +442,45 @@ enum CacheStore {
     }
 
     @MainActor
-    private static func performMaintenance(in context: ModelContext, now: Date) throws {
-        try deleteExpiredSessions(in: context, now: now)
-        try deleteExpiredMessages(in: context, now: now)
-        try evictOldestMessagesIfNeeded(in: context)
+    private static func performMaintenance(in context: ModelContext, now: Date) throws -> CacheMaintenanceDiagnostic {
+        let expiredSessions = try deleteExpiredSessions(in: context, now: now)
+        let expiredMessages = try deleteExpiredMessages(in: context, now: now)
+        let evictedMessages = try evictOldestMessagesIfNeeded(in: context)
+        return CacheMaintenanceDiagnostic(
+            fetchCount: 3,
+            objectsFetched: expiredSessions.fetched + expiredMessages.fetched + evictedMessages.fetched,
+            objectsDeleted: expiredSessions.deleted + expiredMessages.deleted + evictedMessages.deleted
+        )
     }
 
     @MainActor
-    private static func deleteExpiredSessions(in context: ModelContext, now: Date) throws {
+    private static func deleteExpiredSessions(in context: ModelContext, now: Date) throws -> (fetched: Int, deleted: Int) {
         let descriptor = FetchDescriptor<CachedSession>()
-        let expiredSessions = try context.fetch(descriptor).filter { $0.expiresAt <= now }
+        let fetched = try context.fetch(descriptor)
+        let expiredSessions = fetched.filter { $0.expiresAt <= now }
         for session in expiredSessions {
             context.delete(session)
         }
+        return (fetched.count, expiredSessions.count)
     }
 
     @MainActor
-    private static func deleteExpiredMessages(in context: ModelContext, now: Date) throws {
+    private static func deleteExpiredMessages(in context: ModelContext, now: Date) throws -> (fetched: Int, deleted: Int) {
         let descriptor = FetchDescriptor<CachedMessage>()
-        let expiredMessages = try context.fetch(descriptor).filter { $0.expiresAt <= now }
+        let fetched = try context.fetch(descriptor)
+        let expiredMessages = fetched.filter { $0.expiresAt <= now }
         for message in expiredMessages {
             context.delete(message)
         }
+        return (fetched.count, expiredMessages.count)
     }
 
     @MainActor
-    private static func evictOldestMessagesIfNeeded(in context: ModelContext) throws {
+    private static func evictOldestMessagesIfNeeded(in context: ModelContext) throws -> (fetched: Int, deleted: Int) {
         let descriptor = FetchDescriptor<CachedMessage>()
         let messages = try context.fetch(descriptor)
         let overflowCount = messages.count - CachePolicy.maxMessages
-        guard overflowCount > 0 else { return }
+        guard overflowCount > 0 else { return (messages.count, 0) }
 
         let messagesToEvict = messages
             .sorted { left, right in
@@ -402,6 +499,7 @@ enum CacheStore {
         for message in messagesToEvict {
             context.delete(message)
         }
+        return (messages.count, messagesToEvict.count)
     }
 
     @MainActor

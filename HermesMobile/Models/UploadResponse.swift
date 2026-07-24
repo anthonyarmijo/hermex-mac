@@ -25,6 +25,14 @@ enum ImagePreviewDownsampler {
     static let filePreviewMaxPixelSize = 2_048
 
     static func previewData(from data: Data, maxPixelSize: Int) -> Data? {
+        let signpostID = TranscriptPerformanceSignpost.begin("Image decode and downsample")
+        defer {
+            TranscriptPerformanceSignpost.end(
+                "Image decode and downsample",
+                signpostID: signpostID,
+                count: data.count
+            )
+        }
         guard maxPixelSize > 0 else { return data }
 
         let sourceOptions: [CFString: Any] = [kCGImageSourceShouldCache: false]

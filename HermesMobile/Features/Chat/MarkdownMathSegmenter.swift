@@ -7,6 +7,14 @@ enum MarkdownMathSegment: Equatable {
 
 struct MarkdownMathSegmenter {
     static func segments(in content: String) -> [MarkdownMathSegment] {
+        let signpostID = TranscriptPerformanceSignpost.begin("Math segmentation")
+        defer {
+            TranscriptPerformanceSignpost.end(
+                "Math segmentation",
+                signpostID: signpostID,
+                count: content.utf8.count
+            )
+        }
         let characters = Array(content)
         guard characters.count >= 4 else {
             return [.markdown(MarkdownMathFormatter.replacingInlineMath(in: content))]

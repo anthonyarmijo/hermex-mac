@@ -20,6 +20,7 @@ final class CacheFirstTranscriptFrameProbeView: UIView {
     private var observedMarker: CacheFirstRenderMarker?
     private var pendingMarker: CacheFirstRenderMarker?
     private var onFrameCommitted: ((CacheFirstRenderMarker) -> Void)?
+    private var layoutSignpostedMarker: CacheFirstRenderMarker?
 
     func observe(
         marker: CacheFirstRenderMarker?,
@@ -36,6 +37,13 @@ final class CacheFirstTranscriptFrameProbeView: UIView {
     override func didMoveToWindow() {
         super.didMoveToWindow()
         commitPendingMarkerIfPossible()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard let marker = pendingMarker, layoutSignpostedMarker != marker else { return }
+        layoutSignpostedMarker = marker
+        TranscriptPerformanceSignpost.event("First synchronous transcript layout")
     }
 
     private func commitPendingMarkerIfPossible() {

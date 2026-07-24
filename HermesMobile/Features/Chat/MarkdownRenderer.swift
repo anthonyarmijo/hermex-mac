@@ -22,6 +22,10 @@ struct MarkdownRenderer: View {
     @State private var lingersAfterStreaming = false
 
     var body: some View {
+        let _ = TranscriptPerformanceSignpost.event(
+            "Markdown view update",
+            count: content.utf8.count
+        )
         Group {
             if isStreaming || lingersAfterStreaming {
                 StreamingMarkdownRenderer(content: content)
