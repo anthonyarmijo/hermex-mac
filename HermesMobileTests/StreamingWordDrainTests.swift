@@ -148,4 +148,84 @@ final class StreamingWordDrainTests: XCTestCase {
             7
         )
     }
+
+    // MARK: - StreamingTextBuffer
+
+    func testStreamingTextBufferIncrementalUnitCountMatchesJoinedText() {
+        let chunks = [
+            "  cafe",
+            "\u{301}",
+            "  👩‍👩‍👧‍👦",
+            "\r",
+            "\n",
+            "tabs\t",
+            "and  spaces"
+        ]
+        var buffer = StreamingTextBuffer()
+        var joined = ""
+
+        for chunk in chunks {
+            buffer.append(chunk)
+            joined += chunk
+            XCTAssertEqual(buffer.unitCount, StreamingWordDrain.unitCount(in: joined))
+            XCTAssertEqual(buffer.replayContent(), joined)
+        }
+    }
+
+    func testStreamingTextBufferDrainsEveryUnitByteIdentically() {
+        let chunks = [
+            "The 👩‍👩‍👧‍👦 family ",
+            "and 🇫🇷 flag met.\r",
+            "\ntabs\tand  doubles ",
+            "cafe",
+            "\u{301} fin"
+        ]
+        let expected = chunks.joined()
+        var buffer = StreamingTextBuffer()
+        chunks.forEach { buffer.append($0) }
+
+        var drained = ""
+        while !buffer.isEmpty {
+            drained += buffer.drain(maxUnitCount: 1).text
+        }
+
+        XCTAssertEqual(Array(drained.utf8), Array(expected.utf8))
+        XCTAssertEqual(buffer.unitCount, 0)
+        XCTAssertEqual(buffer.chunkCount, 0)
+    }
+
+    func testStreamingTextBufferBoundedDrainLeavesExactReplayTail() {
+        var buffer = StreamingTextBuffer()
+        ["alpha ", "beta gamma ", "delta"].forEach { buffer.append($0) }
+
+        let first = buffer.drain(maxUnitCount: 2)
+
+        XCTAssertEqual(first.text, "alpha beta ")
+        XCTAssertEqual(buffer.replayContent(), "gamma delta")
+        XCTAssertEqual(buffer.unitCount, 2)
+        XCTAssertEqual(buffer.drain().text, "gamma delta")
+        XCTAssertTrue(buffer.isEmpty)
+    }
+
+    func testStreamingTextBufferResetDropsReplayAndUnitState() {
+        var buffer = StreamingTextBuffer()
+        buffer.append("alpha beta ")
+        buffer.reset()
+        buffer.append("  gamma")
+
+        XCTAssertEqual(buffer.replayContent(), "  gamma")
+        XCTAssertEqual(buffer.unitCount, 1)
+    }
+
+    func testStreamingTextBufferCoalescesTinyTokensIntoBoundedChunks() {
+        var buffer = StreamingTextBuffer()
+        for _ in 0..<1_000 {
+            buffer.append("word ")
+        }
+
+        XCTAssertGreaterThan(buffer.chunkCount, 1)
+        XCTAssertLessThan(buffer.chunkCount, 10)
+        XCTAssertEqual(buffer.unitCount, 1_000)
+        XCTAssertEqual(buffer.replayContent(), String(repeating: "word ", count: 1_000))
+    }
 }

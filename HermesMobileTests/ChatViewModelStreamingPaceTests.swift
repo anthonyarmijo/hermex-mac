@@ -167,14 +167,21 @@ final class ChatViewModelStreamingPaceTests: XCTestCase {
 
             let target = PerformanceBaselineFixtures.streamingText(characterCount: characterCount)
             let chunks = PerformanceBaselineFixtures.awkwardSSEChunks(for: target)
-            for chunk in chunks {
+            let streamClock = ContinuousClock()
+            let streamStart = streamClock.now
+            for chunk in chunks.dropLast() {
                 streamClient.emit(.token(chunk))
+            }
+            let finalEventStart = streamClock.now
+            if let finalChunk = chunks.last {
+                streamClient.emit(.token(finalChunk))
             }
             _ = try await observeAssistantContent(
                 viewModel,
                 until: target,
                 timeoutNanoseconds: 20_000_000_000
             )
+            let visibleAt = streamClock.now
 
             let finalContent = try XCTUnwrap(assistantContent(of: viewModel))
             XCTAssertEqual(Array(finalContent.utf8), Array(target.utf8))
@@ -184,11 +191,20 @@ final class ChatViewModelStreamingPaceTests: XCTestCase {
             XCTAssertGreaterThan(snapshot.pacedDrainCount, 0)
             XCTAssertEqual(snapshot.pacedDrainCount, snapshot.messagePublicationCount)
             XCTAssertGreaterThanOrEqual(snapshot.scannedCharacters, target.count)
+            if characterCount == 50_000 {
+                XCTAssertLessThan(
+                    snapshot.scannedCharacters,
+                    500_000,
+                    "app-owned buffer work must remain near-linear for the long fixture"
+                )
+            }
 
             let updateSummary = PerformanceSampleSummary(
                 nanoseconds: snapshot.publicationNanoseconds
             )
-            let result = "StreamingBaseline fixture=\(PerformanceBaselineFixtures.identity) characters=\(characterCount) sseChunks=\(chunks.count) pacedUpdates=\(snapshot.pacedDrainCount) updateP50Ms=\(updateSummary.medianMilliseconds) updateP95Ms=\(updateSummary.p95Milliseconds) bufferedCharacters=\(snapshot.bufferedCharacters) copiedOrScannedCharacters=\(snapshot.scannedCharacters) finalUTF8Bytes=\(finalContent.utf8.count)"
+            let streamMilliseconds = streamStart.duration(to: visibleAt).performanceMilliseconds
+            let completionMilliseconds = finalEventStart.duration(to: visibleAt).performanceMilliseconds
+            let result = "StreamingBaseline fixture=\(PerformanceBaselineFixtures.identity) characters=\(characterCount) sseChunks=\(chunks.count) pacedUpdates=\(snapshot.pacedDrainCount) updateP50Ms=\(updateSummary.medianMilliseconds) updateP95Ms=\(updateSummary.p95Milliseconds) streamElapsedMs=\(streamMilliseconds) finalEventToVisibleMs=\(completionMilliseconds) bufferedCharacters=\(snapshot.bufferedCharacters) copiedOrScannedCharacters=\(snapshot.scannedCharacters) finalUTF8Bytes=\(finalContent.utf8.count)"
             print("[PERF] \(result)")
             XCTContext.runActivity(named: result) { _ in }
         }
@@ -299,6 +315,14 @@ final class ChatViewModelStreamingPaceTests: XCTestCase {
             line: line
         )
         return observed
+    }
+}
+
+private extension Duration {
+    var performanceMilliseconds: Double {
+        let components = self.components
+        return Double(components.seconds) * 1_000
+            + Double(components.attoseconds) / 1_000_000_000_000_000
     }
 }
 
