@@ -114,6 +114,14 @@ enum TranscriptMediaSegment: Equatable {
 
 enum TranscriptMediaParser {
     static func segments(in markdown: String) -> [TranscriptMediaSegment] {
+        let signpostID = TranscriptPerformanceSignpost.begin("Transcript media segmentation")
+        defer {
+            TranscriptPerformanceSignpost.end(
+                "Transcript media segmentation",
+                signpostID: signpostID,
+                count: markdown.utf8.count
+            )
+        }
         guard !markdown.isEmpty else { return [] }
         // Most transcript rows contain ordinary prose. Avoid the line/fence scan
         // unless the only supported media marker can possibly be present.

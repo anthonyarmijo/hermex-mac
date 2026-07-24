@@ -200,6 +200,17 @@ struct CacheFirstRenderMarker: Equatable, Sendable {
     let generation: Int
 }
 
+#if DEBUG
+struct StreamingPerformanceDiagnosticSnapshot: Equatable {
+    var bufferedCharacters = 0
+    var scannedCharacters = 0
+    var pacedDrainCount = 0
+    var messagePublicationCount = 0
+    var publishedCharacters = 0
+    var publicationNanoseconds: [UInt64] = []
+}
+#endif
+
 @MainActor
 @Observable
 final class ChatViewModel {
@@ -247,6 +258,9 @@ final class ChatViewModel {
     private var hasPrimedInitialCachedMessages = false
     @ObservationIgnored private var pendingStreamingScrollTriggerTask: Task<Void, Never>?
     @ObservationIgnored private var pendingAssistantTokenChunks: [String] = []
+#if DEBUG
+    @ObservationIgnored private var streamingPerformanceDiagnostics = StreamingPerformanceDiagnosticSnapshot()
+#endif
     @ObservationIgnored private var pendingReasoningChunks: [String] = []
     @ObservationIgnored private var pendingStreamingContentFlushTask: Task<Void, Never>?
     private(set) var completedToolCallGroups: [ToolCallGroup] = []
@@ -382,6 +396,8 @@ final class ChatViewModel {
     private(set) var hasActivatedGoalCommand = false
 
     private let sessionID: String?
+    private let cacheWriteGeneration = UUID()
+    private var cacheWriter: (any CacheWriting)?
     private var currentWorkspace: String?
     private var currentModel: String?
     private var currentModelProvider: String?
@@ -471,6 +487,7 @@ final class ChatViewModel {
         session: SessionSummary,
         server: URL,
         client: APIClient? = nil,
+        cacheWriter: (any CacheWriting)? = nil,
         streamClient: SSEStreamingClient? = nil,
         approvalStreamClient: SSEStreamingClient? = nil,
         clarifyStreamClient: SSEStreamingClient? = nil,
@@ -494,6 +511,7 @@ final class ChatViewModel {
         currentProfile = session.profile
         isCLISession = session.isCliSession == true
         self.server = server
+        self.cacheWriter = cacheWriter
         let resolvedClient = client ?? APIClient(baseURL: server)
         let resolvedStreamClient = streamClient ?? SSEClient()
         let resolvedLiveActivityManager = liveActivityManager ?? AgentLiveActivityManager.shared
@@ -531,6 +549,57 @@ final class ChatViewModel {
         self.attachmentCoordinator.delegate = self
     }
 
+    func configureCacheWriter(_ cacheWriter: (any CacheWriting)?) async {
+        guard let cacheWriter, let sessionID else { return }
+        self.cacheWriter = cacheWriter
+        await cacheWriter.activate(
+            scope: .messages(serverURLString: server.absoluteString, sessionID: sessionID),
+            generation: cacheWriteGeneration
+        )
+    }
+
+    private func resolvedCacheWriter(modelContext: ModelContext?) -> (any CacheWriting)? {
+        cacheWriter ?? modelContext.map { CacheWriter(modelContainer: $0.container) }
+    }
+
+    private func persistMessageSnapshot(
+        sessionID: String,
+        modelContext: ModelContext?
+    ) async {
+        guard let writer = resolvedCacheWriter(modelContext: modelContext) else { return }
+        let snapshot = CacheMessageListSnapshot(
+            serverURL: server,
+            sessionID: sessionID,
+            messages: messages,
+            generation: cacheWriteGeneration
+        )
+        do {
+            _ = try await writer.write(.replaceMessages(snapshot))
+        } catch is CancellationError {
+            return
+        } catch {
+            cacheErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func persistSessionSnapshot(
+        _ session: SessionSummary,
+        modelContext: ModelContext?
+    ) async {
+        guard let writer = resolvedCacheWriter(modelContext: modelContext) else { return }
+        do {
+            _ = try await writer.write(.upsertSession(CacheSessionSnapshot(
+                serverURL: server,
+                session: session,
+                generation: cacheWriteGeneration
+            )))
+        } catch is CancellationError {
+            return
+        } catch {
+            cacheErrorMessage = error.localizedDescription
+        }
+    }
+
     deinit {
         backgroundPollTask?.cancel()
         pendingStreamingScrollTriggerTask?.cancel()
@@ -564,6 +633,16 @@ final class ChatViewModel {
     func awaitPendingStreamingScrollTriggerForTesting() async {
         await pendingStreamingScrollTriggerTask?.value
     }
+
+#if DEBUG
+    func resetStreamingPerformanceDiagnostics() {
+        streamingPerformanceDiagnostics = StreamingPerformanceDiagnosticSnapshot()
+    }
+
+    func streamingPerformanceDiagnosticSnapshot() -> StreamingPerformanceDiagnosticSnapshot {
+        streamingPerformanceDiagnostics
+    }
+#endif
 
     private struct ActiveStreamMessageMerge {
         let messages: [ChatMessage]
@@ -665,9 +744,24 @@ final class ChatViewModel {
     /// Completion paths (done/cancel/error/interim/snapshot) bypass pacing via
     /// `flushPendingStreamingContent()`, which cancels any scheduled tick.
     private func drainStreamingContentTick() {
+        let signpostID = TranscriptPerformanceSignpost.begin("Paced stream drain")
+        defer {
+            TranscriptPerformanceSignpost.end(
+                "Paced stream drain",
+                signpostID: signpostID,
+                count: pendingAssistantTokenChunks.count
+            )
+        }
+#if DEBUG
+        streamingPerformanceDiagnostics.pacedDrainCount += 1
+#endif
         var didMutate = false
+        let pendingText = pendingAssistantTokenChunks.joined()
+#if DEBUG
+        streamingPerformanceDiagnostics.scannedCharacters += pendingText.count
+#endif
         let quota = StreamingWordDrain.drainQuota(
-            backlogUnitCount: StreamingWordDrain.unitCount(in: pendingAssistantTokenChunks.joined()),
+            backlogUnitCount: StreamingWordDrain.unitCount(in: pendingText),
             cadenceNanoseconds: streamingWordRevealCadenceNanoseconds,
             maxLagNanoseconds: streamingMaxRevealLagNanoseconds
         )
@@ -1272,13 +1366,7 @@ final class ChatViewModel {
                 outputTokens: session?.outputTokens,
                 estimatedCost: session?.estimatedCost
             )
-            if let modelContext {
-                do {
-                    try CacheStore.cacheMessages(messages, serverURL: server, sessionID: sessionID, in: modelContext)
-                } catch {
-                    cacheErrorMessage = error.localizedDescription
-                }
-            }
+            await persistMessageSnapshot(sessionID: sessionID, modelContext: modelContext)
             if let title = session?.title {
                 displayTitle = Self.displayTitle(from: title)
             }
@@ -1615,13 +1703,7 @@ final class ChatViewModel {
             ))
             completedReasoningGroups = []
 
-            if let modelContext {
-                do {
-                    try CacheStore.cacheMessages(messages, serverURL: server, sessionID: sessionID, in: modelContext)
-                } catch {
-                    cacheErrorMessage = error.localizedDescription
-                }
-            }
+            await persistMessageSnapshot(sessionID: sessionID, modelContext: modelContext)
 
             return didAddMessages
         } catch {
@@ -2244,7 +2326,7 @@ final class ChatViewModel {
         )
         messages.append(optimisticMessage)
 
-        cacheCurrentMessages(sessionID: sessionID, modelContext: modelContext)
+        await cacheCurrentMessages(sessionID: sessionID, modelContext: modelContext)
 
         do {
             let explicitModelPick = explicitModelPickForChatStart()
@@ -2262,7 +2344,7 @@ final class ChatViewModel {
             guard let streamID = response.streamId else {
                 sendErrorMessage = response.error ?? String(localized: "The server did not return a stream ID.")
                 rollbackOptimisticMessage(id: localMessageID)
-                cacheCurrentMessages(sessionID: sessionID, modelContext: modelContext)
+                await cacheCurrentMessages(sessionID: sessionID, modelContext: modelContext)
                 restorePendingAttachments(attachmentsToRestoreOnFailure)
                 return false
             }
@@ -2273,7 +2355,7 @@ final class ChatViewModel {
         } catch {
             if let streamID = (error as? APIError)?.activeStreamID {
                 rollbackOptimisticMessage(id: localMessageID)
-                cacheCurrentMessages(sessionID: sessionID, modelContext: modelContext)
+                await cacheCurrentMessages(sessionID: sessionID, modelContext: modelContext)
                 restorePendingAttachments(attachmentsToRestoreOnFailure)
                 // The existing run may have started outside this view model. Reconcile
                 // the server transcript first so the SSE tokens attach to the persisted
@@ -2292,7 +2374,7 @@ final class ChatViewModel {
             lastError = error
             sendErrorMessage = error.localizedDescription
             rollbackOptimisticMessage(id: localMessageID)
-            cacheCurrentMessages(sessionID: sessionID, modelContext: modelContext)
+            await cacheCurrentMessages(sessionID: sessionID, modelContext: modelContext)
             restorePendingAttachments(attachmentsToRestoreOnFailure)
             return false
         }
@@ -2404,14 +2486,8 @@ final class ChatViewModel {
         attachmentCoordinator.restorePendingAttachments(attachments)
     }
 
-    private func cacheCurrentMessages(sessionID: String, modelContext: ModelContext?) {
-        guard let modelContext else { return }
-
-        do {
-            try CacheStore.cacheMessages(messages, serverURL: server, sessionID: sessionID, in: modelContext)
-        } catch {
-            cacheErrorMessage = error.localizedDescription
-        }
+    private func cacheCurrentMessages(sessionID: String, modelContext: ModelContext?) async {
+        await persistMessageSnapshot(sessionID: sessionID, modelContext: modelContext)
     }
 
     func clearTranscript() {
@@ -3415,13 +3491,7 @@ final class ChatViewModel {
             }
 
             let forkedSession = SessionSummary(from: forkedSessionDetail)
-            if let modelContext {
-                do {
-                    try CacheStore.cacheSession(forkedSession, serverURL: server, in: modelContext)
-                } catch {
-                    cacheErrorMessage = error.localizedDescription
-                }
-            }
+            await persistSessionSnapshot(forkedSession, modelContext: modelContext)
             return forkedSession
         } catch {
             lastError = error
@@ -3485,13 +3555,7 @@ final class ChatViewModel {
                 toolCallAnchorMessageID = nil
                 reasoningAnchorMessageID = nil
 
-                if let modelContext {
-                    do {
-                        try CacheStore.cacheMessages(messages, serverURL: server, sessionID: sessionID, in: modelContext)
-                    } catch {
-                        cacheErrorMessage = error.localizedDescription
-                    }
-                }
+                await persistMessageSnapshot(sessionID: sessionID, modelContext: modelContext)
             }
 
             // Now send the edited text through the normal chat flow
@@ -3588,13 +3652,7 @@ final class ChatViewModel {
                 toolCallAnchorMessageID = nil
                 reasoningAnchorMessageID = nil
 
-                if let modelContext {
-                    do {
-                        try CacheStore.cacheMessages(messages, serverURL: server, sessionID: sessionID, in: modelContext)
-                    } catch {
-                        cacheErrorMessage = error.localizedDescription
-                    }
-                }
+                await persistMessageSnapshot(sessionID: sessionID, modelContext: modelContext)
             }
 
             let explicitModelPick = explicitModelPickForChatStart()
@@ -4410,6 +4468,15 @@ final class ChatViewModel {
     private func appendAssistantToken(_ token: String) -> Bool {
         guard !token.isEmpty else { return false }
 
+        let signpostID = TranscriptPerformanceSignpost.begin("Streamed token buffering")
+        defer {
+            TranscriptPerformanceSignpost.end(
+                "Streamed token buffering",
+                signpostID: signpostID,
+                count: token.utf8.count
+            )
+        }
+
         // Dedup at append time against effective content (flushed + pending) so the
         // return value stays a synchronous progress signal for the reconnect watchdog
         // while transcript mutation stays batched behind the coalesced flush.
@@ -4420,6 +4487,10 @@ final class ChatViewModel {
         guard !remainder.isEmpty else { return false }
 
         pendingAssistantTokenChunks.append(remainder)
+#if DEBUG
+        streamingPerformanceDiagnostics.bufferedCharacters += remainder.count
+        streamingPerformanceDiagnostics.scannedCharacters += token.count + effectiveContent.count
+#endif
         scheduleStreamingContentFlush()
         return true
     }
@@ -4427,6 +4498,24 @@ final class ChatViewModel {
     @discardableResult
     private func flushAssistantTokens(maxWordUnits: Int? = nil) -> Bool {
         guard !pendingAssistantTokenChunks.isEmpty else { return false }
+
+        let publicationSignpostID = TranscriptPerformanceSignpost.begin("Stream message publication")
+        let publicationClock = ContinuousClock()
+        let publicationStart = publicationClock.now
+        defer {
+            TranscriptPerformanceSignpost.end(
+                "Stream message publication",
+                signpostID: publicationSignpostID
+            )
+#if DEBUG
+            let elapsed = publicationStart.duration(to: publicationClock.now)
+            let components = elapsed.components
+            let nanoseconds = UInt64(max(components.seconds, 0)) * 1_000_000_000
+                + UInt64(max(components.attoseconds, 0)) / 1_000_000_000
+            streamingPerformanceDiagnostics.messagePublicationCount += 1
+            streamingPerformanceDiagnostics.publicationNanoseconds.append(nanoseconds)
+#endif
+        }
 
         // Chunks were deduplicated at append time, so flushing is pure concatenation.
         // A word-unit limit moves only the head of the buffer into the visible
@@ -4443,6 +4532,9 @@ final class ChatViewModel {
             appendedContent = pendingText
             pendingAssistantTokenChunks = []
         }
+#if DEBUG
+        streamingPerformanceDiagnostics.publishedCharacters += appendedContent.count
+#endif
 
         let messageID = ensureStreamingAssistantMessage()
         if !liveReasoningText.isEmpty && reasoningAnchorMessageID == nil {

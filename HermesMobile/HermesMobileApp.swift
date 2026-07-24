@@ -1,6 +1,17 @@
 import SwiftUI
 import SwiftData
 
+private struct CacheWriterEnvironmentKey: EnvironmentKey {
+    static let defaultValue: (any CacheWriting)? = nil
+}
+
+extension EnvironmentValues {
+    var cacheWriter: (any CacheWriting)? {
+        get { self[CacheWriterEnvironmentKey.self] }
+        set { self[CacheWriterEnvironmentKey.self] = newValue }
+    }
+}
+
 struct HermexSceneActions {
     let canCreateNewChat: Bool
     let createNewChat: () -> Void
@@ -235,8 +246,17 @@ private struct MacWindowTitle: UIViewRepresentable {
 
 @main
 struct HermesMobileApp: App {
+    private static let cacheModelContainer: ModelContainer = {
+        do {
+            return try ModelContainer(for: CachedSession.self, CachedMessage.self)
+        } catch {
+            fatalError("Unable to create the offline cache container: \(error)")
+        }
+    }()
+
     @State private var authManager = AuthManager()
     @AppStorage(AppTheme.storageKey) private var appThemeRawValue = AppTheme.system.rawValue
+    private let cacheWriter = CacheWriter(modelContainer: Self.cacheModelContainer)
     #if targetEnvironment(macCatalyst)
     @State private var macInterfacePreferences = MacInterfacePreferences.shared
     #endif
@@ -310,7 +330,8 @@ struct HermesMobileApp: App {
                 #endif
             #endif
         }
-        .modelContainer(for: [CachedSession.self, CachedMessage.self])
+        .environment(\.cacheWriter, cacheWriter)
+        .modelContainer(Self.cacheModelContainer)
         .commands {
             HermexCommands()
             SidebarCommands()
@@ -330,8 +351,9 @@ struct HermesMobileApp: App {
                 authManager: authManager,
                 interfacePreferences: macInterfacePreferences
             )
+            .environment(\.cacheWriter, cacheWriter)
         }
-        .modelContainer(for: [CachedSession.self, CachedMessage.self])
+        .modelContainer(Self.cacheModelContainer)
         .defaultSize(width: 720, height: 760)
         .windowResizability(.contentMinSize)
         #endif

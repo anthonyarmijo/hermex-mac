@@ -592,11 +592,20 @@ private struct TranscriptMediaUnavailableChip: View {
     }
 }
 
-private actor TranscriptMediaImageCache {
+struct ImageCacheDiagnosticSnapshot: Equatable, Sendable {
+    let entries: Int
+    let costBytes: Int
+    let hits: Int
+    let misses: Int
+}
+
+actor TranscriptMediaImageCache {
     static let shared = TranscriptMediaImageCache()
 
     private var cache: [TranscriptMediaImageCacheKey: UIImage] = [:]
     private var inFlight: [TranscriptMediaImageCacheKey: Task<UIImage?, Never>] = [:]
+    private var hits = 0
+    private var misses = 0
 
     func image(
         for reference: TranscriptMediaReference,
@@ -605,18 +614,30 @@ private actor TranscriptMediaImageCache {
     ) async -> UIImage? {
         let key = TranscriptMediaImageCacheKey(namespace: cacheNamespace, reference: reference)
         if let cached = cache[key] {
+            hits += 1
+            TranscriptPerformanceSignpost.event("Image cache lookup hit")
             return cached
         }
 
         if let task = inFlight[key] {
+            hits += 1
+            TranscriptPerformanceSignpost.event("Image cache lookup hit")
             return await task.value
         }
 
+        misses += 1
+        TranscriptPerformanceSignpost.event("Image cache lookup miss")
+
         let task = Task<UIImage?, Never> {
+            let loadSignpostID = TranscriptPerformanceSignpost.begin("Image load")
             guard let data = await loadMediaImage(reference) else {
+                TranscriptPerformanceSignpost.end("Image load", signpostID: loadSignpostID)
                 return nil
             }
-            return UIImage(data: data)
+            TranscriptPerformanceSignpost.end("Image load", signpostID: loadSignpostID, count: data.count)
+            return TranscriptPerformanceSignpost.interval("Image decode", count: data.count) {
+                UIImage(data: data)
+            }
         }
 
         inFlight[key] = task
@@ -627,6 +648,24 @@ private actor TranscriptMediaImageCache {
             cache[key] = image
         }
         return image
+    }
+
+    func diagnosticSnapshot() -> ImageCacheDiagnosticSnapshot {
+        ImageCacheDiagnosticSnapshot(
+            entries: cache.count,
+            costBytes: cache.values.reduce(0) { partial, image in
+                partial + (image.cgImage.map { $0.bytesPerRow * $0.height } ?? 0)
+            },
+            hits: hits,
+            misses: misses
+        )
+    }
+
+    func resetForDiagnostics() {
+        cache = [:]
+        inFlight = [:]
+        hits = 0
+        misses = 0
     }
 }
 

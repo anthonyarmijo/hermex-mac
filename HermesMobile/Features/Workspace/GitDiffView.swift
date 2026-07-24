@@ -1,3 +1,4 @@
+import os
 import SwiftUI
 
 struct GitDiffView: View {
@@ -207,6 +208,17 @@ struct DiffHunk: Identifiable, Equatable {
     }
 
     static func parse(_ raw: String) -> [DiffHunk] {
+        let signpostID = TranscriptPerformanceSignpost.begin("Git diff parse")
+        defer {
+            TranscriptPerformanceSignpost.end(
+                "Git diff parse",
+                signpostID: signpostID,
+                count: raw.utf8.count
+            )
+        }
+#if DEBUG
+        GitDiffParseDiagnostics.record(bytesExamined: raw.utf8.count)
+#endif
         guard !raw.isEmpty else { return [] }
         let allLines = raw.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         let headerIndexes = allLines.indices.filter { allLines[$0].hasPrefix("@@") }
@@ -306,6 +318,38 @@ struct DiffHunk: Identifiable, Equatable {
         return first == "+" || first == "-" || first == " " || first == "\\"
     }
 }
+
+#if DEBUG
+struct GitDiffParseDiagnosticSnapshot: Equatable {
+    let invocationCount: Int
+    let bytesExamined: Int
+}
+
+enum GitDiffParseDiagnostics {
+    private static let storage = OSAllocatedUnfairLock(
+        initialState: GitDiffParseDiagnosticSnapshot(invocationCount: 0, bytesExamined: 0)
+    )
+
+    static func record(bytesExamined: Int) {
+        storage.withLock { state in
+            state = GitDiffParseDiagnosticSnapshot(
+                invocationCount: state.invocationCount + 1,
+                bytesExamined: state.bytesExamined + bytesExamined
+            )
+        }
+    }
+
+    static func reset() {
+        storage.withLock {
+            $0 = GitDiffParseDiagnosticSnapshot(invocationCount: 0, bytesExamined: 0)
+        }
+    }
+
+    static func snapshot() -> GitDiffParseDiagnosticSnapshot {
+        storage.withLock { $0 }
+    }
+}
+#endif
 
 struct DiffLine: Identifiable, Equatable {
     enum Kind: Equatable {

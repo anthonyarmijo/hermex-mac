@@ -85,9 +85,16 @@ final class SessionListViewModel {
     private let client: APIClient
     private let sessionMutator: SessionMutator
     private let server: URL
+    private let cacheWriteGeneration = UUID()
+    private var cacheWriter: (any CacheWriting)?
 
-    init(server: URL, client: APIClient? = nil) {
+    init(
+        server: URL,
+        client: APIClient? = nil,
+        cacheWriter: (any CacheWriting)? = nil
+    ) {
         self.server = server
+        self.cacheWriter = cacheWriter
         let resolvedClient = client ?? APIClient(baseURL: server)
         self.client = resolvedClient
         self.sessionMutator = SessionMutator(client: resolvedClient)
@@ -100,6 +107,59 @@ final class SessionListViewModel {
         // is presenting. The first-ever init always precedes the first export,
         // so the single sweep can never race an in-flight export.
         _ = Self.sweepLeakedExportsOnce
+    }
+
+    func configureCacheWriter(_ cacheWriter: (any CacheWriting)?) async {
+        guard let cacheWriter else { return }
+        self.cacheWriter = cacheWriter
+        await cacheWriter.activate(
+            scope: .sessions(serverURLString: server.absoluteString),
+            generation: cacheWriteGeneration
+        )
+    }
+
+    private func resolvedCacheWriter(modelContext: ModelContext?) -> (any CacheWriting)? {
+        cacheWriter ?? modelContext.map { CacheWriter(modelContainer: $0.container) }
+    }
+
+    private func cacheSessionList(
+        _ sessions: [SessionSummary],
+        modelContext: ModelContext?,
+        cachedAt: Date = Date()
+    ) async {
+        guard let writer = resolvedCacheWriter(modelContext: modelContext) else { return }
+        do {
+            _ = try await writer.write(.replaceSessions(CacheSessionListSnapshot(
+                serverURL: server,
+                sessions: sessions,
+                cachedAt: cachedAt,
+                generation: cacheWriteGeneration
+            )))
+        } catch is CancellationError {
+            return
+        } catch {
+            cacheErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func cacheSingleSession(
+        _ session: SessionSummary,
+        modelContext: ModelContext?,
+        cachedAt: Date = Date()
+    ) async {
+        guard let writer = resolvedCacheWriter(modelContext: modelContext) else { return }
+        do {
+            _ = try await writer.write(.upsertSession(CacheSessionSnapshot(
+                serverURL: server,
+                session: session,
+                cachedAt: cachedAt,
+                generation: cacheWriteGeneration
+            )))
+        } catch is CancellationError {
+            return
+        } catch {
+            cacheErrorMessage = error.localizedDescription
+        }
     }
 
     /// Root temp directory holding one UUID subdirectory per export
@@ -222,13 +282,7 @@ final class SessionListViewModel {
             applySessions(visibleSessions, archivedCount: response.archivedCount, animation: animation)
             isViewingCachedData = false
 
-            if let modelContext {
-                do {
-                    try CacheStore.cacheSessions(visibleSessions, serverURL: server, in: modelContext)
-                } catch {
-                    cacheErrorMessage = error.localizedDescription
-                }
-            }
+            await cacheSessionList(visibleSessions, modelContext: modelContext)
 
             return true
         } catch {
@@ -452,12 +506,8 @@ final class SessionListViewModel {
                 sessions.insert(session, at: 0)
             }
 
-            if let modelContext, session.shouldAppearInSessionList {
-                do {
-                    try CacheStore.cacheSession(session, serverURL: server, in: modelContext)
-                } catch {
-                    cacheErrorMessage = error.localizedDescription
-                }
+            if session.shouldAppearInSessionList {
+                await cacheSingleSession(session, modelContext: modelContext)
             }
 
             return session
@@ -569,13 +619,7 @@ final class SessionListViewModel {
                 sessions[existingIndex] = updatedSession
             }
 
-            if let modelContext {
-                do {
-                    try CacheStore.cacheSession(updatedSession, serverURL: server, in: modelContext)
-                } catch {
-                    cacheErrorMessage = error.localizedDescription
-                }
-            }
+            await cacheSingleSession(updatedSession, modelContext: modelContext)
 
             return true
         } catch {
@@ -614,13 +658,7 @@ final class SessionListViewModel {
             if !sessions.contains(where: { $0.sessionId == duplicatedSession.sessionId }) {
                 sessions.insert(duplicatedSession, at: 0)
 
-                if let modelContext {
-                    do {
-                        try CacheStore.cacheSessions(sessions, serverURL: server, in: modelContext)
-                    } catch {
-                        cacheErrorMessage = error.localizedDescription
-                    }
-                }
+                await cacheSessionList(sessions, modelContext: modelContext)
             }
             return duplicatedSession
         } catch {
@@ -920,12 +958,8 @@ final class SessionListViewModel {
                 sessions.insert(newSession, at: 0)
             }
 
-            if newSession.shouldAppearInSessionList, let modelContext {
-                do {
-                    try CacheStore.cacheSession(newSession, serverURL: server, in: modelContext)
-                } catch {
-                    cacheErrorMessage = error.localizedDescription
-                }
+            if newSession.shouldAppearInSessionList {
+                await cacheSingleSession(newSession, modelContext: modelContext)
             }
 
             return newSession
@@ -941,7 +975,7 @@ final class SessionListViewModel {
     /// Promotes a just-created empty placeholder after the chat accepts its first
     /// user submission. This is intentionally local and synchronous so the row
     /// cannot disappear while the server is still generating its title/response.
-    func markCreatedSessionAsStarted(sessionID: String?, modelContext: ModelContext? = nil) {
+    func markCreatedSessionAsStarted(sessionID: String?, modelContext: ModelContext? = nil) async {
         guard let sessionID = Self.nonEmpty(sessionID),
               let index = sessions.firstIndex(where: { $0.sessionId == sessionID })
         else {
@@ -951,13 +985,7 @@ final class SessionListViewModel {
         let startedSession = sessions[index].markingUserMessageSubmitted()
         sessions[index] = startedSession
 
-        if let modelContext {
-            do {
-                try CacheStore.cacheSession(startedSession, serverURL: server, in: modelContext)
-            } catch {
-                cacheErrorMessage = error.localizedDescription
-            }
-        }
+        await cacheSingleSession(startedSession, modelContext: modelContext)
     }
 
     func clearActionError() {
