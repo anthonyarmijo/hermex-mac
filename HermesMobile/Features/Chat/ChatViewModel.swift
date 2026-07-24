@@ -257,7 +257,7 @@ final class ChatViewModel {
     @ObservationIgnored private var cacheFirstFrameTimeoutTask: Task<Void, Never>?
     private var hasPrimedInitialCachedMessages = false
     @ObservationIgnored private var pendingStreamingScrollTriggerTask: Task<Void, Never>?
-    @ObservationIgnored private var pendingAssistantTokenChunks: [String] = []
+    @ObservationIgnored private var pendingAssistantTokens = StreamingTextBuffer()
 #if DEBUG
     @ObservationIgnored private var streamingPerformanceDiagnostics = StreamingPerformanceDiagnosticSnapshot()
 #endif
@@ -749,19 +749,17 @@ final class ChatViewModel {
             TranscriptPerformanceSignpost.end(
                 "Paced stream drain",
                 signpostID: signpostID,
-                count: pendingAssistantTokenChunks.count
+                count: pendingAssistantTokens.chunkCount
             )
         }
 #if DEBUG
         streamingPerformanceDiagnostics.pacedDrainCount += 1
 #endif
         var didMutate = false
-        let pendingText = pendingAssistantTokenChunks.joined()
-#if DEBUG
-        streamingPerformanceDiagnostics.scannedCharacters += pendingText.count
-#endif
+        // Backlog units are maintained as each new chunk arrives; a tick does
+        // not rescan or join the complete pending response.
         let quota = StreamingWordDrain.drainQuota(
-            backlogUnitCount: StreamingWordDrain.unitCount(in: pendingText),
+            backlogUnitCount: pendingAssistantTokens.unitCount,
             cadenceNanoseconds: streamingWordRevealCadenceNanoseconds,
             maxLagNanoseconds: streamingMaxRevealLagNanoseconds
         )
@@ -776,7 +774,7 @@ final class ChatViewModel {
             scheduleStreamingScrollTrigger()
         }
 
-        if !pendingAssistantTokenChunks.isEmpty {
+        if !pendingAssistantTokens.isEmpty {
             scheduleStreamingContentFlush(afterNanoseconds: streamingWordRevealCadenceNanoseconds)
         }
     }
@@ -788,7 +786,7 @@ final class ChatViewModel {
 
     private func resetPendingStreamingContentBuffers() {
         cancelPendingStreamingContentFlush()
-        pendingAssistantTokenChunks = []
+        pendingAssistantTokens.reset()
         pendingReasoningChunks = []
         // Chunks are deduplicated at append time, so the replay matched-prefix
         // counters can reference unflushed content; dropping the buffers makes them
@@ -4477,19 +4475,29 @@ final class ChatViewModel {
             )
         }
 
-        // Dedup at append time against effective content (flushed + pending) so the
-        // return value stays a synchronous progress signal for the reconnect watchdog
-        // while transcript mutation stays batched behind the coalesced flush.
         let messageID = ensureStreamingAssistantMessage()
-        let flushedContent = messages.first(where: { $0.messageId == messageID })?.content ?? ""
-        let effectiveContent = flushedContent + pendingAssistantTokenChunks.joined()
-        let remainder = deduplicatedReplayToken(token, existingContent: effectiveContent)
+        let remainder: String
+        if isActiveStreamReplayConnection {
+            // Replay is rare and needs visibility into flushed + pending content.
+            // Normal connections never construct the complete effective response.
+            let flushedContent = messages.first(where: { $0.messageId == messageID })?.content ?? ""
+            let pendingContent = pendingAssistantTokens.replayContent()
+            let effectiveContent = flushedContent + pendingContent
+            remainder = deduplicatedReplayToken(token, existingContent: effectiveContent)
+#if DEBUG
+            streamingPerformanceDiagnostics.scannedCharacters += token.count
+                + pendingContent.count + effectiveContent.count
+#endif
+        } else {
+            resetActiveStreamReplayTokenState()
+            remainder = token
+        }
         guard !remainder.isEmpty else { return false }
 
-        pendingAssistantTokenChunks.append(remainder)
+        let scannedCharacters = pendingAssistantTokens.append(remainder)
 #if DEBUG
         streamingPerformanceDiagnostics.bufferedCharacters += remainder.count
-        streamingPerformanceDiagnostics.scannedCharacters += token.count + effectiveContent.count
+        streamingPerformanceDiagnostics.scannedCharacters += scannedCharacters
 #endif
         scheduleStreamingContentFlush()
         return true
@@ -4497,7 +4505,7 @@ final class ChatViewModel {
 
     @discardableResult
     private func flushAssistantTokens(maxWordUnits: Int? = nil) -> Bool {
-        guard !pendingAssistantTokenChunks.isEmpty else { return false }
+        guard !pendingAssistantTokens.isEmpty else { return false }
 
         let publicationSignpostID = TranscriptPerformanceSignpost.begin("Stream message publication")
         let publicationClock = ContinuousClock()
@@ -4517,23 +4525,12 @@ final class ChatViewModel {
 #endif
         }
 
-        // Chunks were deduplicated at append time, so flushing is pure concatenation.
-        // A word-unit limit moves only the head of the buffer into the visible
-        // message; the tail stays pending, keeping the replay-dedup invariant that
-        // flushed + pending text is the full received content.
-        let pendingText = pendingAssistantTokenChunks.joined()
-        let appendedContent: String
-        if let maxWordUnits {
-            let (head, tail) = StreamingWordDrain.splitAtUnitBoundary(pendingText, unitCount: maxWordUnits)
-            guard !head.isEmpty else { return false }
-            appendedContent = head
-            pendingAssistantTokenChunks = tail.isEmpty ? [] : [tail]
-        } else {
-            appendedContent = pendingText
-            pendingAssistantTokenChunks = []
-        }
+        let drain = pendingAssistantTokens.drain(maxUnitCount: maxWordUnits)
+        let appendedContent = drain.text
+        guard !appendedContent.isEmpty else { return false }
 #if DEBUG
         streamingPerformanceDiagnostics.publishedCharacters += appendedContent.count
+        streamingPerformanceDiagnostics.scannedCharacters += drain.copiedOrScannedCharacters
 #endif
 
         let messageID = ensureStreamingAssistantMessage()

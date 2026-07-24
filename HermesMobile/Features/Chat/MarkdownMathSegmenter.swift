@@ -15,6 +15,12 @@ struct MarkdownMathSegmenter {
                 count: content.utf8.count
             )
         }
+        // Every supported inline/display delimiter contains either `$` or `\`.
+        // Most prose contains neither, so avoid allocating Array(content), two
+        // protection masks, and a second inline-math pass for that common case.
+        guard content.contains("$") || content.contains("\\") else {
+            return [.markdown(content)]
+        }
         let characters = Array(content)
         guard characters.count >= 4 else {
             return [.markdown(MarkdownMathFormatter.replacingInlineMath(in: content))]

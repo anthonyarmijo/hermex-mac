@@ -2,6 +2,9 @@ import Foundation
 
 struct MarkdownMathFormatter {
     static func replacingInlineMath(in markdown: String) -> String {
+        guard markdown.contains("$") || markdown.contains("\\") else {
+            return markdown
+        }
         let characters = Array(markdown)
         guard characters.count >= 3 else { return markdown }
 

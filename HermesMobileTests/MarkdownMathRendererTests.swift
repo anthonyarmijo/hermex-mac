@@ -4,6 +4,22 @@ import XCTest
 @testable import HermesMobile
 
 final class MarkdownMathRendererTests: XCTestCase {
+    func testMathFreeContentFastPathPreservesExactBytes() {
+        let markdown = """
+        ## Plain streamed prose
+
+        - café 👩‍👩‍👧‍👦
+        - tabs\tand  repeated spaces\r
+        - [link](https://example.invalid/path)
+        """
+
+        XCTAssertEqual(MarkdownMathSegmenter.segments(in: markdown), [.markdown(markdown)])
+        XCTAssertEqual(
+            Array(MarkdownMathFormatter.replacingInlineMath(in: markdown).utf8),
+            Array(markdown.utf8)
+        )
+    }
+
     func testInlineMathReplacesCommonLatexCommands() {
         let input = #"Inline: the quadratic formula $x = \frac{-b \pm \sqrt{b^2-4ac}}{2a}$ works."#
 
