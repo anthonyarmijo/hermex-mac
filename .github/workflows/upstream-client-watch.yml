@@ -1,0 +1,120 @@
+# Weekly upstream drift digest. Runs on a Monday cron; run manually from the
+# Actions tab (workflow_dispatch).
+name: Upstream Hermex Client Watch
+
+on:
+  schedule:
+    # Monday 14:00 UTC: morning in the US, with enough time to triage before the week gets busy.
+    - cron: "20 14 * * 1"
+  workflow_dispatch:
+    inputs:
+      target_ref:
+        description: "Upstream ref to compare against UPSTREAM_CLIENT_INTEGRATED_SHA."
+        required: false
+        default: "origin/master"
+        type: string
+      post_issue:
+        description: "Create or update the GitHub digest issue."
+        required: false
+        default: true
+        type: boolean
+
+run-name: "Client upstream watch from ${{ github.ref_name }}"
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: upstream-client-watch
+  cancel-in-progress: false
+
+jobs:
+  report:
+    name: Generate Digest
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      DIGEST_TITLE: "Upstream Hermex Client watch digest"
+      UPSTREAM_REPO: "https://github.com/uzairansaruzi/hermex.git"
+      TARGET_REF: ${{ inputs.target_ref || 'origin/master' }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Clone original Hermex client
+        run: |
+          set -euo pipefail
+
+          mkdir -p .codex-tmp
+          git clone --filter=blob:none "${UPSTREAM_REPO}" .codex-tmp/hermex-upstream
+          git -C .codex-tmp/hermex-upstream fetch --tags origin master
+
+      - name: Generate upstream watch report
+        run: |
+          set -euo pipefail
+
+          scripts/upstream-client-watch \
+            --target-ref "${TARGET_REF}" \
+            --limit 60 \
+            > upstream-client-watch-report.md
+
+          cat upstream-client-watch-report.md
+
+      - name: Upload report artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: upstream-client-watch-report
+          path: upstream-client-watch-report.md
+          if-no-files-found: error
+
+      - name: Create or update digest issue
+        if: ${{ github.event_name == 'schedule' || inputs.post_issue }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          if ! gh label list --limit 200 --json name --jq '.[].name' | grep -Fxq "needs-triage"; then
+            gh label create "needs-triage" \
+              --color "D29922" \
+              --description "Maintainer needs to evaluate this issue" || true
+          fi
+
+          issue_body="${RUNNER_TEMP}/upstream-client-watch-issue-body.md"
+          scripts/compose-upstream-watch-issue --source client \
+            --report upstream-client-watch-report.md \
+            --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --commit "${GITHUB_SHA}" \
+            --target-ref "${TARGET_REF}" > "${issue_body}"
+
+          issue_record="$(
+            gh issue list \
+              --state all \
+              --limit 100 \
+              --search "in:title \"${DIGEST_TITLE}\"" \
+              --json number,state,title \
+              --jq ".[] | select(.title == \"${DIGEST_TITLE}\") | [.number, .state] | @tsv" |
+              head -n 1
+          )"
+
+          if [[ -z "${issue_record}" ]]; then
+            gh issue create \
+              --title "${DIGEST_TITLE}" \
+              --body-file "${issue_body}" \
+              --label "needs-triage"
+          else
+            issue_number="${issue_record%%$'\t'*}"
+            issue_state="${issue_record#*$'\t'}"
+
+            if [[ "${issue_state}" != "OPEN" ]]; then
+              gh issue reopen "${issue_number}"
+            fi
+
+            gh issue edit "${issue_number}" \
+              --body-file "${issue_body}" \
+              --add-label "needs-triage"
+          fi

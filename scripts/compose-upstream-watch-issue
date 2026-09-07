@@ -8,11 +8,16 @@ from pathlib import Path
 MAX_BODY_BYTES = 60_000
 
 
-def compose(report: str, run_url: str, commit: str, target_ref: str) -> str:
-    header = f"""<!-- upstream-watch-digest -->
-# Upstream Hermes-WebUI Watch Digest
+def compose(report: str, run_url: str, commit: str, target_ref: str, source: str = "backend") -> str:
+    names = {
+        "backend": ("upstream-watch-digest", "Hermes-WebUI", "upstream-watch-report"),
+        "client": ("upstream-client-watch-digest", "Hermex Client", "upstream-client-watch-report"),
+    }
+    marker, name, artifact = names[source]
+    header = f"""<!-- {marker} -->
+# Upstream {name} Watch Digest
 
-- Workflow run and full `upstream-watch-report` artifact: {run_url}
+- Workflow run and full `{artifact}` artifact: {run_url}
 - Hermex commit: `{commit}`
 - Target ref: `{target_ref}`
 
@@ -42,6 +47,7 @@ if __name__ == "__main__":
     parser.add_argument("--run-url", required=True)
     parser.add_argument("--commit", required=True)
     parser.add_argument("--target-ref", required=True)
+    parser.add_argument("--source", choices=["backend", "client"], default="backend")
     args = parser.parse_args()
     print(compose(args.report.read_text(encoding="utf-8"), args.run_url,
-                  args.commit, args.target_ref), end="")
+                  args.commit, args.target_ref, args.source), end="")
