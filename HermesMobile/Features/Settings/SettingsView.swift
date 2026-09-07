@@ -509,6 +509,16 @@ struct SettingsView: View {
                     .id(SettingsScrollAnchor.servers)
 
                 SettingsCard(title: String(localized: "Active Server")) {
+                    #if targetEnvironment(macCatalyst)
+                    NavigationLink {
+                        ConnectionStatusView(authManager: authManager)
+                            .id(authManager.activeServerID)
+                    } label: {
+                        SettingsAccessoryRow(title: String(localized: "Connection Status"), systemImage: "network")
+                    }
+                    .buttonStyle(.plain)
+                    SettingsDivider()
+                    #endif
                     HapticButton {
                         showDefaultModelPicker = true
                     } label: {
@@ -2150,7 +2160,7 @@ private struct ServerIdentityEditor: View {
 }
 
 /// Per-server detail: identity editing, switch-to-active, and remove/sign-out (#17).
-private struct ServerDetailView: View {
+struct ServerDetailView: View {
     @Bindable var authManager: AuthManager
     let account: ServerAccount
 
