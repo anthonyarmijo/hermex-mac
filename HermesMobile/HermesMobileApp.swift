@@ -137,12 +137,25 @@ private struct MacSettingsWindowRoot: View {
 enum MacWindowSizingPolicy {
     static let mainMinimumSize = CGSize(width: 900, height: 600)
     static let settingsMinimumSize = CGSize(width: 620, height: 560)
+    static let unconstrainedMaximumSize = CGSize(
+        width: CGFloat.greatestFiniteMagnitude,
+        height: CGFloat.greatestFiniteMagnitude
+    )
 
-    static func maximumSize(for screenSize: CGSize, minimumSize: CGSize) -> CGSize {
-        CGSize(
-            width: max(screenSize.width, minimumSize.width),
-            height: max(screenSize.height, minimumSize.height)
-        )
+    @MainActor
+    static func apply(to restrictions: UISceneSizeRestrictions, minimumSize: CGSize) {
+        if restrictions.minimumSize != minimumSize {
+            restrictions.minimumSize = minimumSize
+        }
+        // Express no app-imposed upper bound; macOS still constrains windows to
+        // its usable desktop. UIKit's default maximum is also finite, so simply
+        // omitting this assignment leaves large displays artificially capped.
+        if restrictions.maximumSize != unconstrainedMaximumSize {
+            restrictions.maximumSize = unconstrainedMaximumSize
+        }
+        if !restrictions.allowsFullScreen {
+            restrictions.allowsFullScreen = true
+        }
     }
 }
 
@@ -188,20 +201,10 @@ private struct MacWindowSizeRestrictions: UIViewRepresentable {
                 return
             }
 
-            let maximumSize = MacWindowSizingPolicy.maximumSize(
-                for: windowScene.screen.bounds.size,
+            MacWindowSizingPolicy.apply(
+                to: restrictions,
                 minimumSize: minimumSize
             )
-
-            if restrictions.minimumSize != minimumSize {
-                restrictions.minimumSize = minimumSize
-            }
-            if restrictions.maximumSize != maximumSize {
-                restrictions.maximumSize = maximumSize
-            }
-            if !restrictions.allowsFullScreen {
-                restrictions.allowsFullScreen = true
-            }
         }
     }
 }
