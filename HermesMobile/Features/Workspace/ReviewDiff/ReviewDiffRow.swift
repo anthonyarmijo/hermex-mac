@@ -2,8 +2,8 @@ import Foundation
 
 /// One drawn row of the review surface. The surface is a flat list, so layout is a
 /// prefix sum over row heights and hit testing is a binary search over offsets.
-struct ReviewDiffRow: Equatable, Identifiable {
-    enum Kind: Equatable {
+struct ReviewDiffRow: Equatable, Identifiable, Sendable {
+    enum Kind: Equatable, Sendable {
         case file(ReviewDiffFileHeader)
         case hunk(String)
         case line(ReviewDiffLine)
@@ -36,7 +36,7 @@ struct ReviewDiffRow: Equatable, Identifiable {
     }
 }
 
-struct ReviewDiffFileHeader: Equatable {
+struct ReviewDiffFileHeader: Equatable, Sendable {
     let path: String
     /// Set for renames when the old path differs from `path`.
     let previousPath: String?
@@ -50,7 +50,7 @@ struct ReviewDiffFileHeader: Equatable {
     }
 }
 
-struct ReviewDiffLine: Equatable {
+struct ReviewDiffLine: Equatable, Sendable {
     /// Display text without the unified-diff prefix character, tabs expanded so the
     /// monospaced character grid the word highlights sit on stays honest.
     let content: String
@@ -64,13 +64,15 @@ struct ReviewDiffLine: Equatable {
 }
 
 /// What the host knows about one file's diff while the surface is on screen.
-enum ReviewDiffFileState: Equatable {
+enum ReviewDiffFileState: Equatable, Sendable {
     case loading
     case loaded(GitDiff)
+    /// Prepared once per response, scoped to the lifetime of this review.
+    case prepared([ReviewDiffRow])
     case failed(String)
 }
 
-struct ReviewDiffFileInput: Equatable {
+struct ReviewDiffFileInput: Equatable, Sendable {
     let file: GitFile
     let state: ReviewDiffFileState
 }
@@ -79,6 +81,28 @@ struct ReviewDiffFileInput: Equatable {
 /// Row ids are stable across reloads (file id, hunk index, line index) so collapse,
 /// viewed, and selection state survive a rows rebuild.
 enum ReviewDiffRowBuilder {
+    /// Structured child work inherits cancellation but does not inherit MainActor.
+    /// Only immutable, Sendable file/diff values cross the isolation boundary.
+    nonisolated static func prepare(file: GitFile, diff: GitDiff) async throws -> ReviewDiffFileState {
+        let rows = try await buildAsync([ReviewDiffFileInput(file: file, state: .loaded(diff))])
+        return .prepared(rows)
+    }
+
+    nonisolated static func buildAsync(_ inputs: [ReviewDiffFileInput]) async throws -> [ReviewDiffRow] {
+        try Task.checkCancellation()
+        return try await withThrowingTaskGroup(of: [ReviewDiffRow].self) { group in
+            group.addTask(priority: .userInitiated) {
+                try Task.checkCancellation()
+                let result = rows(for: inputs)
+                try Task.checkCancellation()
+                return result
+            }
+            let result = try await group.next() ?? []
+            try Task.checkCancellation()
+            return result
+        }
+    }
+
     static func rows(for inputs: [ReviewDiffFileInput]) -> [ReviewDiffRow] {
         inputs.flatMap(rows(for:))
     }
@@ -89,6 +113,8 @@ enum ReviewDiffRowBuilder {
         let hunks: [DiffHunk]
         let notice: String?
         switch input.state {
+        case .prepared(let rows):
+            return rows
         case .loading:
             hunks = []
             notice = String(localized: "Loading…")

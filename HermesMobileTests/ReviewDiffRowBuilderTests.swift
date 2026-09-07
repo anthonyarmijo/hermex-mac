@@ -21,6 +21,92 @@ final class ReviewDiffRowBuilderTests: XCTestCase {
         return try decoder.decode(GitDiff.self, from: JSONSerialization.data(withJSONObject: json))
     }
 
+    func testIncrementalDiffBuildBaseline() throws {
+        let raw = PerformanceBaselineFixtures.gitDiff(lineCount: 5_000)
+        let inputs = try (0..<8).map { index in
+            ReviewDiffFileInput(file: try file("file-\(index).swift"), state: .loaded(try diff(raw)))
+        }
+        let clock = ContinuousClock()
+        var samples: [Double] = []
+        for iteration in 0..<6 {
+            GitDiffParseDiagnostics.reset()
+            let start = clock.now
+            for count in 1...inputs.count { _ = ReviewDiffRowBuilder.rows(for: Array(inputs.prefix(count))) }
+            let duration = start.duration(to: clock.now).components
+            if iteration > 0 { samples.append(Double(duration.seconds) * 1_000 + Double(duration.attoseconds) / 1e15) }
+            XCTAssertEqual(GitDiffParseDiagnostics.snapshot().invocationCount, 36)
+        }
+        print("[PERF] IncrementalGitDiff before files=8 lines=5000 parses=36 samplesMs=\(samples.sorted())")
+    }
+
+    @MainActor
+    func testPreparedDiffRebuildsWithoutParsingOnMainActor() async throws {
+        for lineCount in [50, 5_000, 25_000] {
+            let file = try file("large.swift")
+            let diff = try diff(PerformanceBaselineFixtures.gitDiff(lineCount: lineCount))
+            let expected = ReviewDiffRowBuilder.rows(for: .init(file: file, state: .loaded(diff)))
+            GitDiffParseDiagnostics.reset()
+            let state = try await ReviewDiffRowBuilder.prepare(file: file, diff: diff)
+            for _ in 0..<20 {
+                let rows = try await ReviewDiffRowBuilder.buildAsync([.init(file: file, state: state)])
+                XCTAssertEqual(rows, expected)
+            }
+            let snapshot = GitDiffParseDiagnostics.snapshot()
+            XCTAssertEqual(snapshot.invocationCount, 1)
+            XCTAssertEqual(snapshot.mainThreadInvocationCount, 0)
+        }
+    }
+
+    func testPreparedBinaryOversizedAndEmptyPreserveNotices() async throws {
+        let file = try file("image.png")
+        for (diff, parseCount) in [(try diff("ignored", binary: true), 0), (try diff("ignored", tooLarge: true), 0), (try diff(""), 1)] {
+            let expected = ReviewDiffRowBuilder.rows(for: .init(file: file, state: .loaded(diff)))
+            GitDiffParseDiagnostics.reset()
+            let state = try await ReviewDiffRowBuilder.prepare(file: file, diff: diff)
+            XCTAssertEqual(ReviewDiffRowBuilder.rows(for: .init(file: file, state: state)), expected)
+            XCTAssertEqual(GitDiffParseDiagnostics.snapshot().invocationCount, parseCount)
+        }
+    }
+
+    func testRefreshPreparesNewContentAndCancelledBuildThrows() async throws {
+        let file = try file("same.swift")
+        let first = try await ReviewDiffRowBuilder.prepare(file: file, diff: try diff("@@ -1 +1 @@\n-old\n+first"))
+        let second = try await ReviewDiffRowBuilder.prepare(file: file, diff: try diff("@@ -1 +1 @@\n-first\n+second"))
+        XCTAssertNotEqual(first, second)
+        let input = ReviewDiffFileInput(file: file, state: second)
+        let task = Task {
+            while !Task.isCancelled { await Task.yield() }
+            return try await ReviewDiffRowBuilder.buildAsync([input])
+        }
+        task.cancel()
+        do { _ = try await task.value; XCTFail("Cancelled rows must not be published") }
+        catch is CancellationError { }
+        catch { XCTFail("Unexpected error: \(error)") }
+    }
+
+    func testIncrementalPreparedDiffBenchmark() async throws {
+        let raw = PerformanceBaselineFixtures.gitDiff(lineCount: 5_000)
+        let files = try (0..<8).map { try file("file-\($0).swift") }
+        let diff = try diff(raw)
+        let clock = ContinuousClock()
+        var samples: [Double] = []
+        for iteration in 0..<6 {
+            GitDiffParseDiagnostics.reset()
+            let start = clock.now
+            var inputs: [ReviewDiffFileInput] = []
+            for file in files {
+                let state = try await ReviewDiffRowBuilder.prepare(file: file, diff: diff)
+                inputs.append(.init(file: file, state: state))
+                _ = try await ReviewDiffRowBuilder.buildAsync(inputs)
+            }
+            let duration = start.duration(to: clock.now).components
+            if iteration > 0 { samples.append(Double(duration.seconds) * 1_000 + Double(duration.attoseconds) / 1e15) }
+            XCTAssertEqual(GitDiffParseDiagnostics.snapshot().invocationCount, 8)
+            XCTAssertEqual(GitDiffParseDiagnostics.snapshot().mainThreadInvocationCount, 0)
+        }
+        print("[PERF] IncrementalGitDiff after files=8 lines=5000 parses=8 samplesMs=\(samples.sorted())")
+    }
+
     func testLoadedDiffBuildsHeaderHunkAndLineRowsWithStableIDs() throws {
         let raw = "@@ -1,3 +1,3 @@\n context\n-old value\n+new value\n\\ No newline at end of file"
         let rows = ReviewDiffRowBuilder.rows(for: ReviewDiffFileInput(file: try file("a/b.swift"), state: .loaded(try diff(raw))))

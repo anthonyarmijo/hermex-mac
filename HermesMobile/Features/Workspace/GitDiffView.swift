@@ -20,6 +20,8 @@ struct GitDiffView: View {
     @State private var rows: [ReviewDiffRow] = []
     @State private var rowsVersion = 0
     @State private var rowsBuildGeneration = 0
+    @State private var rowsBuildTask: Task<Void, Never>?
+    @State private var refreshTask: Task<Void, Never>?
     @State private var loadGeneration = 0
     @State private var hasLoaded = false
     @State private var isRefreshing = false
@@ -76,6 +78,14 @@ struct GitDiffView: View {
         }
         .presentationDetents([.medium, .large])
         .adaptivePagePresentation()
+        .onDisappear {
+            loadGeneration += 1
+            rowsBuildGeneration += 1
+            rowsBuildTask?.cancel()
+            refreshTask?.cancel()
+            refreshTask = nil
+            hasLoaded = false
+        }
     }
 
     @ViewBuilder
@@ -94,7 +104,10 @@ struct GitDiffView: View {
                 onToggleFile: toggleFile,
                 onToggleViewed: toggleViewed,
                 onLinePress: handleLinePress,
-                onRefresh: { Task { await refresh() } }
+                onRefresh: {
+                    guard refreshTask == nil else { return }
+                    refreshTask = Task { await refresh(); refreshTask = nil }
+                }
             )
         }
     }
@@ -229,7 +242,8 @@ struct GitDiffView: View {
             guard let diff else {
                 return FileDiffResult(fileID: file.id, state: .failed(String(localized: "Could Not Load Changes")), error: nil)
             }
-            return FileDiffResult(fileID: file.id, state: .loaded(diff), error: nil)
+            let prepared = try await ReviewDiffRowBuilder.prepare(file: file, diff: diff)
+            return FileDiffResult(fileID: file.id, state: prepared, error: nil)
         } catch {
             if isCancellation(error) { return nil }
             return FileDiffResult(fileID: file.id, state: .failed(error.localizedDescription), error: error)
@@ -252,18 +266,17 @@ struct GitDiffView: View {
         rowsBuildGeneration += 1
         let generation = rowsBuildGeneration
         let inputs = files.map { ReviewDiffFileInput(file: $0, state: statesByFileID[$0.id] ?? .loading) }
-        Task.detached(priority: .userInitiated) {
-            let built = ReviewDiffRowBuilder.rows(for: inputs)
-            await MainActor.run {
-                guard generation == rowsBuildGeneration else { return }
-                rows = built
-                rowsVersion += 1
-            }
+        rowsBuildTask?.cancel()
+        rowsBuildTask = Task { @MainActor in
+            guard let built = try? await ReviewDiffRowBuilder.buildAsync(inputs),
+                  !Task.isCancelled, generation == rowsBuildGeneration else { return }
+            rows = built
+            rowsVersion += 1
         }
     }
 }
 
-struct DiffHunk: Identifiable, Equatable {
+struct DiffHunk: Identifiable, Equatable, Sendable {
     let id: Int
     let header: String
     let lines: [DiffLine]
@@ -399,6 +412,7 @@ struct DiffHunk: Identifiable, Equatable {
 struct GitDiffParseDiagnosticSnapshot: Equatable {
     let invocationCount: Int
     let bytesExamined: Int
+    var mainThreadInvocationCount: Int = 0
 }
 
 enum GitDiffParseDiagnostics {
@@ -410,7 +424,8 @@ enum GitDiffParseDiagnostics {
         storage.withLock { state in
             state = GitDiffParseDiagnosticSnapshot(
                 invocationCount: state.invocationCount + 1,
-                bytesExamined: state.bytesExamined + bytesExamined
+                bytesExamined: state.bytesExamined + bytesExamined,
+                mainThreadInvocationCount: state.mainThreadInvocationCount + (Thread.isMainThread ? 1 : 0)
             )
         }
     }
@@ -427,8 +442,8 @@ enum GitDiffParseDiagnostics {
 }
 #endif
 
-struct DiffLine: Identifiable, Equatable {
-    enum Kind: Equatable {
+struct DiffLine: Identifiable, Equatable, Sendable {
+    enum Kind: Equatable, Sendable {
         case addition, deletion, context
 
         init(_ line: String) {
