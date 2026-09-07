@@ -76,6 +76,7 @@ jobs:
         if: ${{ github.event_name == 'schedule' || inputs.post_issue }}
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
 
@@ -86,22 +87,11 @@ jobs:
           fi
 
           issue_body="${RUNNER_TEMP}/upstream-watch-issue-body.md"
-          {
-            echo "<!-- upstream-watch-digest -->"
-            echo "# Upstream Hermes-WebUI Watch Digest"
-            echo
-            echo "This standing issue is updated by the Upstream Hermes-WebUI Watch workflow."
-            echo
-            echo "- Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-            echo "- Hermex commit: ${GITHUB_SHA}"
-            echo "- Target ref: \`${TARGET_REF}\`"
-            echo
-            echo "Treat this as triage input, not approved implementation scope. Keep this issue labeled \`needs-triage\` until a human decides whether any findings should become separate actionable issues."
-            echo
-            echo "Create separate issues only for likely Hermex impact, such as removed mobile endpoint paths, streaming/run-state contract changes, auth/CSRF changes, model/provider routing changes, session schema changes, upload/media/workspace security changes, or contract-test coverage gaps."
-            echo
-            cat upstream-watch-report.md
-          } > "${issue_body}"
+          scripts/compose-upstream-watch-issue \
+            --report upstream-watch-report.md \
+            --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --commit "${GITHUB_SHA}" \
+            --target-ref "${TARGET_REF}" > "${issue_body}"
 
           issue_record="$(
             gh issue list \

@@ -248,9 +248,21 @@ scripts/verify-mac-dmg --notarized /path/to/Hermex-1.0.0-macOS-universal.dmg
 
 The manual `Mac Release` workflow validates an existing `mac-vX.Y.Z` tag at current `master`, runs the Mac Catalyst suite, imports ephemeral signing material, archives and notarizes the app and DMG, uploads the DMG plus SHA-256 file, and creates a **draft** GitHub Release. Publishing is always manual.
 
+Before creating the tag, copy `docs/releases/TEMPLATE.md` to
+`docs/releases/mac-vX.Y.Z.md` and replace every placeholder with reviewed,
+user-facing release notes. Build the notes by comparing the release candidate
+with the previous `mac-vX.Y.Z` tag and reviewing the included PR bodies, linked
+issues, and commits. GitHub's generated PR list is appended for traceability, but
+it is not a substitute for the curated highlights, improvements, fixes, and
+known issues. The workflow fails before running the test/signing jobs if the
+matching notes file is missing, empty, or still contains template placeholders.
+
 Configure a protected GitHub environment named `mac-release`. Store `MAC_DEVELOPMENT_TEAM`, `MAC_DEVELOPER_ID_APPLICATION`, and `MAC_PROVISIONING_PROFILE_SPECIFIER` as environment variables. Store the base64 Developer ID `.p12`, its password, the base64 Mac Catalyst Developer ID profile, and the App Store Connect API key values as the environment secrets named in `.github/workflows/mac-release.yml`. Require maintainer approval and allow self-review for the single-maintainer release gate.
 
-For Mac 1.0.0, tag current `master` as `mac-v1.0.0`, dispatch the workflow from `master`, enter the tag, and type `RELEASE_MAC`. Inspect and install the draft asset before publishing it.
+For a release, merge the reviewed notes and version change to `master`, tag that
+exact commit as `mac-vX.Y.Z`, dispatch the workflow from `master`, enter the tag,
+and type `RELEASE_MAC`. Inspect the rendered notes, install the draft asset, and
+complete the Gatekeeper smoke test before publishing it.
 
 ## TestFlight Readiness Notes
 

@@ -1,0 +1,47 @@
+#!/usr/bin/env python3
+"""Keep the standing issue below GitHub's limit; retain the full report artifact."""
+
+import argparse
+from pathlib import Path
+
+
+MAX_BODY_BYTES = 60_000
+
+
+def compose(report: str, run_url: str, commit: str, target_ref: str) -> str:
+    header = f"""<!-- upstream-watch-digest -->
+# Upstream Hermes-WebUI Watch Digest
+
+- Workflow run and full `upstream-watch-report` artifact: {run_url}
+- Hermex commit: `{commit}`
+- Target ref: `{target_ref}`
+
+Treat this as triage input, not approved implementation scope. Keep this issue
+labeled `needs-triage` until a human selects actionable findings. Review API,
+streaming, auth, session, provider, upload, media, and workspace compatibility.
+
+## Report preview
+
+"""
+    footer = "\n\n_Preview truncated. Download the full report artifact from the workflow run above._\n"
+    # Quote each report line so a truncated Markdown fence cannot swallow the
+    # footer. Budget bytes, which also bounds Unicode characters and UTF-16 units.
+    preview = "\n".join("> " + line for line in report.splitlines())
+    if len((header + preview + "\n").encode("utf-8")) <= MAX_BODY_BYTES:
+        return header + preview + "\n"
+    budget = MAX_BODY_BYTES - len((header + footer).encode("utf-8"))
+    if budget < 0:
+        raise ValueError("Issue metadata exceeds the body budget")
+    preview = preview.encode("utf-8")[:budget].decode("utf-8", errors="ignore")
+    return header + preview + footer
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--report", required=True, type=Path)
+    parser.add_argument("--run-url", required=True)
+    parser.add_argument("--commit", required=True)
+    parser.add_argument("--target-ref", required=True)
+    args = parser.parse_args()
+    print(compose(args.report.read_text(encoding="utf-8"), args.run_url,
+                  args.commit, args.target_ref), end="")

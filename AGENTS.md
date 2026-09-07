@@ -78,6 +78,15 @@ and creates a draft GitHub Release. Dispatching that workflow, pushing its tag,
 or publishing its draft always requires explicit human approval. Full local and
 CI instructions live in `DEVELOPMENT.md`.
 
+Every Mac release must include reviewed, user-facing notes at
+`docs/releases/mac-vX.Y.Z.md` before its tag is created. When preparing those
+notes, Codex must compare the release candidate with the previous Mac release
+tag and inspect the included PR bodies, issues, and commits. Summarize observable
+benefits and fixes in plain language, account for every notable user-facing
+change, and call out known issues. GitHub's generated PR list is supplemental;
+never treat it as the changelog. Show the draft notes to the maintainer for
+review before asking permission to tag or dispatch the release workflow.
+
 ## Working with the human
 - Surface tradeoffs in plain English before non-obvious choices; when in doubt, ask.
 - Ask before touching anything under the spec's "Open questions."
