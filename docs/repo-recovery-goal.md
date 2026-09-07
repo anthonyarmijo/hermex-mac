@@ -10,12 +10,13 @@ reviewed Mac patch release.
 
 - Work from dev on a chore branch; keep master unchanged and buildable.
 - Preserve the existing release-guardrails edits and performance roadmap before cleanup.
-- Follow AGENTS.md. Never delete unique work or profiling evidence. Prepare exact
-  human-run commands for destructive cleanup where the working agreement requires it.
+- Follow AGENTS.md. Verify backups and merged ancestry, then perform the selected
+  cleanup without another prompt. Never delete unique work or profiling evidence.
 - Use standard-library tooling; introduce no dependencies or server API changes.
 - Record benchmark claims as synthetic measurements, not overall app speedups.
-- Pushes, PR creation, merges, tags, release dispatch, notarization, and publication
-  remain separate explicit approval steps. Do not restart or reconfigure services.
+- Branch pushes and PR creation/update are included in an approved task. Merges,
+  tagging, release dispatch, notarization, and publication need explicit approval,
+  which can cover a clearly described sequence once. Do not restart or reconfigure services.
 
 ## Deliverables and acceptance
 
@@ -30,7 +31,7 @@ reviewed Mac patch release.
 5. Passing maintenance checks and a fresh full Mac Catalyst test run for the
    release candidate, or a precise environment blocker without claiming release readiness.
 6. Updated local CURRENT.md, a validated local commit, and concrete review and
-   publication steps. Do not publish changes without explicit approval.
+   publication steps. Do not merge or publish a release without explicit approval.
 
 ## Defaults
 

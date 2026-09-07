@@ -18,7 +18,7 @@ These labels combine with a triage role; they do not replace it.
 
 | Label | Combines with | Meaning |
 | --- | --- | --- |
-| `needs-manual-validation` | `ready-for-agent` | The owner must manually test before the PR publishes, so implementation uses staged mode (human gate per stage) instead of express mode. |
+| `needs-manual-validation` | `ready-for-agent` | Prepare and push a draft PR while automated work continues. The owner must complete the requested manual checks before the PR becomes ready or merges; no separate permission is needed for each implementation stage. |
 
 Apply `needs-manual-validation` sparingly: only when automated tests genuinely cannot cover the risk (gestures, share extension, live activities, streaming UI).
 

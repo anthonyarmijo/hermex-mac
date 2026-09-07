@@ -10,7 +10,7 @@ The program deliberately optimizes the existing Mac Catalyst application before 
 2. Paste the complete prompt for that goal. Do not combine implementation goals into one large change.
 3. Let the goal finish its measurements, implementation, verification, documentation, and commit before beginning the next goal.
 4. Treat a failed experiment as useful evidence. Preserve the benchmark/report, remove only the experiment's own unsuccessful code, and do not force a behavioral change merely to claim a speedup.
-5. Do not push a branch, open or update a pull request, merge, tag, or dispatch a release workflow without explicit human approval.
+5. Follow AGENTS.md's authorization policy: an approved goal includes branch pushes and PR creation/update. Obtain approval for merges or releases once the complete sequence is reviewable; do not ask again for steps that approval already covers.
 
 Each goal should normally use its own issue and short branch. If no issue exists, suggested branch names are included below and follow the repository's `chore/` or `fix/` convention.
 
@@ -99,7 +99,7 @@ Definition of done:
 - No production behavior, UI appearance, network protocol, or cache semantics changed.
 - Focused tests and the proportional cross-platform validation pass.
 - Report files changed, commands run, results, remaining measurement gaps, and the next recommended goal.
-- On wrap-up, update CURRENT.md and commit the verified documentation/diagnostic slice. Do not push.
+- On wrap-up, update CURRENT.md and commit the verified documentation/diagnostic slice. Push the feature branch and open/update its PR unless the user requested local-only work.
 ```
 
 ---
@@ -182,7 +182,7 @@ Definition of done:
 - Before/after measurements and any rejected sub-designs are recorded under docs/performance/.
 - All proportional validation is green and the signed Mac app launches.
 - Report files changed, commands, results, manual checks, remaining risks, and next step.
-- On wrap-up, update CURRENT.md and commit the verified slice. Do not push.
+- On wrap-up, update CURRENT.md and commit the verified slice. Push the feature branch and open/update its PR unless the user requested local-only work.
 ```
 
 ---
@@ -262,7 +262,7 @@ Definition of done:
 - Before/after evidence and rejected experiments are recorded under docs/performance/.
 - The signed Mac app launches and proportional cross-platform validation passes.
 - Report files, commands, results, manual checks, remaining hotspots, and next step.
-- On wrap-up, update CURRENT.md and commit the verified slice. Do not push.
+- On wrap-up, update CURRENT.md and commit the verified slice. Push the feature branch and open/update its PR unless the user requested local-only work.
 ```
 
 ---
@@ -342,7 +342,7 @@ Definition of done:
 - Before/after memory and smoothness results are recorded under docs/performance/.
 - Proportional validation is green and the signed Mac app launches.
 - Report files, commands, results, manual checks, remaining risks, and next step.
-- On wrap-up, update CURRENT.md and commit the verified slice. Do not push.
+- On wrap-up, update CURRENT.md and commit the verified slice. Push the feature branch and open/update its PR unless the user requested local-only work.
 ```
 
 ---
@@ -410,7 +410,7 @@ Definition of done:
 - Before/after evidence is recorded under docs/performance/.
 - Validation is green and the signed app launches.
 - Report files, commands, results, manual checks, risks, and next step.
-- On wrap-up, update CURRENT.md and commit the verified slice. Do not push.
+- On wrap-up, update CURRENT.md and commit the verified slice. Push the feature branch and open/update its PR unless the user requested local-only work.
 ```
 
 ---
@@ -477,7 +477,7 @@ Definition of done:
 - docs/performance/ contains the setting evidence, Apple source links, measurements, UI matrix, regressions, remediation estimate, and adopt/reject/follow-up recommendation.
 - Any unsuccessful experimental project changes are removed without disturbing unrelated work; successful trivial diagnostic/documentation changes are verified.
 - Report files, commands, results, manual checks, recommendation, and next step.
-- On wrap-up, update CURRENT.md and commit the verified spike/report. Do not push.
+- On wrap-up, update CURRENT.md and commit the verified spike/report. Push the feature branch and open/update its PR unless the user requested local-only work.
 ```
 
 ---
@@ -497,7 +497,7 @@ Repository and workflow requirements:
 - Confirm that the intended completed performance slices are present. Do not silently merge/cherry-pick branches or overwrite user changes. If integration work is required, stop and get human approval for the exact branch/commit plan.
 - Use chore/performance-validation unless a human-selected issue branch applies. Never work directly on protected master.
 - Use CodeGraph/codebase-memory for final blast-radius review.
-- Do not add dependencies, introduce new feature work, push, open/update a PR, merge, tag, dispatch a release, or publish anything without explicit approval.
+- Do not add dependencies or introduce new feature work outside this goal. Branch pushes and PR updates are covered by the selected task; merges, tags, release dispatch, and publication require explicit approval for the described sequence.
 
 Objective:
 Run the same baseline suite and real-app manual scenarios after the cache-write, streaming/Markdown, image-cache, Git-diff, and Catalyst-idiom decisions. Produce one decision document with measured cumulative results, remaining hotspots, regressions, and a recommendation for the next performance investment. This goal fixes only regressions caused by the completed performance slices; it does not start another speculative optimization.
@@ -542,7 +542,7 @@ Definition of done:
 - Regressions introduced by the performance work are fixed and reverified.
 - The final report ranks remaining work and makes a concrete Catalyst/native-prototype recommendation based on measurements.
 - Report files changed, exact commands, test counts/results, manual checks, measurement limitations, remaining risks, and recommended next action.
-- On wrap-up, update CURRENT.md and commit the verified validation/report slice. Do not push.
+- On wrap-up, update CURRENT.md and commit the verified validation/report slice. Push the feature branch and open/update its PR unless the user requested local-only work.
 ```
 
 ## Expected program outcome

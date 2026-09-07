@@ -30,13 +30,13 @@ Write multi-line issue bodies and comments to a file and pass `--body-file`.
 GitHub Issues are the work queue; pull requests are the review and merge record.
 
 - Pick implementation work from issues labeled `ready-for-agent`, unless the human selects another issue.
-- `ready-for-agent` issues default to express mode (autonomous from approved plan to review-addressed PR). An issue also labeled `needs-manual-validation` forces staged mode, where the owner manually tests before the PR publishes. See `docs/agents/triage-labels.md`.
+- A human-selected `ready-for-agent` issue runs through implementation, validation, branch push, PR creation, and review follow-up without separate permission at each step. For `needs-manual-validation`, open a draft PR and gather the requested manual evidence before marking it ready or merging. See `docs/agents/triage-labels.md`.
 - Create a short `issue/<n>-slug` branch for one issue or narrow slice (no-issue branches use `chore/`/`fix/`).
 - Commit completed, validated work locally with the matching handoff updates.
-- Push feature branches and open draft PRs only when the human asks to publish/open a PR.
+- Push feature branches and open/update PRs in this fork as part of the selected task unless the human requested local-only work. Respect an explicit draft-only request. Routine review follow-up and CI checks are included in that authorization.
 - Use the PR for review: GitHub/Copilot review, CI, external agent review, and human comments should live there when possible.
 - Address PR review comments by triaging them first; do not blindly accept automated review feedback.
-- Merge into `master` only after validation passes, review feedback is resolved, and the human approves.
+- Merge into `dev` or `master` only after validation passes, review feedback is resolved, and the human approves. An approval can cover the stated integration/release sequence; do not ask again for each already-authorized step.
 - Keep `master` buildable because it is the protected Mac release-candidate branch.
 
 ## Upstream Parity Tracking
