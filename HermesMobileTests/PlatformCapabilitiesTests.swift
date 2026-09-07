@@ -65,6 +65,24 @@ final class PlatformCapabilitiesTests: XCTestCase {
 
     #if targetEnvironment(macCatalyst)
     @MainActor
+    func testRuntimeCatalystIdiomMatchesProcessedDeviceFamily() throws {
+        let families = try XCTUnwrap(Bundle.main.object(forInfoDictionaryKey: "UIDeviceFamily") as? [Int])
+        let expected: UIUserInterfaceIdiom = families.contains(6) ? .mac : .pad
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        XCTAssertEqual(UIDevice.current.userInterfaceIdiom, expected)
+        XCTAssertEqual(scene.traitCollection.userInterfaceIdiom, expected)
+        print("[PERF] CatalystIdiom deviceFamily=\(families) deviceIdiom=\(UIDevice.current.userInterfaceIdiom.rawValue) sceneIdiom=\(scene.traitCollection.userInterfaceIdiom.rawValue) screenScale=\(scene.screen.scale) displayScale=\(scene.traitCollection.displayScale) screenBounds=\(scene.screen.bounds) sceneBounds=\(scene.coordinateSpace.bounds) bodyFontPoints=\(UIFont.preferredFont(forTextStyle: .body).pointSize)")
+    }
+
+    @MainActor
+    func testReviewSurfaceConstructsForCurrentCatalystIdiom() {
+        let surface = ReviewDiffSurfaceView()
+        surface.frame = CGRect(x: 0, y: 0, width: 900, height: 600)
+        surface.layoutIfNeeded()
+        XCTAssertEqual(surface.bounds.size, CGSize(width: 900, height: 600))
+    }
+
+    @MainActor
     func testMacWindowSizingRemovesStaleMaximumAcrossRepeatedLayouts() throws {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let restrictions = try XCTUnwrap(scene.sizeRestrictions)

@@ -193,3 +193,17 @@ and superseded work is guarded before publication. See the [Git report](performa
 Validation for #17: full Mac 2364 tests, four expected skips and zero failures;
 all eleven focused iPhone row-builder tests pass. Signed Mac signature verified.
 PR #16 image CI is also green, with no inline automated-review findings.
+
+## Catalyst idiom experiment (#19)
+
+Both modes were built signed and proven at runtime using processed device family,
+UIDevice and connected-scene traits. The alternate Mac mode raises an actual
+unsupported UIRefreshControl exception in the Git/source review surface. Retain
+the existing mode for this release; no experimental target change is committed.
+Synthetic timings show no established material benefit, and display conditions
+changed, so no visual/performance advantage is claimed. Full evidence and the
+pending manual matrix are in [the idiom report](performance/mac-idiom-experiment-2026-09-07.md).
+
+The retained default mode passes the full Mac suite (2366 tests, four skips,
+zero failures) and all three focused iPhone platform tests. Both experimental
+app signatures verify. Git PR #18 CI is green.
