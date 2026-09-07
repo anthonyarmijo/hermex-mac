@@ -109,6 +109,8 @@ final class APIClientConfigurationTests: APIClientTestCase {
             let body = try JSONSerialization.jsonObject(with: data) as? [String: Any]
             XCTAssertEqual(body?["model"] as? String, "claude-sonnet-4")
             XCTAssertNil(body?["modelId"])
+            // A providerless save keeps the bare {model} body.
+            XCTAssertNil(body?["provider"])
 
             return apiTestJSONResponse("""
             {
@@ -143,6 +145,36 @@ final class APIClientConfigurationTests: APIClientTestCase {
         let response = try await client.saveDefaultModel(model: "@openai:gpt-5.4")
 
         XCTAssertEqual(response.model, "@openai:gpt-5.4")
+    }
+
+    /// A catalog row that names its provider must send it: Core persists
+    /// `{model, provider}` atomically and resolves slash-qualified ids like
+    /// `anthropic/...` through the named provider's route.
+    func testSaveDefaultModelSendsTheRowProviderWhenKnown() async throws {
+        let client = makeClient { request in
+            XCTAssertEqual(request.url?.path, "/api/default-model")
+            XCTAssertEqual(request.httpMethod, "POST")
+
+            let data = try XCTUnwrap(apiTestBodyData(from: request))
+            let body = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            XCTAssertEqual(body?["model"] as? String, "deepseek/deepseek-chat-v3:free")
+            XCTAssertEqual(body?["provider"] as? String, "openrouter")
+
+            return apiTestJSONResponse("""
+            {
+              "ok": true,
+              "model": "deepseek/deepseek-chat-v3:free"
+            }
+            """, for: request)
+        }
+
+        let response = try await client.saveDefaultModel(
+            model: "deepseek/deepseek-chat-v3:free",
+            provider: "openrouter"
+        )
+
+        XCTAssertEqual(response.ok, true)
+        XCTAssertEqual(response.model, "deepseek/deepseek-chat-v3:free")
     }
 
     func testCommandsBuildsExpectedPathAndDecodesTolerantMetadata() async throws {
@@ -297,6 +329,8 @@ final class APIClientConfigurationTests: APIClientTestCase {
             let data = try XCTUnwrap(apiTestBodyData(from: request))
             let body = try JSONSerialization.jsonObject(with: data) as? [String: Any]
             XCTAssertEqual(body?["effort"] as? String, "xhigh")
+            XCTAssertEqual(body?["session_id"] as? String, "session-abc")
+            XCTAssertNil(body?["sessionId"])
 
             return apiTestJSONResponse("""
             {
@@ -306,7 +340,10 @@ final class APIClientConfigurationTests: APIClientTestCase {
             """, for: request)
         }
 
-        let response = try await client.saveReasoningEffort("xhigh")
+        let response = try await client.saveReasoningEffort(
+            "xhigh",
+            sessionID: "session-abc"
+        )
 
         XCTAssertEqual(response.ok, true)
         XCTAssertEqual(response.effectiveEffort, "xhigh")
@@ -667,6 +704,56 @@ final class APIClientConfigurationTests: APIClientTestCase {
         XCTAssertTrue(DefaultProfilePickerView.isCancellationError(APIError.network(underlying: URLError(.cancelled))))
         XCTAssertFalse(DefaultProfilePickerView.isCancellationError(URLError(.timedOut)))
         XCTAssertFalse(DefaultProfilePickerView.isCancellationError(APIError.unauthorized))
+    }
+
+    func testProfilePickerSearchMatchesNameModelAndProvider() {
+        let profiles = [
+            ProfileSummary(
+                name: "default",
+                path: nil,
+                isDefault: true,
+                isActive: true,
+                gatewayRunning: nil,
+                model: "gpt-5.4",
+                provider: "openai",
+                hasEnv: nil,
+                skillCount: nil
+            ),
+            ProfileSummary(
+                name: "research",
+                path: nil,
+                isDefault: false,
+                isActive: false,
+                gatewayRunning: nil,
+                model: "claude-opus-5",
+                provider: "anthropic",
+                hasEnv: nil,
+                skillCount: 3
+            )
+        ]
+
+        func names(_ query: String) -> [String?] {
+            DefaultProfilePickerView.filteredProfiles(profiles, query: query).map(\.name)
+        }
+
+        // "default" is the one profile whose display name differs from its
+        // saved name, so both spellings have to find it.
+        XCTAssertEqual(names("Default"), ["default"])
+        XCTAssertEqual(names("defau"), ["default"])
+        XCTAssertEqual(names("research"), ["research"])
+        XCTAssertEqual(names("OPUS"), ["research"])
+        XCTAssertEqual(names("anthropic"), ["research"])
+        XCTAssertEqual(names("  "), ["default", "research"])
+        XCTAssertEqual(names("nonesuch"), [])
+    }
+
+    func testProfileRowGlyphResolvesOnlyForKnownProviders() {
+        XCTAssertNotNil(ProviderGlyphKind.resolve(providerID: "anthropic"))
+        XCTAssertNotNil(ProviderGlyphKind.resolve(providerID: "OpenAI"))
+        // A nil or unrecognized provider renders no glyph at all, so the
+        // profile row reserves no leading slot for it.
+        XCTAssertNil(ProviderGlyphKind.resolve(providerID: nil))
+        XCTAssertNil(ProviderGlyphKind.resolve(providerID: "acme-internal"))
     }
 
     func testProfileNameRulesMirrorUpstreamPattern() {

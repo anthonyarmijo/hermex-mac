@@ -18,6 +18,8 @@ final class CachedMessage {
     var contentPartsData: Data?
     var reasoning: String?
     var attachmentsData: Data?
+    var turnTps: Double?
+    var turnDuration: Double?
     var cachedAt: Date
     var expiresAt: Date
 
@@ -92,6 +94,8 @@ final class CachedMessage {
         contentPartsData = value.contentPartsData
         reasoning = value.reasoning
         attachmentsData = value.attachmentsData
+        turnTps = value.turnTps
+        turnDuration = value.turnDuration
         self.cachedAt = cachedAt
         expiresAt = cachedAt.addingTimeInterval(CachePolicy.ttl)
     }

@@ -236,11 +236,24 @@ final class ChatViewModel {
     private(set) var isCancellingStream = false
     private(set) var isViewingCachedData = false
     var activeStreamID: String? { streamCoordinator.activeStreamID }
+    var activeRunStartedAt: Date? { streamCoordinator.activeRunStartedAt }
+    /// How the latest run ended, keyed to the turn it answered. Drives the
+    /// settled-turn fold label and which turns start expanded.
+    private(set) var latestRunOutcome: TranscriptTurnRunOutcome?
     var activeStreamRecoveryState: ActiveStreamRecoveryState { streamCoordinator.recoveryState }
+    var liveTokensPerSecond: Double? { streamCoordinator.liveTokensPerSecond }
     private(set) var errorMessage: String?
-    private(set) var sendErrorMessage: String?
+    private(set) var sendErrorMessage: String? {
+        didSet { sendErrorIsFromStreamRecovery = false }
+    }
+    @ObservationIgnored private var sendErrorIsFromStreamRecovery = false
     private(set) var messageActionErrorMessage: String?
     private(set) var cacheErrorMessage: String?
+
+    /// Set while `POST /api/session/clear` is in flight. A send or a second
+    /// `/clear` refuses while it is set, so the clear response cannot wipe a
+    /// message the user started inside that window (#389).
+    private(set) var isClearingConversation = false
     private(set) var lastError: Error?
     private(set) var displayTitle: String
     private(set) var listeningMessageID: String?
@@ -250,11 +263,16 @@ final class ChatViewModel {
     /// (tool-call / reasoning cards, content parts) is taller than the lighter cached
     /// render, so the view re-pins to the bottom on this token *without* animation —
     /// otherwise the height growth produces a visible scroll jump.
-    private(set) var cacheFirstReconcileScrollToken = 0
+    var cacheFirstReconcileScrollToken: Int { transcriptRelayoutScrollToken }
     private(set) var cacheFirstRenderMarker: CacheFirstRenderMarker?
     @ObservationIgnored private var cacheFirstRenderGeneration = 0
     @ObservationIgnored private var cacheFirstFrameWaiter: CheckedContinuation<Bool, Never>?
     @ObservationIgnored private var cacheFirstFrameTimeoutTask: Task<Void, Never>?
+    /// Bumped whenever something re-lays out the transcript under the reader
+    /// without adding a message: the server transcript replacing the lighter
+    /// cache-first render, or the skill catalog turning sent `/slug` text into
+    /// chips. A reader who was pinned to the bottom is put back there.
+    private(set) var transcriptRelayoutScrollToken = 0
     private var hasPrimedInitialCachedMessages = false
     @ObservationIgnored private var pendingStreamingScrollTriggerTask: Task<Void, Never>?
     @ObservationIgnored private var pendingAssistantTokens = StreamingTextBuffer()
@@ -265,7 +283,9 @@ final class ChatViewModel {
     @ObservationIgnored private var pendingStreamingContentFlushTask: Task<Void, Never>?
     private(set) var completedToolCallGroups: [ToolCallGroup] = []
     private var completedToolCallGroupLookup = ToolCallGroupAnchorLookup()
-    private(set) var completedReasoningGroups: [ReasoningGroup] = []
+    private(set) var completedReasoningGroups: [ReasoningGroup] = [] {
+        didSet { recomputeDisplayedTranscriptMessages() }
+    }
     var displayedReasoningGroups: [ReasoningGroup] {
         Self.reasoningDisplayGroups(
             messages: messages,
@@ -297,10 +317,17 @@ final class ChatViewModel {
         let signpostID = TranscriptPerformanceSignpost.begin(
             "Transcript display model",
             sessionID: sessionID ?? "unknown"
+
+        )
+        let renderedActivityAnchorIDs = Self.transcriptActivityAnchorIDs(
+            reasoningGroups: displayedReasoningGroups,
+            toolCallGroups: completedToolCallGroups
         )
         displayedTranscriptMessages = Self.transcriptMessages(
             from: messages,
-            messageOffset: messagesOffset
+            messageOffset: messagesOffset,
+            preservingEmptyAssistantID: streamingAssistantMessageID,
+            renderedActivityAnchorIDs: renderedActivityAnchorIDs
         )
         recomputeCompressionReferenceCard()
         TranscriptPerformanceSignpost.end(
@@ -339,7 +366,12 @@ final class ChatViewModel {
     }
     private(set) var liveToolCalls: [ToolCall] = []
     private(set) var liveReasoningText = ""
-    private(set) var streamingAssistantMessageID: String?
+    private(set) var streamingAssistantMessageID: String? {
+        didSet {
+            guard oldValue != streamingAssistantMessageID else { return }
+            recomputeDisplayedTranscriptMessages()
+        }
+    }
     private(set) var toolCallAnchorMessageID: String?
     private(set) var reasoningAnchorMessageID: String?
     private(set) var messagesOffset = 0 {
@@ -348,6 +380,10 @@ final class ChatViewModel {
     private(set) var hasOlderMessages = false
     private(set) var contextWindowSnapshot: ContextWindowSnapshot?
     private(set) var responseCompletionHapticTrigger = 0
+    /// Bumps at most once per throttle interval while live (non-replay) assistant
+    /// text arrives; the view turns each bump into one streaming pulse haptic.
+    private(set) var streamingHapticPulseTrigger = 0
+    private var streamingHapticPulseThrottle = ChatHaptics.StreamingPulseThrottle()
     private(set) var responseCompletionNeedsTranscriptRefresh = false
     private(set) var modelCatalogGroups: [ModelCatalogGroup] = []
     private(set) var agentCommands: [AgentCommand] = []
@@ -355,6 +391,43 @@ final class ChatViewModel {
     private(set) var workspaceSuggestions: [String] = []
     private(set) var personalitySuggestions: [String] = ["none"]
     private(set) var skillSlashSuggestions: [SkillSlashSuggestion] = []
+    /// The same skills in the shape the chip tokenizer needs, kept beside the
+    /// list so the transcript's `body` never rebuilds it. Always assigned
+    /// through `applySkillSlashSuggestions(_:)`.
+    private(set) var skillChipCatalog: ComposerChipCatalog = .empty
+    /// Workspace files picked from the composer's `@` panel in this chat.
+    /// Held here rather than in the composer so the transcript draws the same
+    /// references the composer does, and so switching chats never carries one
+    /// session's paths into another.
+    private(set) var fileChipPaths: Set<String> = []
+    /// The catalog both the composer and the transcript draw from: this chat's
+    /// skills plus the files it has referenced.
+    private(set) var composerChipCatalog: ComposerChipCatalog = .empty
+    /// The workspace directory listings behind both the composer's `@` panel and
+    /// the confirmation of `@path` references in a restored draft or transcript,
+    /// so a folder either surface has already listed is never listed twice.
+    @ObservationIgnored let filePathSearch = ComposerFilePathSearch()
+    @ObservationIgnored private var fileChipReferenceLoad: Task<Void, Never>?
+    /// Identifies the pass a handle belongs to, so a pass that was cancelled and
+    /// finishes late cannot clear the handle of the one that replaced it.
+    @ObservationIgnored private var fileChipReferenceLoadGeneration = 0
+    /// Candidates the server has already answered for, so a `@word` that is not
+    /// a file is not re-checked on every transcript update.
+    @ObservationIgnored private var checkedFileChipCandidates: Set<String> = []
+    /// Bumped whenever the confirmed paths are thrown away because the
+    /// workspace moved. The chat re-runs its confirmation pass on the change, so
+    /// a file that exists in the new workspace too comes back as a chip.
+    private(set) var fileChipScopeRevision = 0
+    /// Bumped whenever the transcript is replaced rather than extended: a
+    /// cache-first paint, the server's reconcile, a page of older messages. A
+    /// reconcile can rewrite a message in the middle of the list without
+    /// changing the count or the last id, so nothing cheaper than "the
+    /// transcript was swapped" can be trusted to notice a reference arriving.
+    private(set) var transcriptRevision = 0
+    /// Most folders one batch of a confirmation pass lists. The pass works
+    /// through every folder its candidates name, a batch at a time, so a long
+    /// transcript is answered in full without one burst of requests.
+    private static let fileChipDirectoryLimit = 20
     private(set) var profileOptions: [ProfileSummary] = []
     private(set) var isSingleProfileMode = false
     private(set) var selectedProfileName: String?
@@ -383,6 +456,7 @@ final class ChatViewModel {
     var uploadAttachmentErrorMessage: String? { attachmentCoordinator.uploadAttachmentErrorMessage }
     var localAttachmentPreviews: [String: [String: Data]] { attachmentCoordinator.localAttachmentPreviews }
     private(set) var pinnedLocalNotices: [String] = []
+    private(set) var steeringConfirmationNotice: String?
     var approvalPrompt: ApprovalPromptState? { pendingActionCoordinator.approvalPrompt }
     var isRespondingToApproval: Bool { pendingActionCoordinator.isRespondingToApproval }
     var approvalErrorMessage: String? { pendingActionCoordinator.approvalErrorMessage }
@@ -398,7 +472,15 @@ final class ChatViewModel {
     private let sessionID: String?
     private let cacheWriteGeneration = UUID()
     private var cacheWriter: (any CacheWriting)?
-    private var currentWorkspace: String?
+    /// The workspace this chat's session is pointed at. `/workspace` and the
+    /// composer's picker move it without the session id changing, and every
+    /// `@path` the chat has confirmed was confirmed against the old root.
+    private var currentWorkspace: String? {
+        didSet {
+            guard currentWorkspace != oldValue else { return }
+            resetFileChipReferences()
+        }
+    }
     private var currentModel: String?
     private var currentModelProvider: String?
     private var currentProfile: String?
@@ -415,6 +497,8 @@ final class ChatViewModel {
     private let listenRemoteControlCenter: any ListenRemoteControlControlling
     private let userDefaults: UserDefaults
     private let pollingIntervals: ChatPollingIntervals
+    private let steeringConfirmationDismissDelay: @Sendable () async throws -> Void
+    @ObservationIgnored private var steeringConfirmationDismissTask: Task<Void, Never>?
     // Real-time window over which rapid streaming updates coalesce into a single
     // scroll trigger / first content flush. Injectable so tests can drive
     // coalescing deterministically; production keeps the 16ms default.
@@ -461,9 +545,16 @@ final class ChatViewModel {
     private var isStreamConnectionSuspended: Bool { streamCoordinator.isConnectionSuspended }
     var isActiveStreamConnectionSuspended: Bool { streamCoordinator.isConnectionSuspended }
     private var hasLoadedPersonalitySuggestions = false
-    private var isLoadingPersonalitySuggestions = false
-    private var hasLoadedSkillSlashSuggestions = false
-    private var isLoadingSkillSlashSuggestions = false
+    /// The in-flight personality list request, shared by every caller of
+    /// `loadPersonalitySuggestions()` so no view's cancellation can orphan it.
+    private var personalitySuggestionsLoad: Task<Void, Never>?
+    /// Whether a skills list request has succeeded for this session, even when
+    /// it returned no skills. Lets the composer tell "still loading" from
+    /// "loaded, and the server has none".
+    private(set) var hasLoadedSkillSlashSuggestions = false
+    /// The in-flight skill list request, shared by every caller of
+    /// `loadSkillSlashSuggestions()` so no view's cancellation can orphan it.
+    private var skillSlashSuggestionsLoad: Task<Void, Never>?
     private var queuedSlashMessages: [QueuedSlashMessage] = []
     private var isDrainingQueuedSlashMessage = false
     private var activeBtwStreamID: String?
@@ -477,11 +568,16 @@ final class ChatViewModel {
     private var activeStreamReplayMatchedPrefixLength = 0
     private var activeStreamReplayMatchedInterimLength = 0
     private var activeStreamReplayMatchedReasoningLength = 0
+    private var activeStreamReplayLoadedReasoningText = ""
+    private var activeStreamReplayLoadedToolCalls: [ToolCall] = []
+    private var activeStreamReplayLoadedToolMatchIndex = 0
+    private var activeStreamReplayPendingLoadedToolMatchIndex: Int?
     private var activeStreamReplayToolMatchIndex = 0
     private var activeStreamReplayPendingToolMatchIndex: Int?
     private var latestServerLoadHadAssistantResponseAfterLatestUser = false
     private var needsComposerConfigurationReload = false
     private var pendingExplicitModelPick = false
+    private(set) var composerConfigurationInteractionGeneration = 0
 
     init(
         session: SessionSummary,
@@ -495,6 +591,9 @@ final class ChatViewModel {
         liveActivityManager: (any AgentLiveActivityManaging)? = nil,
         showsLiveActivityResponseExcerpts: Bool = false,
         pollingIntervals: ChatPollingIntervals = .standard,
+        steeringConfirmationDismissDelay: @escaping @Sendable () async throws -> Void = {
+            try await Task.sleep(nanoseconds: 3_000_000_000)
+        },
         streamingScrollCoalescingDelayNanoseconds: UInt64 = 16_000_000,
         streamingWordRevealCadenceNanoseconds: UInt64 = 48_000_000,
         streamingMaxRevealLagNanoseconds: UInt64 = 1_000_000_000,
@@ -502,6 +601,7 @@ final class ChatViewModel {
         listenAudioSession: (any ListenAudioSessionControlling)? = nil,
         listenRemoteControlCenter: (any ListenRemoteControlControlling)? = nil,
         serverTTSAudioPlayerFactory: (@MainActor (Data) throws -> any ListenAudioPlaying)? = nil,
+        draftAttachmentStore: any ChatDraftAttachmentStoring = ChatDraftAttachmentStore.shared,
         userDefaults: UserDefaults = .standard
     ) {
         sessionID = session.sessionId
@@ -528,11 +628,15 @@ final class ChatViewModel {
             clarifyStreamClient: clarifyStreamClient ?? SSEClient(),
             pollingIntervals: pollingIntervals
         )
-        self.attachmentCoordinator = ChatAttachmentCoordinator(client: resolvedClient)
+        self.attachmentCoordinator = ChatAttachmentCoordinator(
+            client: resolvedClient,
+            draftAttachmentStore: draftAttachmentStore
+        )
         self.btwStreamClient = btwStreamClient ?? SSEClient()
         self.liveActivityManager = resolvedLiveActivityManager
         self.showsLiveActivityResponseExcerpts = showsLiveActivityResponseExcerpts
         self.pollingIntervals = pollingIntervals
+        self.steeringConfirmationDismissDelay = steeringConfirmationDismissDelay
         self.streamingScrollCoalescingDelayNanoseconds = streamingScrollCoalescingDelayNanoseconds
         self.streamingWordRevealCadenceNanoseconds = streamingWordRevealCadenceNanoseconds
         self.streamingMaxRevealLagNanoseconds = streamingMaxRevealLagNanoseconds
@@ -602,6 +706,7 @@ final class ChatViewModel {
 
     deinit {
         backgroundPollTask?.cancel()
+        steeringConfirmationDismissTask?.cancel()
         pendingStreamingScrollTriggerTask?.cancel()
         pendingStreamingContentFlushTask?.cancel()
         listenPreparationTask?.cancel()
@@ -681,7 +786,7 @@ final class ChatViewModel {
         }
 
         let catalogName = modelCatalogGroups
-            .flatMap(\.models)
+            .flatMap(\.allModels)
             .firstMatchingSelection(modelID: currentModel, providerID: currentModelProvider)?
             .displayName
 
@@ -691,14 +796,6 @@ final class ChatViewModel {
     func isSelectedProfile(_ profile: ProfileSummary) -> Bool {
         guard let profileName = profile.normalizedName else { return false }
         return profileName == (Self.nonEmpty(selectedProfileName) ?? Self.nonEmpty(currentProfile))
-    }
-
-    var hasStreamingAssistantMessageContent: Bool {
-        guard let streamingAssistantMessageID,
-              let message = messages.first(where: { $0.messageId == streamingAssistantMessageID })
-        else { return false }
-
-        return message.content?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
     }
 
     private func scheduleStreamingScrollTrigger() {
@@ -920,7 +1017,13 @@ final class ChatViewModel {
     }
 
     @discardableResult
-    func selectComposerModel(_ option: ModelCatalogOption) async -> Bool {
+    func selectComposerModel(
+        _ option: ModelCatalogOption,
+        recordsInteraction: Bool = true
+    ) async -> Bool {
+        if recordsInteraction {
+            composerConfigurationInteractionGeneration &+= 1
+        }
         guard !option.matchesSelection(modelID: currentModel, providerID: currentModelProvider) else {
             return false
         }
@@ -1035,43 +1138,85 @@ final class ChatViewModel {
         }
     }
 
+    /// Loads the personality list once, sharing a single request between
+    /// callers.
+    ///
+    /// Same shape as `loadSkillSlashSuggestions()` and for the same reason: the
+    /// request lives on a task this view model owns, so a cancelled caller
+    /// cannot take the fetch down with it, and a caller arriving mid-flight
+    /// waits for that same result instead of racing past an "already loading"
+    /// flag and finding an empty list. A failed load clears the handle, so the
+    /// next caller retries.
     func loadPersonalitySuggestions() async {
         guard !hasLoadedPersonalitySuggestions else { return }
-        guard !isLoadingPersonalitySuggestions else { return }
 
-        isLoadingPersonalitySuggestions = true
-        defer { isLoadingPersonalitySuggestions = false }
-
-        do {
-            personalitySuggestions = (try await client.personalities()).slashAutocompleteNames
-            hasLoadedPersonalitySuggestions = true
-        } catch {
-            lastError = error
-            composerConfigurationErrorMessage = error.localizedDescription
-            if personalitySuggestions.isEmpty {
-                personalitySuggestions = ["none"]
+        let load: Task<Void, Never>
+        if let existing = personalitySuggestionsLoad {
+            load = existing
+        } else {
+            load = Task { [weak self] in
+                guard let self else { return }
+                do {
+                    self.personalitySuggestions = (try await self.client.personalities()).slashAutocompleteNames
+                    self.hasLoadedPersonalitySuggestions = true
+                } catch {
+                    self.lastError = error
+                    self.composerConfigurationErrorMessage = error.localizedDescription
+                    if self.personalitySuggestions.isEmpty {
+                        self.personalitySuggestions = ["none"]
+                    }
+                }
+                self.personalitySuggestionsLoad = nil
             }
+            personalitySuggestionsLoad = load
         }
+
+        await load.value
     }
 
+    /// Loads the skill list once, sharing a single request between callers.
+    ///
+    /// The composer asks for this from two `.task` modifiers — the chip warm-up
+    /// for a restored draft and the autocomplete panel — and either can be
+    /// cancelled by an unrelated view update. So the request lives on a task
+    /// this view model owns: a cancelled caller cannot take the fetch down with
+    /// it, and a caller arriving mid-flight waits for that same result instead
+    /// of racing past an "already loading" flag and finding an empty list. A
+    /// failed load clears the handle, so the next caller retries.
     func loadSkillSlashSuggestions() async {
         guard !hasLoadedSkillSlashSuggestions else { return }
-        guard !isLoadingSkillSlashSuggestions else { return }
 
-        isLoadingSkillSlashSuggestions = true
-        defer { isLoadingSkillSlashSuggestions = false }
-
-        do {
-            let response = try await client.skills()
-            skillSlashSuggestions = SlashSkillFormatter.suggestions(from: response.skills ?? [])
-            hasLoadedSkillSlashSuggestions = true
-        } catch {
-            lastError = error
+        let load: Task<Void, Never>
+        if let existing = skillSlashSuggestionsLoad {
+            load = existing
+        } else {
+            load = Task { [weak self] in
+                guard let self else { return }
+                do {
+                    let response = try await self.client.skills()
+                    self.applySkillSlashSuggestions(
+                        SlashSkillFormatter.suggestions(from: response.skills ?? [])
+                    )
+                    self.hasLoadedSkillSlashSuggestions = true
+                } catch {
+                    self.lastError = error
+                }
+                self.skillSlashSuggestionsLoad = nil
+            }
+            skillSlashSuggestionsLoad = load
         }
+
+        await load.value
     }
 
     @discardableResult
-    func selectWorkspacePath(_ path: String) async -> Bool {
+    func selectWorkspacePath(
+        _ path: String,
+        recordsInteraction: Bool = true
+    ) async -> Bool {
+        if recordsInteraction {
+            composerConfigurationInteractionGeneration &+= 1
+        }
         let workspace = path.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !workspace.isEmpty else { return false }
 
@@ -1121,7 +1266,14 @@ final class ChatViewModel {
         }
     }
 
-    func switchProfile(_ profile: ProfileSummary, startNewSession: Bool) async -> ProfileSwitchOutcome? {
+    func switchProfile(
+        _ profile: ProfileSummary,
+        startNewSession: Bool,
+        recordsInteraction: Bool = true
+    ) async -> ProfileSwitchOutcome? {
+        if recordsInteraction {
+            composerConfigurationInteractionGeneration &+= 1
+        }
         guard !isViewingCachedData else {
             composerConfigurationErrorMessage = String(localized: "Reconnect to the server to change profiles.")
             return nil
@@ -1189,7 +1341,13 @@ final class ChatViewModel {
     }
 
     @discardableResult
-    func selectReasoningEffort(_ effort: String) async -> Bool {
+    func selectReasoningEffort(
+        _ effort: String,
+        recordsInteraction: Bool = true
+    ) async -> Bool {
+        if recordsInteraction {
+            composerConfigurationInteractionGeneration &+= 1
+        }
         let selectedEffort = effort.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !selectedEffort.isEmpty else { return false }
 
@@ -1207,13 +1365,22 @@ final class ChatViewModel {
             return false
         }
 
+        guard let sessionID = sessionID?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !sessionID.isEmpty else {
+            composerConfigurationErrorMessage = String(localized: "The server did not provide a session ID.")
+            return false
+        }
+
         isUpdatingComposerConfiguration = true
         composerConfigurationErrorMessage = nil
         lastError = nil
         defer { isUpdatingComposerConfiguration = false }
 
         do {
-            let response = try await client.saveReasoningEffort(selectedEffort)
+            let response = try await client.saveReasoningEffort(
+                selectedEffort,
+                sessionID: sessionID
+            )
             selectedReasoningEffort = response.effectiveEffort ?? selectedEffort
             return true
         } catch {
@@ -1223,8 +1390,89 @@ final class ChatViewModel {
         }
     }
 
-    func uploadAttachment(data: Data, filename: String, previewData: Data? = nil) async {
-        await attachmentCoordinator.uploadAttachment(data: data, filename: filename, previewData: previewData)
+    /// Restores one new-chat settings snapshot only while the configuration
+    /// remains untouched. Profile owns the defaults for the remaining fields,
+    /// so a missing or rejected profile stops the whole replay rather than
+    /// projecting its model/workspace/reasoning choices onto another profile.
+    func restoreDraftSettings(
+        _ rawSettings: ChatDraftSettings,
+        expectedInteractionGeneration: Int
+    ) async {
+        guard canContinueDraftSettingsRestore(expectedInteractionGeneration) else { return }
+        guard messages.isEmpty, activeStreamID == nil else { return }
+        let settings = rawSettings.normalized()
+
+        if let profileName = settings.profileName {
+            guard let option = profileOptions.first(where: { $0.normalizedName == profileName }) else {
+                return
+            }
+            if !isSelectedProfile(option) {
+                let outcome = await switchProfile(
+                    option,
+                    startNewSession: false,
+                    recordsInteraction: false
+                )
+                guard outcome != nil,
+                      canContinueDraftSettingsRestore(expectedInteractionGeneration),
+                      isSelectedProfile(option) else {
+                    return
+                }
+            }
+        }
+
+        guard canContinueDraftSettingsRestore(expectedInteractionGeneration) else { return }
+        if let modelID = settings.modelID,
+           let option = modelCatalogGroups
+               .flatMap(\.allModels)
+               .firstMatchingSelection(modelID: modelID, providerID: settings.modelProviderID),
+           !option.matchesSelection(modelID: currentModel, providerID: currentModelProvider) {
+            _ = await selectComposerModel(option, recordsInteraction: false)
+            guard canContinueDraftSettingsRestore(expectedInteractionGeneration) else { return }
+        }
+
+        if let workspace = settings.workspacePath,
+           workspace != currentWorkspace,
+           workspaceRoots.contains(where: { $0.path == workspace }) {
+            _ = await selectWorkspacePath(workspace, recordsInteraction: false)
+            guard canContinueDraftSettingsRestore(expectedInteractionGeneration) else { return }
+        }
+
+        if let effort = settings.reasoningEffort,
+           effort != selectedReasoningEffort,
+           showsReasoningEffortControl {
+            let supportedEfforts = supportedReasoningEfforts
+            if supportedEfforts == nil || supportedEfforts?.contains(effort.lowercased()) == true {
+                _ = await selectReasoningEffort(effort, recordsInteraction: false)
+            }
+        }
+    }
+
+    func markComposerConfigurationInteraction() {
+        composerConfigurationInteractionGeneration &+= 1
+    }
+
+    private func canContinueDraftSettingsRestore(_ expectedInteractionGeneration: Int) -> Bool {
+        !Task.isCancelled
+            && composerConfigurationInteractionGeneration == expectedInteractionGeneration
+    }
+
+    /// Saves and uploads a freshly staged file into the pending strip. Returns
+    /// nil unless both the durable draft copy and server upload succeed.
+    @discardableResult
+    func uploadAttachment(data: Data, filename: String, previewData: Data? = nil) async -> PendingAttachment? {
+        await attachmentCoordinator.uploadAttachment(
+            data: data,
+            filename: filename,
+            previewData: previewData
+        )
+    }
+
+    /// Re-uploads a restored draft attachment from its durable local copy,
+    /// preserving the draft record's identity. Quiet on failure (returns nil):
+    /// the caller reports in aggregate and keeps the record for a later retry.
+    @discardableResult
+    func reuploadDraftAttachment(_ draftAttachment: ChatDraftAttachment, data: Data) async -> PendingAttachment? {
+        await attachmentCoordinator.reuploadDraftAttachment(data: data, draftAttachment: draftAttachment)
     }
 
     func clearPendingAttachments() {
@@ -1312,7 +1560,7 @@ final class ChatViewModel {
                 "Server reconciliation",
                 sessionID: sessionID
             )
-            let reloadedMessages: [ChatMessage]
+            var reloadedMessages = loadedMessages
             if let cacheReader {
                 do {
                     let cachedMessages = try await cacheReader.cachedMessages(
@@ -1323,7 +1571,7 @@ final class ChatViewModel {
                     ).messages
                     reloadedMessages = Self.mergingLoadedMessages(
                         loadedMessages,
-                        withCachedLocalOptimisticMessages: cachedMessages
+                        withLocalOptimisticMessages: cachedMessages
                     )
                 } catch is CancellationError {
                     TranscriptPerformanceSignpost.end(
@@ -1334,10 +1582,17 @@ final class ChatViewModel {
                     throw CancellationError()
                 } catch {
                     cacheErrorMessage = error.localizedDescription
-                    reloadedMessages = loadedMessages
                 }
-            } else {
-                reloadedMessages = loadedMessages
+            }
+            if streamCoordinator.shouldPreserveLocalOptimisticMessages(
+                for: streamLoadPreparation,
+                loadedActiveStreamID: loadedActiveStreamID
+            ) {
+                reloadedMessages = Self.mergingLoadedMessages(
+                    reloadedMessages,
+                    withLocalOptimisticMessages: previousMessages,
+                    knownMessageIDsBeforeLoad: Set(previousMessages.compactMap(\.messageId))
+                )
             }
             applyCompressionAnchorMetadata(from: session)
             applyReloadedMessages(
@@ -1349,7 +1604,7 @@ final class ChatViewModel {
             if renderedCacheFirst {
                 // The taller server transcript has now replaced the lighter cache-first
                 // render; signal the view to re-pin to the bottom without a visible jump.
-                cacheFirstReconcileScrollToken += 1
+                transcriptRelayoutScrollToken += 1
             }
             latestServerLoadHadAssistantResponseAfterLatestUser = Self.hasAssistantResponseAfterLatestUser(
                 in: messages
@@ -1383,7 +1638,11 @@ final class ChatViewModel {
             streamCoordinator.reconcileSessionLoad(
                 loadedActiveStreamID: loadedActiveStreamID,
                 preparation: streamLoadPreparation,
-                usedCacheFallback: false
+                usedCacheFallback: false,
+                runStartedAt: Self.activeRunStartDate(
+                    pendingStartedAt: session?.pendingStartedAt,
+                    messages: messages
+                )
             )
             TranscriptPerformanceSignpost.end(
                 "Server reconciliation",
@@ -1406,6 +1665,7 @@ final class ChatViewModel {
                     if !cachedMessages.isEmpty {
                         clearCompressionAnchorMetadata()
                         messages = cachedMessages
+                        transcriptRevision &+= 1
                         latestServerLoadHadAssistantResponseAfterLatestUser = Self.hasAssistantResponseAfterLatestUser(
                             in: messages
                         )
@@ -1535,6 +1795,7 @@ final class ChatViewModel {
             generation: cacheFirstRenderGeneration
         )
         messages = cachedMessages
+        transcriptRevision &+= 1
         messagesOffset = 0
         hasOlderMessages = false
         isViewingCachedData = false
@@ -1628,6 +1889,7 @@ final class ChatViewModel {
         // in-flight local content while its send/stream is still running.
         guard messages == placeholder else { return }
         messages = previousMessages
+        transcriptRevision &+= 1
         messagesOffset = previousMessagesOffset
         hasOlderMessages = previousMessagesOffset > 0
     }
@@ -1673,6 +1935,7 @@ final class ChatViewModel {
             let didAddMessages = mergedMessages.count > messages.count
             applyCompressionAnchorMetadata(from: session)
             messages = mergedMessages
+            transcriptRevision &+= 1
             latestServerLoadHadAssistantResponseAfterLatestUser = Self.hasAssistantResponseAfterLatestUser(
                 in: messages
             )
@@ -1743,11 +2006,16 @@ final class ChatViewModel {
 
     nonisolated static func mergingLoadedMessages(
         _ loadedMessages: [ChatMessage],
-        withCachedLocalOptimisticMessages cachedMessages: [ChatMessage]
+        withLocalOptimisticMessages candidateMessages: [ChatMessage],
+        knownMessageIDsBeforeLoad: Set<String>? = nil
     ) -> [ChatMessage] {
-        let localUserMessages = cachedMessages.filter { cachedMessage in
-            isLocalOptimisticUserMessage(cachedMessage)
-                && !loadedMessagesContainEquivalentUserMessage(loadedMessages, localMessage: cachedMessage)
+        let localUserMessages = candidateMessages.filter { candidateMessage in
+            isLocalOptimisticUserMessage(candidateMessage)
+                && !loadedMessagesContainEquivalentUserMessage(
+                    loadedMessages,
+                    localMessage: candidateMessage,
+                    knownMessageIDsBeforeLoad: knownMessageIDsBeforeLoad
+                )
         }
 
         guard !localUserMessages.isEmpty else {
@@ -1795,12 +2063,27 @@ final class ChatViewModel {
             reloadedMessagesOffset: reloadedMessagesOffset
         ) {
             messages = expandedMessages
+            transcriptRevision &+= 1
             messagesOffset = previousMessagesOffset
             hasOlderMessages = previousMessagesOffset > 0
             return
         }
 
+        if let trimmedMessages = Self.trimmingReloadedMessages(
+            reloadedMessages,
+            toPreserveCurrentMessages: previousMessages,
+            currentMessagesOffset: previousMessagesOffset,
+            reloadedMessagesOffset: reloadedMessagesOffset
+        ) {
+            messages = trimmedMessages
+            transcriptRevision &+= 1
+            messagesOffset = previousMessagesOffset
+            hasOlderMessages = previousMessagesOffset > 0 || session?.messagesTruncated == true
+            return
+        }
+
         messages = reloadedMessages
+        transcriptRevision &+= 1
         updateOlderMessagePagination(from: session, loadedMessageCount: messages.count)
     }
 
@@ -1819,6 +2102,42 @@ final class ChatViewModel {
         }
 
         return Array(currentMessages[..<overlapIndex]) + reloadedMessages
+    }
+
+    /// Mid-session reloads (turn-end `.done`, the completion refresh, or a
+    /// pull-to-refresh while reading) can come back with a *smaller*
+    /// `_messages_offset` than the window on screen — the server widened the
+    /// page, or `.done` omitted the offset entirely and it resolved to 0.
+    /// Adopting that shrunken offset renumbers every positional
+    /// `transcript:<absoluteIndex>` renderID, SwiftUI remounts the whole list,
+    /// and a reader who scrolled up is dumped at the top of the session.
+    ///
+    /// When the reloaded window still contains the first message we're already
+    /// showing at the absolute index implied by both offsets, drop the reloaded
+    /// rows *before* that overlap and keep the current offset: rows on screen
+    /// keep their renderIDs, and the tail is replaced with the
+    /// server-authoritative content. Returns nil when the windows don't align
+    /// (fall back to plain replacement).
+    nonisolated private static func trimmingReloadedMessages(
+        _ reloadedMessages: [ChatMessage],
+        toPreserveCurrentMessages currentMessages: [ChatMessage],
+        currentMessagesOffset: Int,
+        reloadedMessagesOffset: Int
+    ) -> [ChatMessage]? {
+        guard reloadedMessagesOffset < currentMessagesOffset,
+              let firstCurrentMessage = currentMessages.first
+        else {
+            return nil
+        }
+
+        let overlapIndex = currentMessagesOffset - reloadedMessagesOffset
+        guard reloadedMessages.indices.contains(overlapIndex),
+              reloadedMessages[overlapIndex].id == firstCurrentMessage.id
+        else {
+            return nil
+        }
+
+        return Array(reloadedMessages[overlapIndex...])
     }
 
     private func updateOlderMessagePagination(from session: SessionDetail?, loadedMessageCount: Int) {
@@ -1910,7 +2229,8 @@ final class ChatViewModel {
                 toolCalls: loadedAssistant.toolCalls ?? snapshotAssistant.toolCalls,
                 contentParts: loadedAssistant.contentParts ?? snapshotAssistant.contentParts,
                 reasoning: loadedAssistant.reasoning ?? snapshotAssistant.reasoning,
-                attachments: loadedAssistant.attachments ?? snapshotAssistant.attachments
+                attachments: loadedAssistant.attachments ?? snapshotAssistant.attachments,
+                turnTps: loadedAssistant.turnTps ?? snapshotAssistant.turnTps
             )
             return ActiveStreamMessageMerge(
                 messages: mergedMessages,
@@ -1972,6 +2292,30 @@ final class ChatViewModel {
             message.role == candidate.role &&
                 message.content?.trimmingCharacters(in: .whitespacesAndNewlines) == candidateContent
         }
+    }
+
+    /// When the session's in-flight turn started, for seeding the stream
+    /// coordinator's run clock: the server's `pending_started_at` first, then the
+    /// latest user message's timestamp. Both survive leaving and re-entering the
+    /// session, so "Working for" keeps counting from one instant; nil leaves the
+    /// coordinator counting from when it discovered the stream.
+    nonisolated private static func activeRunStartDate(
+        pendingStartedAt: Double?,
+        messages: [ChatMessage]
+    ) -> Date? {
+        if let pendingStartedAt, pendingStartedAt > 0 {
+            return Date(timeIntervalSince1970: pendingStartedAt)
+        }
+
+        guard let latestUserTimestamp = messages
+            .last(where: TranscriptTurnClassifier.isUserTurnBoundary)?
+            .timestamp,
+            latestUserTimestamp > 0
+        else {
+            return nil
+        }
+
+        return Date(timeIntervalSince1970: latestUserTimestamp)
     }
 
     nonisolated private static func hasAssistantResponseAfterLatestUser(in messages: [ChatMessage]) -> Bool {
@@ -2055,7 +2399,8 @@ final class ChatViewModel {
 
     nonisolated private static func loadedMessagesContainEquivalentUserMessage(
         _ loadedMessages: [ChatMessage],
-        localMessage: ChatMessage
+        localMessage: ChatMessage,
+        knownMessageIDsBeforeLoad: Set<String>?
     ) -> Bool {
         let localContent = normalizedUserMessageContent(localMessage.content)
         let localAttachmentKeys = attachmentKeys(for: localMessage)
@@ -2078,6 +2423,14 @@ final class ChatViewModel {
                 else {
                     return false
                 }
+            }
+
+            if let loadedMessageID = loadedMessage.messageId,
+               let knownMessageIDsBeforeLoad,
+               knownMessageIDsBeforeLoad.contains(loadedMessageID) {
+                // This row already preceded the optimistic turn. Matching text
+                // cannot make it the server-confirmed copy of a repeated prompt.
+                return false
             }
 
             guard let localTimestamp = localMessage.timestamp,
@@ -2171,8 +2524,15 @@ final class ChatViewModel {
             return false
         }
 
+        guard !isClearingConversation else {
+            sendErrorMessage = String(localized: "Wait for the conversation to finish clearing.")
+            return false
+        }
+
         let message = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !message.isEmpty else { return false }
+        // Attachment-only sends (empty text, staged attachments) synthesize
+        // their message text in `PendingAttachment.chatMessageText` below.
+        guard !message.isEmpty || !attachmentCoordinator.pendingAttachments.isEmpty else { return false }
 
         guard let sessionID else {
             sendErrorMessage = String(localized: "The server did not provide a session ID.")
@@ -2181,17 +2541,28 @@ final class ChatViewModel {
 
         let localMessageID = "local-\(UUID().uuidString)"
         let attachmentPreparation = attachmentCoordinator.prepareForSend(localMessageID: localMessageID)
+        let messageForAPI = attachmentPreparation.chatMessageText(draft: message)
+        // Attachment-only sends show the synthesized text in the bubble, matching
+        // what a reload from the server displays; text sends keep the bare draft.
+        let displayText = message.isEmpty ? messageForAPI : message
 
-        return await performChatSend(
+        let didStart = await performChatSend(
             sessionID: sessionID,
             localMessageID: localMessageID,
-            displayContent: message,
-            messageForAPI: attachmentPreparation.chatMessageText(draft: message),
+            displayContent: displayText,
+            messageForAPI: messageForAPI,
             messageAttachments: attachmentPreparation.messageAttachments,
             apiPayloads: attachmentPreparation.apiPayloads,
             attachmentsToRestoreOnFailure: attachmentPreparation.attachments,
             modelContext: modelContext
         )
+        if didStart {
+            for attachment in attachmentPreparation.attachments {
+                guard let fileName = attachment.draftFileName else { continue }
+                await attachmentCoordinator.deleteDraftCopy(named: fileName)
+            }
+        }
+        return didStart
     }
 
     /// Records → transcribes → uploads → sends a server-transcribed voice note
@@ -2328,6 +2699,7 @@ final class ChatViewModel {
 
         do {
             let explicitModelPick = explicitModelPickForChatStart()
+            let sentAt = Date()
             let response = try await client.startChat(
                 sessionID: sessionID,
                 message: messageForAPI,
@@ -2348,7 +2720,10 @@ final class ChatViewModel {
             }
 
             completeExplicitModelPickForChatStart(explicitModelPick)
-            streamCoordinator.start(streamID: streamID)
+            streamCoordinator.start(
+                streamID: streamID,
+                runStartedAt: response.runStartedAt(sentAt: sentAt)
+            )
             return true
         } catch {
             if let streamID = (error as? APIError)?.activeStreamID {
@@ -2488,11 +2863,17 @@ final class ChatViewModel {
         await persistMessageSnapshot(sessionID: sessionID, modelContext: modelContext)
     }
 
+    func cacheCompletedResponse(modelContext: ModelContext) async {
+        guard let sessionID else { return }
+        await cacheCurrentMessages(sessionID: sessionID, modelContext: modelContext)
+    }
+
     func clearTranscript() {
         cancelPendingStreamingScrollTrigger()
         resetPendingStreamingContentBuffers()
         clearCompressionAnchorMetadata()
         messages = []
+        transcriptRevision &+= 1
         messagesOffset = 0
         hasOlderMessages = false
         setCompletedToolCallGroups([])
@@ -2500,6 +2881,7 @@ final class ChatViewModel {
         liveToolCalls = []
         liveReasoningText = ""
         pinnedLocalNotices = []
+        dismissSteeringConfirmation()
         streamingAssistantMessageID = nil
         toolCallAnchorMessageID = nil
         reasoningAnchorMessageID = nil
@@ -2507,13 +2889,18 @@ final class ChatViewModel {
         sendErrorMessage = nil
     }
 
-    func executeSlashCommand(_ command: SlashCommand, args: String = "") async -> SlashCommandExecutionResult {
+    /// `modelContext` is only needed by commands that rewrite the offline cache
+    /// (`/clear`); every other command ignores it.
+    func executeSlashCommand(
+        _ command: SlashCommand,
+        args: String = "",
+        modelContext: ModelContext? = nil
+    ) async -> SlashCommandExecutionResult {
         switch command.handler {
         case .clientSide(let action):
             switch action {
             case .clear:
-                clearTranscript()
-                return .executed(message: nil)
+                return await clearConversationFromSlashCommand(modelContext: modelContext)
             case .stop:
                 await cancelActiveStream()
                 return .executed(message: nil)
@@ -2618,7 +3005,8 @@ final class ChatViewModel {
         do {
             let response = try await client.steerChat(sessionID: sessionID, text: message)
             if response.accepted == true {
-                return .executed(message: String(localized: "Steering hint delivered."))
+                showSteeringConfirmation(String(localized: "Steering hint delivered."))
+                return .executed(message: nil)
             }
         } catch {
             lastError = error
@@ -2870,7 +3258,16 @@ final class ChatViewModel {
             if Self.reasoningDisplayArgs.contains(reasoning) {
                 _ = try await client.saveReasoningDisplay(reasoning)
             } else if Self.reasoningEffortArgs.contains(reasoning) {
-                let response = try await client.saveReasoningEffort(reasoning)
+                guard let sessionID = sessionID?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      !sessionID.isEmpty else {
+                    let message = String(localized: "The server did not provide a session ID.")
+                    composerConfigurationErrorMessage = message
+                    return .unsupported(friendlyMessage: message)
+                }
+                let response = try await client.saveReasoningEffort(
+                    reasoning,
+                    sessionID: sessionID
+                )
                 selectedReasoningEffort = response.effectiveEffort ?? reasoning
             } else {
                 return .unsupported(friendlyMessage: String(localized: "Unknown reasoning level: \(reasoning)."))
@@ -3022,9 +3419,213 @@ final class ChatViewModel {
 
         let response = try await client.skills()
         let suggestions = SlashSkillFormatter.suggestions(from: response.skills ?? [])
-        skillSlashSuggestions = suggestions
+        applySkillSlashSuggestions(suggestions)
         hasLoadedSkillSlashSuggestions = true
         return suggestions
+    }
+
+    /// The one way the skill list changes, so the chip catalog can never fall
+    /// out of step with it.
+    private func applySkillSlashSuggestions(_ suggestions: [SkillSlashSuggestion]) {
+        let previousCatalog = skillChipCatalog
+        skillSlashSuggestions = suggestions
+        skillChipCatalog = ComposerChipCatalog(skills: suggestions)
+        composerChipCatalog = skillChipCatalog.withFilePaths(fileChipPaths)
+
+        // A catalog that draws differently redraws the transcript: sent `/slug`
+        // text becomes a chip, or an existing chip changes size or goes away.
+        // Signal the relayout so a reader pinned to the bottom stays there. A
+        // list that came back the same changes nothing and says nothing.
+        if skillChipCatalog != previousCatalog {
+            transcriptRelayoutScrollToken += 1
+        }
+    }
+
+    /// Remembers a workspace file the user picked in the composer, so its
+    /// `@path` draws as a chip there and in the sent message.
+    ///
+    /// Recorded straight away rather than waiting on the server: the panel only
+    /// ever offers paths a listing just returned, so the chip appears with the
+    /// insertion instead of a beat later.
+    func recordFileChipReference(_ path: String) {
+        let path = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !path.isEmpty else { return }
+
+        checkedFileChipCandidates.insert(path)
+        guard !fileChipPaths.contains(path) else { return }
+
+        fileChipPaths.insert(path)
+        composerChipCatalog = skillChipCatalog.withFilePaths(fileChipPaths)
+        // A wider catalog can turn sent `@path` text into a chip, which changes
+        // the height of a bubble already on screen.
+        transcriptRelayoutScrollToken += 1
+    }
+
+    /// Confirms the `@path` candidates in `draft` and in the transcript's user
+    /// messages against the session's workspace.
+    ///
+    /// What the composer picked lives in this view model, and this view model
+    /// dies when the chat is left — so on the way back in, and on any other
+    /// device, the only thing that knows a `@word` is a file is the server. Each
+    /// candidate's parent folder is listed once, through the same cache the `@`
+    /// panel fills, and every candidate the listing contains becomes a chip in
+    /// both the composer and the transcript.
+    ///
+    /// The work lives on a task this view model owns, like the skill loader: a
+    /// caller cancelled by an unrelated view update cannot take the listings
+    /// down with it, and a caller arriving mid-pass waits for that pass rather
+    /// than starting a second one over the same folders.
+    func loadFileChipReferences(draft: String) async {
+        guard let sessionID, !sessionID.isEmpty else { return }
+
+        while let existing = fileChipReferenceLoad {
+            await existing.value
+        }
+
+        let candidates = fileChipReferenceCandidates(draft: draft)
+        guard !candidates.isEmpty else { return }
+
+        let workspace = currentWorkspace
+        fileChipReferenceLoadGeneration &+= 1
+        let loadGeneration = fileChipReferenceLoadGeneration
+        let load = Task { [weak self] in
+            guard let self else { return }
+            await self.confirmFileChipReferences(candidates, sessionID: sessionID, workspace: workspace)
+            guard loadGeneration == self.fileChipReferenceLoadGeneration else { return }
+            self.fileChipReferenceLoad = nil
+        }
+        fileChipReferenceLoad = load
+        await load.value
+    }
+
+    /// Forgets every confirmed `@path` because the workspace moved.
+    ///
+    /// A path is only a file inside the workspace it was found in, so switching
+    /// one has to take the chips with it — including the ones accepted from the
+    /// panel, which were never checked against anything else. The revision bump
+    /// is what asks the chat for a fresh pass, so a file that exists under the
+    /// new root as well comes straight back.
+    private func resetFileChipReferences() {
+        filePathSearch.reset()
+        checkedFileChipCandidates.removeAll()
+        // Cancelling, not just forgetting: a pass left running would keep
+        // listing the old root's folders, and every folder it had already
+        // listed would settle candidates against a workspace that is gone.
+        fileChipReferenceLoad?.cancel()
+        fileChipReferenceLoad = nil
+        fileChipReferenceLoadGeneration &+= 1
+
+        fileChipScopeRevision &+= 1
+        guard !fileChipPaths.isEmpty else { return }
+
+        fileChipPaths.removeAll()
+        composerChipCatalog = skillChipCatalog.withFilePaths(fileChipPaths)
+        transcriptRelayoutScrollToken += 1
+    }
+
+    /// Every `@…` the chat still has no answer for, draft first: what the user
+    /// is looking at while typing is worth confirming before the backlog.
+    private func fileChipReferenceCandidates(draft: String) -> [String] {
+        var candidates: [String] = []
+        var seen: Set<String> = []
+
+        // The draft's own trailing reference counts as finished here: a chip
+        // whose trailing space was backspaced is still a reference, and by the
+        // time a pass runs the user has moved on to whatever changed the token.
+        for text in [draft] + messages.filter({ $0.role == "user" }).map({ $0.content ?? "" }) {
+            for candidate in ComposerChipTokenizer.fileReferenceCandidates(in: text, isComplete: true) {
+                guard !checkedFileChipCandidates.contains(candidate),
+                      !fileChipPaths.contains(candidate),
+                      seen.insert(candidate).inserted
+                else {
+                    continue
+                }
+                candidates.append(candidate)
+            }
+        }
+
+        return candidates
+    }
+
+    /// Lists each candidate's parent folder once and keeps the candidates that
+    /// folder actually holds.
+    ///
+    /// A folder whose listing failed leaves its candidates unanswered rather
+    /// than answered "no", so the next pass retries them; a folder that answered
+    /// marks its candidates settled, which is what keeps a `@word` that is not a
+    /// file from costing a request on every transcript update.
+    private func confirmFileChipReferences(
+        _ candidates: [String],
+        sessionID: String,
+        workspace: String?
+    ) async {
+        var wantedByDirectory: [String: Set<String>] = [:]
+        var directories: [String] = []
+        for candidate in candidates {
+            let directory = FileTree.parentPath(of: candidate)
+            if wantedByDirectory[directory] == nil { directories.append(directory) }
+            wantedByDirectory[directory, default: []].insert(candidate)
+        }
+
+        var start = directories.startIndex
+        while start < directories.endIndex {
+            let end = directories.index(
+                start,
+                offsetBy: Self.fileChipDirectoryLimit,
+                limitedBy: directories.endIndex
+            ) ?? directories.endIndex
+            let batch = directories[start..<end]
+            start = end
+
+            var confirmed: Set<String> = []
+            var settled: Set<String> = []
+
+            for directory in batch {
+                // Between folders, not just between batches: a workspace switch
+                // part-way through a pass must stop it before the next request,
+                // and nothing it has learned since may be applied.
+                guard !Task.isCancelled else { return }
+                guard let wanted = wantedByDirectory[directory] else { continue }
+                guard let entries = try? await filePathSearch.entries(
+                    in: directory,
+                    sessionID: sessionID,
+                    apiClient: client
+                ) else {
+                    // A listing that failed is not an answer. Leaving the
+                    // candidates open is what lets the next pass retry them.
+                    continue
+                }
+
+                confirmed.formUnion(wanted.intersection(Set(entries.map(\.path))))
+                settled.formUnion(wanted)
+            }
+
+            // Checked between batches as well as at the end: the chat can be
+            // left, or its workspace switched, part-way through a long pass, and
+            // a listing taken against the old root must never widen the new
+            // one's catalog.
+            guard !Task.isCancelled,
+                  sessionID == self.sessionID,
+                  workspace == currentWorkspace
+            else {
+                return
+            }
+
+            apply(confirmed: confirmed, settled: settled)
+        }
+    }
+
+    /// Folds one batch's answers into the catalog, drawing whatever it confirmed
+    /// straight away rather than making the reader wait for the last folder.
+    private func apply(confirmed: Set<String>, settled: Set<String>) {
+        checkedFileChipCandidates.formUnion(settled)
+
+        let recovered = confirmed.subtracting(fileChipPaths)
+        guard !recovered.isEmpty else { return }
+
+        fileChipPaths.formUnion(recovered)
+        composerChipCatalog = skillChipCatalog.withFilePaths(fileChipPaths)
+        transcriptRelayoutScrollToken += 1
     }
 
     private func branchSessionFromSlashCommand(_ args: String) async -> SlashCommandExecutionResult {
@@ -3148,6 +3749,7 @@ final class ChatViewModel {
 
             applyCompressionAnchorMetadata(from: session)
             messages = session.messages ?? []
+            transcriptRevision &+= 1
             updateOlderMessagePagination(from: session, loadedMessageCount: messages.count)
             isViewingCachedData = false
             let snapshot = ContextWindowSnapshot(
@@ -3196,6 +3798,83 @@ final class ChatViewModel {
             }
 
             return .executed(message: String(localized: "Context compressed.\n\n\(details)"))
+        } catch {
+            lastError = error
+            return .unsupported(friendlyMessage: error.localizedDescription)
+        }
+    }
+
+    /// Why `/clear` cannot run right now, or `nil` when it can. These are the
+    /// same refusals `/undo` uses, and they never touch the network. `ChatView`
+    /// reads this before showing the destructive confirmation so a refusal is
+    /// never hidden behind an alert the user has to answer first.
+    var clearConversationRefusal: String? {
+        if isViewingCachedData {
+            return String(localized: "Reconnect to the server to clear the conversation.")
+        }
+
+        if isCLISession {
+            return String(localized: "Clearing the conversation is available for WebUI sessions only.")
+        }
+
+        if activeStreamID != nil {
+            return String(localized: "Wait for the current response to finish before clearing the conversation.")
+        }
+
+        if isClearingConversation {
+            return String(localized: "Wait for the conversation to finish clearing.")
+        }
+
+        if sessionID == nil {
+            return String(localized: "The server did not provide a session ID.")
+        }
+
+        return nil
+    }
+
+    /// Clears the conversation on the server, then locally. Destructive and
+    /// irreversible, so `ChatView` confirms before calling this. Pass the
+    /// `ModelContext` so the offline cache is emptied too — otherwise a cold
+    /// open would repaint the history this just deleted.
+    func clearConversationFromSlashCommand(modelContext: ModelContext?) async -> SlashCommandExecutionResult {
+        if let refusal = clearConversationRefusal {
+            return .unsupported(friendlyMessage: refusal)
+        }
+
+        guard let sessionID else {
+            return .unsupported(friendlyMessage: String(localized: "The server did not provide a session ID."))
+        }
+
+        lastError = nil
+        sendErrorMessage = nil
+        isClearingConversation = true
+        defer { isClearingConversation = false }
+
+        do {
+            let response = try await client.clearSession(id: sessionID)
+            if let error = response.error {
+                return .unsupported(friendlyMessage: error)
+            }
+
+            clearTranscript()
+            displayTitle = Self.displayTitle(from: response.session?.title)
+            liveActivityManager.update(.sessionTitle(displayTitle))
+
+            if let modelContext {
+                do {
+                    _ = try await resolvedCacheWriter(modelContext: modelContext)?.write(.replaceMessages(CacheMessageListSnapshot(
+                        serverURL: server, sessionID: sessionID, messages: [], generation: cacheWriteGeneration
+                    )))
+                } catch {
+                    // The server history is gone but the offline copy still
+                    // holds it, so a later cold open would repaint messages the
+                    // user just deleted. Say so where they will see it.
+                    cacheErrorMessage = error.localizedDescription
+                    sendErrorMessage = String(localized: "Cleared on the server, but the offline copy of this conversation could not be updated.")
+                }
+            }
+
+            return .executed(message: nil)
         } catch {
             lastError = error
             return .unsupported(friendlyMessage: error.localizedDescription)
@@ -3312,6 +3991,7 @@ final class ChatViewModel {
             attachmentCoordinator.removeAllLocalPreviews()
 
             let explicitModelPick = explicitModelPickForChatStart()
+            let sentAt = Date()
             let chatResponse = try await client.startChat(
                 sessionID: sessionID,
                 message: lastUserText,
@@ -3336,7 +4016,10 @@ final class ChatViewModel {
                 )
             )
 
-            streamCoordinator.start(streamID: streamID)
+            streamCoordinator.start(
+                streamID: streamID,
+                runStartedAt: chatResponse.runStartedAt(sentAt: sentAt)
+            )
             return .executed(message: nil)
         } catch {
             lastError = error
@@ -3360,7 +4043,7 @@ final class ChatViewModel {
 
     private func modelOption(matching query: String) -> ModelCatalogOption? {
         let normalizedQuery = query.lowercased()
-        let options = modelCatalogGroups.flatMap(\.slashAutocompleteModels)
+        let options = modelCatalogGroups.flatMap(\.allModels)
 
         if let exact = options.first(where: { $0.id.lowercased() == normalizedQuery }) {
             return exact
@@ -3405,6 +4088,30 @@ final class ChatViewModel {
         pinnedLocalNotices.append(trimmed)
     }
 
+    private func showSteeringConfirmation(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        steeringConfirmationDismissTask?.cancel()
+        steeringConfirmationNotice = trimmed
+        let dismissDelay = steeringConfirmationDismissDelay
+        steeringConfirmationDismissTask = Task { @MainActor [weak self] in
+            do {
+                try await dismissDelay()
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            self?.dismissSteeringConfirmation()
+        }
+    }
+
+    private func dismissSteeringConfirmation() {
+        steeringConfirmationDismissTask?.cancel()
+        steeringConfirmationDismissTask = nil
+        steeringConfirmationNotice = nil
+    }
+
     private func appendLocalMessage(_ text: String, role: String, idPrefix: String) -> String? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
@@ -3436,7 +4143,8 @@ final class ChatViewModel {
             toolCalls: existing.toolCalls,
             contentParts: existing.contentParts,
             reasoning: existing.reasoning,
-            attachments: existing.attachments
+            attachments: existing.attachments,
+            turnTps: existing.turnTps
         )
         scheduleStreamingScrollTrigger()
     }
@@ -3558,6 +4266,7 @@ final class ChatViewModel {
 
             // Now send the edited text through the normal chat flow
             let explicitModelPick = explicitModelPickForChatStart()
+            let sentAt = Date()
             let chatResponse = try await client.startChat(
                 sessionID: sessionID,
                 message: editedText,
@@ -3586,7 +4295,10 @@ final class ChatViewModel {
 
             streamCoordinator.prepareForNewResponse()
             responseCompletionNeedsTranscriptRefresh = false
-            streamCoordinator.start(streamID: streamID)
+            streamCoordinator.start(
+                streamID: streamID,
+                runStartedAt: chatResponse.runStartedAt(sentAt: sentAt)
+            )
             return true
         } catch {
             lastError = error
@@ -3654,6 +4366,7 @@ final class ChatViewModel {
             }
 
             let explicitModelPick = explicitModelPickForChatStart()
+            let sentAt = Date()
             let chatResponse = try await client.startChat(
                 sessionID: sessionID,
                 message: userText,
@@ -3672,7 +4385,10 @@ final class ChatViewModel {
             completeExplicitModelPickForChatStart(explicitModelPick)
             streamCoordinator.prepareForNewResponse()
             responseCompletionNeedsTranscriptRefresh = false
-            streamCoordinator.start(streamID: streamID)
+            streamCoordinator.start(
+                streamID: streamID,
+                runStartedAt: chatResponse.runStartedAt(sentAt: sentAt)
+            )
             return true
         } catch {
             lastError = error
@@ -3910,14 +4626,14 @@ final class ChatViewModel {
     }
 
     @discardableResult
-    private func restoreActiveStreamSnapshotIfAvailable(streamID: String) -> String? {
+    private func restoreActiveStreamSnapshotIfAvailable(streamID: String) -> ChatStreamSnapshotRestoreResult {
         guard let sessionID,
               let snapshot = ActiveChatStreamSnapshotStore.shared.snapshot(
                 server: server,
                 sessionID: sessionID,
                 streamID: streamID
               )
-        else { return nil }
+        else { return .notRestored }
 
         let merge = Self.mergingLoadedMessages(messages, withActiveStreamSnapshot: snapshot)
         messages = merge.messages
@@ -3945,7 +4661,10 @@ final class ChatViewModel {
         attachmentCoordinator.mergeLocalAttachmentPreviews(snapshot.localAttachmentPreviews)
         pinnedLocalNotices = snapshot.pinnedLocalNotices
         scheduleStreamingScrollTrigger()
-        return snapshot.activeStreamLastEventID
+        return ChatStreamSnapshotRestoreResult(
+            didRestoreSnapshot: true,
+            lastEventID: snapshot.activeStreamLastEventID
+        )
     }
 
     private func removeActiveStreamSnapshot(streamID: String?) {
@@ -4023,7 +4742,7 @@ final class ChatViewModel {
             activeBtwAnswer = "Error: \(message)"
             updateActiveBtwMessage(isLoading: false)
             finishBtwStream()
-        case .ignored, .reasoning, .toolStarted, .toolCompleted, .title, .pendingSteerLeftover:
+        case .heartbeat, .ignored, .reasoning, .toolStarted, .toolCompleted, .title, .metering, .pendingSteerLeftover:
             break
         }
     }
@@ -4144,7 +4863,8 @@ final class ChatViewModel {
                 toolCalls: existing.toolCalls,
                 contentParts: existing.contentParts,
                 reasoning: existing.reasoning,
-                attachments: existing.attachments
+                attachments: existing.attachments,
+                turnTps: existing.turnTps
             )
             scheduleStreamingScrollTrigger()
             return true
@@ -4169,7 +4889,7 @@ final class ChatViewModel {
             let previousMessagesOffset = messagesOffset
             let reloadedMessages = Self.mergingLoadedMessages(
                 completedMessages,
-                withCachedLocalOptimisticMessages: messages
+                withLocalOptimisticMessages: messages
             )
             applyReloadedMessages(
                 reloadedMessages,
@@ -4241,6 +4961,7 @@ final class ChatViewModel {
 
         completedToolCallGroups = groups
         completedToolCallGroupLookup = lookup
+        recomputeDisplayedTranscriptMessages()
     }
 
     private func appendCompletedToolCallGroup(_ group: ToolCallGroup) {
@@ -4304,15 +5025,23 @@ final class ChatViewModel {
     private func appendReasoning(_ text: String) -> Bool {
         guard !text.isEmpty else { return false }
 
-        // Same append-time dedup contract as appendAssistantToken: return true iff
-        // the event contributed new content, mutate only via the coalesced flush.
+        // As with assistant tokens, normal streams do not need replay matching.
+        // Avoid joining all pending reasoning text unless this is a reconnect
+        // replay where duplicate-event suppression is required.
         _ = ensureStreamingAssistantMessage()
-        let effectiveContent = liveReasoningText + pendingReasoningChunks.joined()
-        let remainder = deduplicatedReplayText(
-            text,
-            existingContent: effectiveContent,
-            matchedPrefixLength: &activeStreamReplayMatchedReasoningLength
-        )
+        let remainder: String
+        if isActiveStreamReplayConnection {
+            let effectiveContent = activeStreamReplayLoadedReasoningText
+                + liveReasoningText
+                + pendingReasoningChunks.joined()
+            remainder = deduplicatedReplayText(
+                text,
+                existingContent: effectiveContent,
+                matchedPrefixLength: &activeStreamReplayMatchedReasoningLength
+            )
+        } else {
+            remainder = text
+        }
         guard !remainder.isEmpty else { return false }
 
         pendingReasoningChunks.append(remainder)
@@ -4344,6 +5073,11 @@ final class ChatViewModel {
             toolCallAnchorMessageID = messageID
         }
 
+        if let duplicateLoadedIndex = duplicateLoadedReplayToolStartIndex(for: payload) {
+            activeStreamReplayPendingLoadedToolMatchIndex = duplicateLoadedIndex
+            return false
+        }
+
         if let duplicateReplayIndex = duplicateReplayToolStartIndex(for: payload) {
             activeStreamReplayPendingToolMatchIndex = duplicateReplayIndex
             return false
@@ -4366,6 +5100,10 @@ final class ChatViewModel {
         let messageID = ensureStreamingAssistantMessage()
         if toolCallAnchorMessageID == nil {
             toolCallAnchorMessageID = messageID
+        }
+
+        if duplicateLoadedReplayToolCompletion(for: payload) {
+            return false
         }
 
         if let duplicateReplayIndex = duplicateReplayToolCompletionIndex(for: payload) {
@@ -4441,6 +5179,68 @@ final class ChatViewModel {
         return index
     }
 
+    private func duplicateLoadedReplayToolStartIndex(for payload: ToolStreamEvent) -> Int? {
+        guard isActiveStreamReplayConnection else { return nil }
+
+        if let stableID = payload.stableID?.nonEmptyReplayMatchText,
+           let index = activeStreamReplayLoadedToolCalls.firstIndex(where: { $0.matchesStableToolID(stableID) }) {
+            return index
+        }
+
+        guard activeStreamReplayLoadedToolMatchIndex < activeStreamReplayLoadedToolCalls.count else {
+            return nil
+        }
+
+        let index = activeStreamReplayLoadedToolMatchIndex
+        return activeStreamReplayLoadedToolCalls[index].matchesReplayToolStart(payload) ? index : nil
+    }
+
+    private func duplicateLoadedReplayToolCompletion(for payload: ToolStreamEvent) -> Bool {
+        guard isActiveStreamReplayConnection else { return false }
+
+        let index: Int?
+        if let stableID = payload.stableID?.nonEmptyReplayMatchText {
+            index = activeStreamReplayLoadedToolCalls.firstIndex { $0.matchesStableToolID(stableID) }
+        } else if let pendingIndex = activeStreamReplayPendingLoadedToolMatchIndex,
+                  pendingIndex < activeStreamReplayLoadedToolCalls.count,
+                  activeStreamReplayLoadedToolCalls[pendingIndex].matchesReplayToolCompletion(payload) {
+            index = pendingIndex
+        } else if activeStreamReplayLoadedToolMatchIndex < activeStreamReplayLoadedToolCalls.count,
+                  activeStreamReplayLoadedToolCalls[activeStreamReplayLoadedToolMatchIndex]
+                    .matchesReplayToolCompletion(payload) {
+            index = activeStreamReplayLoadedToolMatchIndex
+        } else {
+            index = nil
+        }
+
+        guard let index else { return false }
+        activeStreamReplayLoadedToolMatchIndex = max(activeStreamReplayLoadedToolMatchIndex, index + 1)
+        activeStreamReplayPendingLoadedToolMatchIndex = nil
+        return true
+    }
+
+    private func loadedReplayReasoningText() -> String {
+        guard let streamingAssistantMessageID,
+              let message = messages.first(where: { $0.messageId == streamingAssistantMessageID })
+        else { return "" }
+
+        return Self.reasoningTexts(from: message).joined(separator: "\n")
+    }
+
+    private func loadedReplayToolCalls() -> [ToolCall] {
+        let currentTurnAnchors = Set(
+            TranscriptTurnClassifier.currentTurnAssistantAnchorIDs(
+                in: messages,
+                messageOffset: messagesOffset
+            )
+        )
+        return completedToolCallGroups
+            .filter { group in
+                group.anchorMessageID.map(currentTurnAnchors.contains) ?? false
+            }
+            .flatMap(\.toolCalls)
+    }
+
     private func stableReplayToolIndex(for payload: ToolStreamEvent) -> Int? {
         guard let stableID = payload.stableID?.nonEmptyReplayMatchText else { return nil }
 
@@ -4500,6 +5300,12 @@ final class ChatViewModel {
         streamingPerformanceDiagnostics.scannedCharacters += scannedCharacters
 #endif
         scheduleStreamingContentFlush()
+        // Replayed text is catch-up, not new work: reattaching to a running
+        // stream must not pulse for every token that already happened.
+        if !isActiveStreamReplayConnection,
+           streamingHapticPulseThrottle.shouldPulse(at: Date().timeIntervalSinceReferenceDate) {
+            streamingHapticPulseTrigger += 1
+        }
         return true
     }
 
@@ -4554,7 +5360,8 @@ final class ChatViewModel {
                 toolCalls: existing.toolCalls,
                 contentParts: existing.contentParts,
                 reasoning: existing.reasoning,
-                attachments: existing.attachments
+                attachments: existing.attachments,
+                turnTps: existing.turnTps
             )
             return true
         }
@@ -5048,7 +5855,7 @@ final class ChatViewModel {
     Available mobile commands:
 
     `/help` - Show this command list.
-    `/clear` - Clear the local transcript.
+    `/clear` - Clear this conversation on the server. Asks first.
     `/stop` - Stop the current response.
     `/new` - Open a fresh session.
     `/model <id>` - Switch this session's model.
@@ -5144,7 +5951,7 @@ extension ChatViewModel: ChatStreamCoordinatorDelegate {
     }
 
     @discardableResult
-    func streamCoordinatorRestoreSnapshotIfAvailable(streamID: String) -> String? {
+    func streamCoordinatorRestoreSnapshotIfAvailable(streamID: String) -> ChatStreamSnapshotRestoreResult {
         restoreActiveStreamSnapshotIfAvailable(streamID: streamID)
     }
 
@@ -5171,7 +5978,16 @@ extension ChatViewModel: ChatStreamCoordinatorDelegate {
 
     func streamCoordinatorDidFinishStream() {
         flushPendingStreamingContent()
+        dismissSteeringConfirmation()
         responseCompletionNeedsTranscriptRefresh = false
+        if let ending = streamCoordinator.latestRunEnding {
+            latestRunOutcome = TranscriptTurnRunOutcome(
+                turnKey: TranscriptTurnClassifier.latestTurnKey(in: messages, messageOffset: messagesOffset),
+                startedAt: ending.startedAt,
+                endedAt: ending.endedAt,
+                ending: ending.ending
+            )
+        }
     }
 
     func streamCoordinatorDidReceiveErrorMessage(_ message: String) {
@@ -5181,12 +5997,28 @@ extension ChatViewModel: ChatStreamCoordinatorDelegate {
     func streamCoordinatorDidReceiveRecoveryError(_ error: Error) {
         lastError = error
         sendErrorMessage = error.localizedDescription
+        sendErrorIsFromStreamRecovery = true
+    }
+
+    func streamCoordinatorDidConfirmRecovery() {
+        guard sendErrorIsFromStreamRecovery else { return }
+        sendErrorMessage = nil
     }
 
     func streamCoordinatorDidStartConnection(isReplay: Bool) {
+        // A fresh connection re-arms the pulse so a reply's first live token
+        // always ticks, even when the previous reply pulsed less than an interval
+        // ago. A replay continues the same reply, so its window carries over.
+        if !isReplay {
+            streamingHapticPulseThrottle.reset()
+        }
         activeStreamReplayMatchedPrefixLength = 0
         activeStreamReplayMatchedInterimLength = 0
         activeStreamReplayMatchedReasoningLength = 0
+        activeStreamReplayLoadedReasoningText = isReplay ? loadedReplayReasoningText() : ""
+        activeStreamReplayLoadedToolCalls = isReplay ? loadedReplayToolCalls() : []
+        activeStreamReplayLoadedToolMatchIndex = 0
+        activeStreamReplayPendingLoadedToolMatchIndex = nil
         activeStreamReplayToolMatchIndex = 0
         activeStreamReplayPendingToolMatchIndex = nil
     }
@@ -5195,6 +6027,10 @@ extension ChatViewModel: ChatStreamCoordinatorDelegate {
         activeStreamReplayMatchedPrefixLength = 0
         activeStreamReplayMatchedInterimLength = 0
         activeStreamReplayMatchedReasoningLength = 0
+        activeStreamReplayLoadedReasoningText = ""
+        activeStreamReplayLoadedToolCalls = []
+        activeStreamReplayLoadedToolMatchIndex = 0
+        activeStreamReplayPendingLoadedToolMatchIndex = nil
         activeStreamReplayToolMatchIndex = 0
         activeStreamReplayPendingToolMatchIndex = nil
     }
@@ -5232,12 +6068,49 @@ extension ChatViewModel: ChatStreamCoordinatorDelegate {
     @discardableResult
     func streamCoordinatorApplyDone(_ payload: DoneStreamEvent) -> Bool {
         flushPendingStreamingContent()
+        let currentStreamingAssistantID = streamingAssistantMessageID
         let hasCompletedTranscript = payload.session?.messages?.isEmpty == false
         if let completedSession = payload.session {
             applyCompletedStreamSession(completedSession)
         }
         if let usage = payload.usage {
             contextWindowSnapshot = usage
+        }
+        if let finalTokensPerSecond = payload.usage?.tokensPerSecond,
+           finalTokensPerSecond.isFinite,
+           finalTokensPerSecond > 0,
+           let currentStreamingAssistantID {
+            let currentAssistantIndex = messages.firstIndex(where: { $0.messageId == currentStreamingAssistantID })
+                ?? TranscriptTurnClassifier
+                    .currentTurnAssistantAnchorIDs(in: messages, messageOffset: messagesOffset)
+                    .last
+                    .flatMap { currentAssistantAnchorID in
+                        messages.indices.first { index in
+                            TranscriptTurnClassifier.anchorID(
+                                for: messages[index],
+                                at: index,
+                                messageOffset: messagesOffset
+                            ) == currentAssistantAnchorID
+                        }
+                    }
+            guard let index = currentAssistantIndex else {
+                return hasCompletedTranscript
+            }
+            let message = messages[index]
+            messages[index] = ChatMessage(
+                role: message.role,
+                content: message.content,
+                timestamp: message.timestamp,
+                messageId: message.messageId,
+                name: message.name,
+                toolCallId: message.toolCallId,
+                toolUseId: message.toolUseId,
+                toolCalls: message.toolCalls,
+                contentParts: message.contentParts,
+                reasoning: message.reasoning,
+                attachments: message.attachments,
+                turnTps: finalTokensPerSecond
+            )
         }
         return hasCompletedTranscript
     }
@@ -5472,16 +6345,41 @@ extension ChatViewModel {
         }
     }
 
-    nonisolated static func transcriptMessages(from messages: [ChatMessage], messageOffset: Int? = nil) -> [TranscriptMessage] {
-        transcriptMessages(from: messages, messageOffset: messageOffset, hidingStreamingAssistantID: nil)
+    nonisolated static func transcriptMessages(
+        from messages: [ChatMessage],
+        messageOffset: Int? = nil,
+        preservingEmptyAssistantID: String? = nil,
+        renderedActivityAnchorIDs: Set<String>? = nil
+    ) -> [TranscriptMessage] {
+        transcriptMessages(
+            from: messages,
+            messageOffset: messageOffset,
+            hidingStreamingAssistantID: nil,
+            preservingEmptyAssistantID: preservingEmptyAssistantID,
+            renderedActivityAnchorIDs: renderedActivityAnchorIDs
+        )
     }
 
     nonisolated static func transcriptMessages(
         from messages: [ChatMessage],
         messageOffset: Int? = nil,
-        hidingStreamingAssistantID streamingAssistantID: String?
+        hidingStreamingAssistantID streamingAssistantID: String?,
+        preservingEmptyAssistantID: String? = nil,
+        renderedActivityAnchorIDs: Set<String>? = nil
     ) -> [TranscriptMessage] {
         let offset = max(0, messageOffset ?? 0)
+        let activityAnchorIDs = renderedActivityAnchorIDs ?? transcriptActivityAnchorIDs(
+            reasoningGroups: reasoningDisplayGroups(
+                messages: messages,
+                messageOffset: messageOffset,
+                archivedGroups: []
+            ),
+            toolCallGroups: ToolCallGroup.groups(
+                persistedToolCalls: [],
+                messages: messages,
+                messageOffset: messageOffset
+            )
+        )
         var transcriptMessages: [TranscriptMessage] = []
         transcriptMessages.reserveCapacity(messages.count)
 
@@ -5497,6 +6395,12 @@ extension ChatViewModel {
                 at: loadedIndex,
                 messageOffset: messageOffset
             )
+            guard anchorID == preservingEmptyAssistantID
+                || activityAnchorIDs.contains(anchorID)
+                || hasTranscriptMessageRowContent(message)
+            else {
+                continue
+            }
             let absoluteIndex = offset + loadedIndex
             let renderID = "transcript:\(absoluteIndex)"
 
@@ -5509,6 +6413,22 @@ extension ChatViewModel {
         }
 
         return transcriptMessages
+    }
+
+    nonisolated private static func transcriptActivityAnchorIDs(
+        reasoningGroups: [ReasoningGroup],
+        toolCallGroups: [ToolCallGroup]
+    ) -> Set<String> {
+        Set(reasoningGroups.compactMap(\.anchorMessageID))
+            .union(toolCallGroups.compactMap(\.anchorMessageID))
+    }
+
+    nonisolated private static func hasTranscriptMessageRowContent(_ message: ChatMessage) -> Bool {
+        if message.content?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+            return true
+        }
+
+        return message.role == "user" && message.attachments?.isEmpty == false
     }
 
     nonisolated static func compressionReferenceCard(
@@ -5718,6 +6638,7 @@ private extension ToolCall {
     func applyingCompletionPayload(_ payload: ToolStreamEvent) -> ToolCall {
         ToolCall(
             id: id.nonEmptyStableToolID == nil ? payload.stableID ?? id : id,
+            presentationID: presentationID,
             name: payload.name ?? name,
             preview: payload.preview ?? preview,
             args: payload.args ?? args,

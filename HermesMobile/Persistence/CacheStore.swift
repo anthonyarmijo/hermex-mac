@@ -152,6 +152,8 @@ struct CachedMessageValueSnapshot: Sendable {
     let contentPartsData: Data?
     let reasoning: String?
     let attachmentsData: Data?
+    let turnTps: Double?
+    let turnDuration: Double?
 
     init(message: ChatMessage, encoder: JSONEncoder) {
         role = message.role
@@ -164,6 +166,8 @@ struct CachedMessageValueSnapshot: Sendable {
         toolCallsData = Self.encode(message.toolCalls, using: encoder)
         contentPartsData = Self.encode(message.contentParts, using: encoder)
         reasoning = message.reasoning
+        turnTps = message.turnTps
+        turnDuration = message.turnDuration
         attachmentsData = Self.encode(message.attachments, using: encoder)
     }
 
@@ -927,6 +931,7 @@ private extension SessionSummary {
         readOnly = cachedSession.readOnly
         isReadOnly = cachedSession.isReadOnly
         matchType = nil
+        matchPreview = nil
     }
 }
 
@@ -961,7 +966,9 @@ private extension ChatMessage {
             toolCalls: toolCalls,
             contentParts: contentParts,
             reasoning: cachedMessage.reasoning,
-            attachments: attachments
+            attachments: attachments,
+            turnTps: cachedMessage.turnTps,
+            turnDuration: cachedMessage.turnDuration
         )
     }
 }

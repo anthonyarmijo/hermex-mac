@@ -25,16 +25,15 @@ private enum ActiveGitSheet: Identifiable {
     var id: Self { self }
 }
 
-/// What the per-turn diff sheet shows (issue #316): every changed file in the turn, or a
-/// single file's diff (a recap-card row tap).
+/// What the per-turn diff sheet shows (issue #316): every changed file in the turn,
+/// opened at one of them for a recap-card row tap.
 private enum TurnDiffPresentation: Identifiable {
-    case turnFiles([GitFile])
-    case file(GitFile)
+    case turnFiles([GitFile], initial: GitFile?)
 
     var id: String {
         switch self {
-        case .turnFiles(let files): return "turn:" + files.map(\.id).joined(separator: "|")
-        case .file(let file): return "file:" + file.id
+        case .turnFiles(let files, let initial):
+            return "turn:" + files.map(\.id).joined(separator: "|") + ":" + (initial?.id ?? "")
         }
     }
 }
@@ -255,8 +254,7 @@ private struct ListenPlaybackBar: View {
 
 struct ChatView: View {
     private let bottomAnchorID = "chat-bottom-anchor"
-    private let transcriptMessageSpacing: CGFloat = 10
-    private let transcriptBlockSpacing: CGFloat = 6
+    private let transcriptSpacing: CGFloat = 8
     private let composerAccessoryVerticalSpacing: CGFloat = 8
     private let activeRunStatusSpacerHeight: CGFloat = 36
     private let approvalBypassStatusSpacerHeight: CGFloat = 38
@@ -267,11 +265,15 @@ struct ChatView: View {
     @Environment(\.cacheWriter) private var cacheWriter
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage(AppHaptics.isEnabledKey) private var isHapticsEnabled = true
+    @AppStorage(AppHaptics.streamingPulseIsEnabledKey) private var isStreamingPulseEnabled = false
     @AppStorage(StreamingSendBehavior.storageKey) private var streamingSendBehaviorRawValue = StreamingSendBehavior.steer.rawValue
     @AppStorage(ResponseCompletionNotifications.isEnabledKey) private var isResponseCompletionNotificationsEnabled = false
     @AppStorage(AgentRunLiveActivityPrivacy.showsResponseExcerptsKey) private var showsLiveActivityResponseExcerpts = false
     @AppStorage(ChatTranscriptDisplaySettings.showsThinkingAndToolCardsKey) private var showsThinkingAndToolCards = true
+    @AppStorage(ChatTranscriptDisplaySettings.foldsSettledTurnsKey) private var foldsSettledTurns = true
     @AppStorage(ChatTranscriptDisplaySettings.rtlChatLayoutEnabledKey) private var rtlChatLayoutEnabled = ChatTranscriptDisplaySettings.rtlChatLayoutDefaultEnabled
+    @AppStorage(SectionVisibilitySettings.chatFilesKey) private var showsFilesButton = true
+    @AppStorage(SectionVisibilitySettings.chatGitKey) private var showsGitControls = true
 
     let session: SessionSummary
     let server: URL
@@ -283,14 +285,28 @@ struct ChatView: View {
     /// "New Chat with Voice" App Intent (#338). Defaults to false for normal opens.
     let autoStartsVoiceInput: Bool
     let externalComposerFocusRequestID: Int
+    let draftStore: ChatDraftStore
+    /// Store holding the durable app-owned copies of staged attachments.
+    let draftAttachmentStore: any ChatDraftAttachmentStoring
+    /// True only for the pending-new-chat flow: after the composer configuration
+    /// loads, the restored draft's settings snapshot is applied (each value
+    /// revalidated against the live server configuration). Existing sessions
+    /// load their configuration from the server and never re-apply a snapshot.
+    let restoresDraftSettings: Bool
+    let onConversationStarted: () -> Void
 
     @State private var draftMessage = ""
+    @State private var draftRevision = 0
     @State private var isScrolledNearBottom = true
-    @State private var isReadingOlderTranscript = false
-    @State private var shouldFollowLatestMessage = true
+    @State private var followLatch = ChatScrollPolicy.FollowLatch()
     @State private var followScrollGeneration = 0
-    @State private var isUserInteractingWithScroll = false
-    @State private var userScrollCooldownUntil: Date?
+    /// While true the transcript's bottom size-change anchor and follow-driven
+    /// scrolls are suspended so a disclosure toggle grows or shrinks in place.
+    @State private var isDisclosureSettling = false
+    @State private var disclosureSettleGeneration = 0
+    /// Settled turns the user has opened, plus failed or stopped turns, which
+    /// start open. Keyed by turn so paging older messages in does not shift them.
+    @State private var expandedTurnKeys: Set<String> = []
     /// While set and in the future, auto-follow scrolls snap instead of animating, so
     /// the cache-first → network reconcile re-pins to the bottom without a jump (#289).
     @State private var cacheFirstSnapUntil: Date?
@@ -301,11 +317,19 @@ struct ChatView: View {
     @State private var showEditDiscardConfirmation = false
     @State private var regenerateContext: MessageActionContext?
     @State private var showRegenerateDiscardConfirmation = false
-    @State private var selectableResponseText: SelectableResponseText?
+    @State private var selectableResponseText: SelectableTextPresentation?
     @State private var attachmentPreviewItem: ChatAttachmentPreviewItem?
     @State private var transcriptMediaPreviewItem: TranscriptMediaPreviewItem?
+    @State private var transcriptMediaImageItem: TranscriptMediaPreviewItem?
+    @State private var attachmentImageItem: ChatAttachmentPreviewItem?
+    /// A workspace file a chat link named; presented on the source viewer at its line.
+    @State private var openedFileReference: FileReference?
     @State private var pendingProfileSelection: ProfileSummary?
     @State private var showProfileNewSessionConfirmation = false
+    /// Set while the destructive `/clear` confirmation is on screen. Holds the
+    /// submitted draft so a confirmed clear consumes it and a cancel leaves it
+    /// in the composer (#389).
+    @State private var pendingClearConfirmation: PendingClearConfirmation?
     @State private var goalDraft = ""
     @State private var showsGoalSheet = false
     @State private var activeGitSheet: ActiveGitSheet?
@@ -315,7 +339,29 @@ struct ChatView: View {
     @State private var gitToastState = GitActionToastState()
     @State private var gitAlert: GitChatAlert?
     @State private var composerHeight: CGFloat = 52
+    /// Measured height of the collapsed clarification bar, the request's only
+    /// layout footprint; the expanded card overlays the transcript instead.
+    @State private var clarificationBarHeight: CGFloat = 0
     @State private var composerIsFocused = false
+    @State private var didHydrateDraft = false
+    /// Whether this chat has already asked the server for its skills on the
+    /// transcript's behalf, so a request that failed does not repeat with every
+    /// later transcript update.
+    @State private var hasRequestedSkillsForTranscriptChips = false
+    /// True from the moment hydration finds persisted attachment records until
+    /// their restore pass finishes. It gates `syncDraftAttachments` across the
+    /// whole window, so the not-yet-rebuilt composer strip can never overwrite
+    /// the persisted set.
+    @State private var isRestoringDraftAttachments = false
+    /// Records hydration found, handed to the restore pass that runs alongside
+    /// the transcript load rather than in front of it.
+    @State private var draftAttachmentsAwaitingRestore: [ChatDraftAttachment] = []
+    /// Restored attachment records whose re-upload failed; they stay in the
+    /// draft for a later retry and are unioned into every attachment sync.
+    @State private var draftAttachmentsPendingRetry: [ChatDraftAttachment] = []
+    @State private var lastSyncedDraftAttachments: [ChatDraftAttachment] = []
+    @State private var restoredDraftSettings: ChatDraftSettings?
+    @State private var didApplyRestoredDraftSettings = false
     @State private var didCompleteInitialAppearance = false
     @State private var isInitialComposerFocusContentReady = false
     @State private var didApplyInitialComposerFocusPolicy = false
@@ -336,7 +382,11 @@ struct ChatView: View {
         initialAttachments: [SharedAttachmentImport] = [],
         loadsInitialMessages: Bool = true,
         autoStartsVoiceInput: Bool = false,
-        externalComposerFocusRequestID: Int = 0
+        externalComposerFocusRequestID: Int = 0,
+        draftStore: ChatDraftStore? = nil,
+        draftAttachmentStore: (any ChatDraftAttachmentStoring)? = nil,
+        restoresDraftSettings: Bool = false,
+        onConversationStarted: @escaping () -> Void = {}
     ) {
         self.session = session
         self.server = server
@@ -346,19 +396,20 @@ struct ChatView: View {
         self.loadsInitialMessages = loadsInitialMessages
         self.autoStartsVoiceInput = autoStartsVoiceInput
         self.externalComposerFocusRequestID = externalComposerFocusRequestID
-        let restoredDraft = SessionDraftPersistence.load(for: session.sessionId, server: server)
-        let resolvedDraft = restoredDraft ?? initialDraft
-        _draftMessage = State(initialValue: resolvedDraft)
-        if restoredDraft == nil, !initialDraft.isEmpty {
-            SessionDraftPersistence.save(initialDraft, for: session.sessionId, server: server)
-        }
+        self.draftStore = draftStore ?? .shared
+        let resolvedDraftAttachmentStore = draftAttachmentStore ?? ChatDraftAttachmentStore.shared
+        self.draftAttachmentStore = resolvedDraftAttachmentStore
+        self.restoresDraftSettings = restoresDraftSettings
+        self.onConversationStarted = onConversationStarted
+        _draftMessage = State(initialValue: initialDraft)
         _initialAttachments = State(initialValue: initialAttachments)
         _viewModel = State(initialValue: ChatViewModel(
             session: session,
             server: server,
             showsLiveActivityResponseExcerpts: UserDefaults.standard.bool(
                 forKey: AgentRunLiveActivityPrivacy.showsResponseExcerptsKey
-            )
+            ),
+            draftAttachmentStore: resolvedDraftAttachmentStore
         ))
         _gitAvailabilityViewModel = State(initialValue: GitWorkspaceAvailabilityViewModel(
             session: session,
@@ -371,14 +422,13 @@ struct ChatView: View {
     // "unable to type-check in reasonable time" limit).
     private var messageComposer: some View {
         MessageComposerView(
-            draftMessage: persistedDraftMessage,
+            draftMessage: persistedDraftBinding,
             isFocused: $composerIsFocused,
             isSending: viewModel.isStartingChat || viewModel.isSendingVoiceNote,
             isCompressingSession: viewModel.isCompressingSession,
             isWaitingForStream: viewModel.activeStreamID != nil,
             isCancellingStream: viewModel.isCancellingStream,
-            isOfflineReadOnly: viewModel.isViewingCachedData,
-            isChromeCompact: isComposerChromeCompact,
+            readOnlyMessage: composerReadOnlyMessage,
             errorMessage: viewModel.sendErrorMessage,
             configurationErrorMessage: viewModel.composerConfigurationErrorMessage,
             contextWindowSnapshot: viewModel.contextWindowSnapshot,
@@ -393,23 +443,30 @@ struct ChatView: View {
             workspaceManagementServer: server,
             personalitySuggestions: viewModel.personalitySuggestions,
             skillSuggestions: viewModel.skillSlashSuggestions,
+            hasLoadedSkillSuggestions: viewModel.hasLoadedSkillSlashSuggestions,
             agentCommands: viewModel.agentCommands,
             profileOptions: viewModel.profileOptions,
             isSingleProfileMode: viewModel.isSingleProfileMode,
             selectedProfileName: viewModel.selectedProfileName,
             selectedProfileTitle: viewModel.selectedProfileTitle,
-            isLoadingModels: viewModel.isLoadingComposerConfiguration,
             selectedReasoningEffort: viewModel.selectedReasoningEffort,
             supportedReasoningEfforts: viewModel.supportedReasoningEfforts,
+            supportsReasoningEffort: viewModel.supportsReasoningEffort,
             showsReasoningControl: viewModel.showsReasoningEffortControl,
             isUpdatingConfiguration: viewModel.isUpdatingComposerConfiguration,
             pendingAttachments: viewModel.pendingAttachments,
-            isUploadingAttachment: viewModel.isUploadingAttachment,
+            // An in-flight draft restore counts as an upload in progress: until
+            // it finishes, the composer does not yet hold the attachments the
+            // user expects this message to carry.
+            isUploadingAttachment: viewModel.isUploadingAttachment || isRestoringDraftAttachments,
             attachmentUploadCount: viewModel.attachmentUploadCount,
             attachmentUploadGeneration: viewModel.attachmentUploadGeneration,
             isSendingVoiceNote: viewModel.isSendingVoiceNote,
             autoStartsVoiceInput: autoStartsVoiceInput,
             apiClient: viewModel.client,
+            sessionID: session.sessionId,
+            chipFilePaths: viewModel.fileChipPaths,
+            filePathSearch: viewModel.filePathSearch,
             uploadAttachmentErrorMessage: viewModel.uploadAttachmentErrorMessage,
             onSend: {
                 Task { await sendDraftMessage() }
@@ -431,6 +488,14 @@ struct ChatView: View {
             onModelPickerOpen: {
                 await viewModel.refreshModelCatalogForPickerOpen()
             },
+            onSelectReasoningEffort: { effort in
+                Task {
+                    let didSelect = await viewModel.selectReasoningEffort(effort)
+                    if didSelect {
+                        ChatHaptics.configurationSelected(isEnabled: isHapticsEnabled)
+                    }
+                }
+            },
             onLoadWorkspaceSuggestions: { prefix in
                 await viewModel.loadWorkspaceSuggestions(prefix: prefix)
             },
@@ -451,14 +516,6 @@ struct ChatView: View {
             },
             onSelectProfile: { profile in
                 handleProfileSelection(profile)
-            },
-            onSelectReasoningEffort: { effort in
-                Task {
-                    let didSelect = await viewModel.selectReasoningEffort(effort)
-                    if didSelect {
-                        ChatHaptics.configurationSelected(isEnabled: isHapticsEnabled)
-                    }
-                }
             },
             onHeightChange: { height in
                 composerHeight = height
@@ -482,15 +539,25 @@ struct ChatView: View {
                 Task { await handlePastedImages(images) }
             },
             onRemoveAttachment: { id in
+                let removedAttachment = viewModel.pendingAttachments.first(where: { $0.id == id })
                 viewModel.removePendingAttachment(id: id)
+                // Explicit discard: the record drops out of the draft via the
+                // observation sync; delete its now-unreferenced local copy.
+                if let file = removedAttachment?.draftFileName {
+                    Task { await draftAttachmentStore.delete(named: file) }
+                }
             },
             onPreviewAttachment: { attachment in
-                presentPreviewRestoringComposerFocusIfNeeded {
-                    attachmentPreviewItem = ChatAttachmentPreviewItem(pending: attachment)
-                }
+                presentAttachmentPreview(ChatAttachmentPreviewItem(pending: attachment))
             },
             onDismissUploadAttachmentError: {
                 viewModel.setUploadAttachmentError(nil)
+            },
+            onSelectFileReference: { path in
+                viewModel.recordFileChipReference(path)
+            },
+            onOpenFileReference: { path in
+                openedFileReference = FileReference(path: path, line: nil, column: nil)
             },
             onSelectGitBranch: { target in
                 Task { await performGitCheckout(target) }
@@ -520,6 +587,59 @@ struct ChatView: View {
         )
     }
 
+    private var composerReadOnlyMessage: String? {
+        Self.composerReadOnlyMessage(
+            for: session,
+            isViewingCachedData: viewModel.isViewingCachedData
+        )
+    }
+
+    static func composerReadOnlyMessage(
+        for session: SessionSummary,
+        isViewingCachedData: Bool
+    ) -> String? {
+        if isViewingCachedData {
+            return String(localized: "Reconnect to send messages.")
+        }
+        if session.isSessionReadOnly {
+            return String(localized: "Read-only")
+        }
+        return nil
+    }
+
+    /// An image is known to be an image before it is fetched, so it opens in the
+    /// full-bleed lightbox. Everything else keeps the preview sheet, which still has to
+    /// decide between audio, video, and an unsupported file once the bytes arrive.
+    private func presentTranscriptMediaPreview(_ reference: TranscriptMediaReference) {
+        presentPreviewRestoringComposerFocusIfNeeded {
+            let item = TranscriptMediaPreviewItem(reference: reference)
+            if reference.isRasterImageCandidate, !reference.isExtensionlessRemoteMediaCandidate {
+                transcriptMediaImageItem = item
+            } else {
+                transcriptMediaPreviewItem = item
+            }
+        }
+    }
+
+    private func presentAttachmentPreview(_ item: ChatAttachmentPreviewItem) {
+        presentPreviewRestoringComposerFocusIfNeeded {
+            if item.inferredIsImage {
+                attachmentImageItem = item
+            } else {
+                attachmentPreviewItem = item
+            }
+        }
+    }
+
+    private func transcriptMediaImageLightbox(for item: TranscriptMediaPreviewItem) -> some View {
+        TranscriptMediaImageLightbox(
+            server: server,
+            sessionID: transcriptMediaSessionID,
+            item: item,
+            onAPIError: onAPIError
+        )
+    }
+
     private func transcriptMediaPreviewView(for item: TranscriptMediaPreviewItem) -> some View {
         TranscriptMediaPreviewView(
             server: server,
@@ -527,6 +647,34 @@ struct ChatView: View {
             item: item,
             onAPIError: onAPIError
         )
+    }
+
+    /// A chat link that names a workspace file opens the source viewer at its line; every
+    /// other link keeps the system behaviour. The viewer's own error state covers a path
+    /// the server no longer has, so the tap never waits on a fetch.
+    private func handleTranscriptLink(_ url: URL) -> OpenURLAction.Result {
+        guard let reference = FileReference.parse(url.absoluteString, workspaceRoot: session.workspace) else {
+            return .systemAction
+        }
+        openedFileReference = reference
+        return .handled
+    }
+
+    private func fileReferenceSheet(for reference: FileReference) -> some View {
+        NavigationStack {
+            FilePreviewView(
+                session: session,
+                server: server,
+                entry: WorkspaceEntry(name: reference.name, path: reference.path),
+                initialLine: reference.line,
+                onAPIError: onAPIError
+            )
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { openedFileReference = nil }
+                }
+            }
+        }
     }
 
     private var transcriptMediaSessionID: String? {
@@ -542,7 +690,39 @@ struct ChatView: View {
         "\(server.absoluteString)|\(transcriptMediaSessionID ?? "local:\(session.id)")"
     }
 
-    var body: some View {
+    /// Extracted from `body` so the view's single chained expression stays
+    /// inside the compiler's type-checking budget.
+    @ViewBuilder
+    private var approvalOverlay: some View {
+        if let approvalPrompt = viewModel.approvalPrompt {
+            ApprovalRequestOverlay(
+                prompt: approvalPrompt,
+                isResponding: viewModel.isRespondingToApproval,
+                errorMessage: viewModel.approvalErrorMessage,
+                onChoice: { choice in
+                    Task {
+                        let didRespond = await viewModel.respondToApproval(choice)
+                        if didRespond {
+                            ChatHaptics.approvalSubmitted(choice, isEnabled: isHapticsEnabled)
+                        }
+                    }
+                },
+                onSkipAll: {
+                    Task {
+                        let didSkip = await viewModel.skipApprovalsForCurrentSession()
+                        if didSkip {
+                            ChatHaptics.approvalBypassEnabled(isEnabled: isHapticsEnabled)
+                        }
+                    }
+                }
+            )
+            .zIndex(10)
+        }
+    }
+
+    /// The chat scaffold. Split from `body` so the confirmation-alert chain
+    /// below stays inside the compiler's type-checking budget.
+    private var chatContent: some View {
         ZStack(alignment: .bottom) {
             VStack(spacing: 0) {
                 if viewModel.isViewingCachedData {
@@ -562,32 +742,11 @@ struct ChatView: View {
 
             composerAccessoryStack
 
+            clarificationInset
+
             messageComposer
 
-            if let approvalPrompt = viewModel.approvalPrompt {
-                ApprovalRequestOverlay(
-                    prompt: approvalPrompt,
-                    isResponding: viewModel.isRespondingToApproval,
-                    errorMessage: viewModel.approvalErrorMessage,
-                    onChoice: { choice in
-                        Task {
-                            let didRespond = await viewModel.respondToApproval(choice)
-                            if didRespond {
-                                ChatHaptics.approvalSubmitted(choice, isEnabled: isHapticsEnabled)
-                            }
-                        }
-                    },
-                    onSkipAll: {
-                        Task {
-                            let didSkip = await viewModel.skipApprovalsForCurrentSession()
-                            if didSkip {
-                                ChatHaptics.approvalBypassEnabled(isEnabled: isHapticsEnabled)
-                            }
-                        }
-                    }
-                )
-                .zIndex(10)
-            }
+            approvalOverlay
         }
         .overlay(alignment: .top) {
             GitActionToastOverlay(state: gitToastState)
@@ -604,7 +763,7 @@ struct ChatView: View {
             .onChange(of: viewModel.activeStreamID) {
                 handleActiveStreamChange()
             }
-            .onChange(of: viewModel.cacheFirstReconcileScrollToken) {
+            .onChange(of: viewModel.transcriptRelayoutScrollToken) {
                 // Open a brief snap window so the cache-first reconcile re-pin (and any
                 // message-count auto-follow racing it) lands without an animated jump (#289).
                 cacheFirstSnapUntil = Date().addingTimeInterval(0.35)
@@ -619,10 +778,19 @@ struct ChatView: View {
                     applyInitialComposerFocusPolicyIfNeeded()
                 }
             }
+            .modifier(
+                ChatDraftSyncModifier(
+                    pendingAttachments: viewModel.pendingAttachments,
+                    composerSettings: currentComposerSettings,
+                    onAttachmentsChange: syncDraftAttachments,
+                    onSettingsChange: syncDraftSettings
+                )
+            )
             .onChange(of: showsLiveActivityResponseExcerpts) {
                 viewModel.setShowsLiveActivityResponseExcerpts(showsLiveActivityResponseExcerpts)
             }
             .onDisappear {
+                flushDraftsBestEffort()
                 activeStreamStatusRefreshTask?.cancel()
                 activeStreamStatusRefreshTask = nil
                 viewModel.stopListening()
@@ -648,6 +816,7 @@ struct ChatView: View {
                 onResponseCompleted()
                 handleResponseCompletionSideEffects()
             }
+            .onChange(of: viewModel.streamingHapticPulseTrigger, handleStreamingHapticPulse)
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     ChatToolbarTitleLabel(
@@ -664,17 +833,19 @@ struct ChatView: View {
                             }
                         }
 
-                        ChatToolbarActionSlot {
-                            NavigationLink {
-                                FileBrowserView(session: session, server: server, onAPIError: onAPIError)
-                            } label: {
-                                Label("Files", systemImage: "folder")
+                        if showsFilesButton {
+                            ChatToolbarActionSlot {
+                                NavigationLink {
+                                    FileBrowserView(session: session, server: server, onAPIError: onAPIError)
+                                } label: {
+                                    Label("Files", systemImage: "folder")
+                                }
+                                .disabled(viewModel.isViewingCachedData)
+                                .accessibilityLabel("Files")
                             }
-                            .disabled(viewModel.isViewingCachedData)
-                            .accessibilityLabel("Files")
                         }
 
-                        if gitAvailabilityViewModel.hasRepository {
+                        if showsGitControls, gitAvailabilityViewModel.hasRepository {
                             ChatToolbarActionSlot {
                                 gitActionsMenu
                             }
@@ -686,7 +857,7 @@ struct ChatView: View {
                 ChatView(session: session, server: server, onAPIError: onAPIError)
             }
             .fullScreenCover(item: $selectableResponseText) { selectableText in
-                SelectableResponseTextView(
+                SelectableTextPresentationView(
                     selection: selectableText,
                     onDismiss: restoreComposerFocusAfterPreviewIfNeeded
                 )
@@ -705,6 +876,31 @@ struct ChatView: View {
                 }
             }
             .sheet(item: $transcriptMediaPreviewItem, content: transcriptMediaPreviewView)
+            .fullScreenCover(item: $attachmentImageItem) { item in
+                ChatAttachmentImageLightbox(
+                    session: session,
+                    server: server,
+                    item: item,
+                    onAPIError: onAPIError
+                )
+            }
+            .onChange(of: attachmentImageItem == nil) { _, isDismissed in
+                if isDismissed {
+                    restoreComposerFocusAfterPreviewIfNeeded()
+                }
+            }
+            .fullScreenCover(item: $transcriptMediaImageItem, content: transcriptMediaImageLightbox)
+            .onChange(of: transcriptMediaImageItem == nil) { _, isDismissed in
+                if isDismissed {
+                    restoreComposerFocusAfterPreviewIfNeeded()
+                }
+            }
+            .onChange(of: transcriptMediaPreviewItem == nil) { _, isDismissed in
+                if isDismissed {
+                    restoreComposerFocusAfterPreviewIfNeeded()
+                }
+            }
+            .sheet(item: $openedFileReference, content: fileReferenceSheet)
             .sheet(item: $activeGitSheet, content: gitSheet)
             .sheet(item: $turnDiffPresentation, content: turnDiffSheet)
             .alert(item: $gitAlert, content: gitAlertPresentation)
@@ -729,6 +925,10 @@ struct ChatView: View {
                     }
                 )
             }
+    }
+
+    var body: some View {
+        chatContent
             .alert(
                 "Discard Later Messages?",
                 isPresented: $showEditDiscardConfirmation
@@ -776,6 +976,13 @@ struct ChatView: View {
             } message: {
                 Text(profileSwitchWarningMessage)
             }
+            .modifier(
+                ClearConversationAlertModifier(
+                    pending: $pendingClearConfirmation,
+                    isHapticsEnabled: isHapticsEnabled,
+                    onConfirm: confirmClearConversation
+                )
+            )
             .alert(
                 "Message Action Failed",
                 isPresented: Binding(
@@ -834,7 +1041,12 @@ struct ChatView: View {
     private func gitSheet(_ sheet: ActiveGitSheet) -> some View {
         switch sheet {
         case .changes:
-            GitWorkspaceView(session: session, server: server, onAPIError: onAPIError)
+            GitWorkspaceView(
+                session: session,
+                server: server,
+                onAPIError: onAPIError,
+                onAddToPrompt: addDiffSelectionToDraft
+            )
         case .commit:
             GitCommitView(
                 session: session,
@@ -851,11 +1063,24 @@ struct ChatView: View {
     @ViewBuilder
     private func turnDiffSheet(_ presentation: TurnDiffPresentation) -> some View {
         switch presentation {
-        case .turnFiles(let files):
-            GitTurnDiffSheet(session: session, server: server, files: files, onAPIError: onAPIError)
-        case .file(let file):
-            GitDiffView(session: session, server: server, file: file, onAPIError: onAPIError)
+        case .turnFiles(let files, let initial):
+            GitDiffView(
+                session: session,
+                server: server,
+                files: files,
+                initialFile: initial,
+                onAPIError: onAPIError,
+                onAddToPrompt: addDiffSelectionToDraft
+            )
         }
+    }
+
+    /// Drops a diff selection from a Git sheet into the composer and closes the sheet.
+    private func addDiffSelectionToDraft(_ snippet: String) {
+        let separator = draftMessage.isEmpty ? "" : (draftMessage.hasSuffix("\n") ? "\n" : "\n\n")
+        persistedDraftBinding.wrappedValue = draftMessage + separator + snippet + "\n"
+        activeGitSheet = nil
+        turnDiffPresentation = nil
     }
 
     private var gitActionsMenu: some View {
@@ -902,11 +1127,14 @@ struct ChatView: View {
     /// Only for git workspaces, when the latest message is an assistant turn (not while a
     /// response streams), and there is something to commit (or a commit is in flight).
     private var inlineCommitContext: ChatInlineCommitContext? {
-        guard gitAvailabilityViewModel.hasRepository,
-              viewModel.activeStreamID == nil,
-              latestTranscriptMessageRole == "assistant",
-              gitAvailabilityViewModel.hasCommittableChanges || gitAvailabilityViewModel.isCommitting
-        else { return nil }
+        guard ChatGitControlsVisibilityPolicy.showsInlineCommitButton(
+            showsGitControls: showsGitControls,
+            hasRepository: gitAvailabilityViewModel.hasRepository,
+            isStreaming: viewModel.activeStreamID != nil,
+            latestMessageRole: latestTranscriptMessageRole,
+            hasCommittableChanges: gitAvailabilityViewModel.hasCommittableChanges,
+            isCommitting: gitAvailabilityViewModel.isCommitting
+        ) else { return nil }
         return ChatInlineCommitContext(
             runningPhase: gitAvailabilityViewModel.commitPhase,
             isDisabled: gitWriteAvailability.writesDisabled
@@ -917,10 +1145,12 @@ struct ChatView: View {
     /// workspaces once the response finishes (status has refreshed) and the latest turn
     /// actually changed files.
     private var turnChangesRecapSummary: TurnFileChangeSummary? {
-        guard gitAvailabilityViewModel.hasRepository,
-              viewModel.activeStreamID == nil,
-              latestTranscriptMessageRole == "assistant"
-        else { return nil }
+        guard ChatGitControlsVisibilityPolicy.showsTurnChangesRecap(
+            showsGitControls: showsGitControls,
+            hasRepository: gitAvailabilityViewModel.hasRepository,
+            isStreaming: viewModel.activeStreamID != nil,
+            latestMessageRole: latestTranscriptMessageRole
+        ) else { return nil }
         let summary = TurnFileChangeAggregator.summarize(
             toolCalls: viewModel.latestTurnToolCalls,
             status: gitAvailabilityViewModel.status
@@ -933,7 +1163,7 @@ struct ChatView: View {
     private func presentTurnDiff(for summary: TurnFileChangeSummary?) {
         let files = summary?.diffFiles ?? []
         guard !files.isEmpty else { return }
-        turnDiffPresentation = .turnFiles(files)
+        turnDiffPresentation = .turnFiles(files, initial: nil)
     }
 
     @MainActor
@@ -970,8 +1200,10 @@ struct ChatView: View {
                 subtitle: result.branch,
                 detailLines: detailLines
             ))
+            ChatHaptics.gitActionFinished(succeeded: result.pushFailureMessage == nil, isEnabled: isHapticsEnabled)
         case .nothingToCommit:
             gitToastState.dismissProgress()
+            ChatHaptics.gitActionFinished(succeeded: false, isEnabled: isHapticsEnabled)
             gitAlert = .error(String(localized: "There are no changes to commit."))
         case .tooManyChanges:
             // Status was truncated (>500 files): the commit was blocked to avoid silently
@@ -981,10 +1213,12 @@ struct ChatView: View {
             // against. (Kept separate from .failure, which intentionally stays quiet when its
             // busy/no-session guard returns with no message.) No success toast/SHA.
             gitToastState.dismissProgress()
+            ChatHaptics.gitActionFinished(succeeded: false, isEnabled: isHapticsEnabled)
             gitAlert = .error(gitAvailabilityViewModel.actionErrorMessage
                 ?? String(localized: "Too many changes to quick-commit. Commit in smaller batches, or use git directly."))
         case .failure:
             gitToastState.dismissProgress()
+            ChatHaptics.gitActionFinished(succeeded: false, isEnabled: isHapticsEnabled)
             if let message = gitAvailabilityViewModel.actionErrorMessage {
                 gitAlert = .error(message)
             }
@@ -1019,8 +1253,10 @@ struct ChatView: View {
                     .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
                     .filter { !$0.isEmpty }
             ))
+            ChatHaptics.gitActionFinished(succeeded: true, isEnabled: isHapticsEnabled)
         } else {
             gitToastState.dismissProgress()
+            ChatHaptics.gitActionFinished(succeeded: false, isEnabled: isHapticsEnabled)
             if let message = gitAvailabilityViewModel.actionErrorMessage {
                 gitAlert = .error(message)
             }
@@ -1060,12 +1296,49 @@ struct ChatView: View {
         }
     }
 
+    /// The pending clarification, pinned above the composer. Sits in the same
+    /// bottom stack as the composer so it rides the keyboard with it.
+    private var clarificationInset: some View {
+        ZStack(alignment: .bottom) {
+            if let clarificationPrompt = viewModel.clarificationPrompt {
+                ClarificationRequestInset(
+                    prompt: clarificationPrompt,
+                    isResponding: viewModel.isRespondingToClarification,
+                    isStopping: viewModel.isCancellingStream,
+                    errorMessage: viewModel.clarificationErrorMessage,
+                    isHapticsEnabled: isHapticsEnabled,
+                    onSubmit: { response in
+                        Task {
+                            let didRespond = await viewModel.respondToClarification(response)
+                            if didRespond {
+                                ChatHaptics.clarificationSubmitted(isEnabled: isHapticsEnabled)
+                            }
+                        }
+                    },
+                    onStop: {
+                        Task { await cancelStream() }
+                    },
+                    onDismissKeyboard: dismissKeyboard,
+                    onFootprintChange: { height in
+                        clarificationBarHeight = height
+                    }
+                )
+                .id(clarificationPrompt.id)
+                .padding(.horizontal, 16)
+                .padding(.bottom, composerHeight + 8)
+                .transition(ChatMotion.bottomOverlayTransition(reduceMotion: reduceMotion))
+            }
+        }
+        .zIndex(9)
+        .animation(ChatMotion.quickState(reduceMotion: reduceMotion), value: viewModel.clarificationPrompt?.id)
+    }
+
     @ViewBuilder
     private var composerAccessoryStack: some View {
         if composerAccessoryVisibleItemCount > 0 {
             VStack(spacing: composerAccessoryVerticalSpacing) {
-                if !viewModel.pinnedLocalNotices.isEmpty {
-                    PinnedLocalNoticeStack(notices: viewModel.pinnedLocalNotices)
+                if !composerLocalNotices.isEmpty {
+                    PinnedLocalNoticeStack(notices: composerLocalNotices)
                         .transition(ChatMotion.bottomOverlayTransition(reduceMotion: reduceMotion))
                 }
 
@@ -1080,18 +1353,19 @@ struct ChatView: View {
                 }
             }
             .padding(.horizontal)
-            .padding(.bottom, composerHeight + 8)
+            .padding(.bottom, composerHeight + 8 + clarificationFootprintHeight)
             .allowsHitTesting(false)
             .zIndex(8)
             .animation(ChatMotion.quickState(reduceMotion: reduceMotion), value: composerAccessoryVisibleItemCount)
             .animation(ChatMotion.quickState(reduceMotion: reduceMotion), value: activeRunStatusPresentation)
-            .animation(ChatMotion.quickState(reduceMotion: reduceMotion), value: viewModel.pinnedLocalNotices)
+            .animation(ChatMotion.quickState(reduceMotion: reduceMotion), value: composerLocalNotices)
             .animation(ChatMotion.quickState(reduceMotion: reduceMotion), value: showsApprovalBypassStatus)
         }
     }
 
     @ViewBuilder
     private var messageContent: some View {
+        let reasoningGroups = viewModel.displayedReasoningGroups
         ChatTranscriptView(
             isLoading: viewModel.isLoading,
             errorMessage: viewModel.errorMessage,
@@ -1099,7 +1373,7 @@ struct ChatView: View {
             displayedTranscriptMessages: displayedTranscriptMessages,
             cacheFirstRenderMarker: viewModel.cacheFirstRenderMarker,
             compressionReferenceCard: viewModel.compressionReferenceCard,
-            reasoningGroups: viewModel.displayedReasoningGroups,
+            reasoningGroups: reasoningGroups,
             completedToolCallGroupsForAnchor: { anchorMessageID in
                 viewModel.completedToolCallGroupsForAnchor(anchorMessageID)
             },
@@ -1108,26 +1382,25 @@ struct ChatView: View {
             liveToolCalls: viewModel.liveToolCalls,
             toolCallAnchorMessageID: viewModel.toolCallAnchorMessageID,
             streamingAssistantMessageID: viewModel.streamingAssistantMessageID,
+            liveTokensPerSecond: viewModel.liveTokensPerSecond,
             activeStreamRecoveryState: viewModel.activeStreamRecoveryState,
-            clarificationPrompt: viewModel.clarificationPrompt,
-            isRespondingToClarification: viewModel.isRespondingToClarification,
-            clarificationErrorMessage: viewModel.clarificationErrorMessage,
+            clarificationPromptID: viewModel.clarificationPrompt?.id,
             hidesRunStatusAccessibility: activeRunStatusPresentation != nil,
             keepsComposerFocusedOnInteraction: ComposerFocusPolicy.keepsFocusDuringTranscriptInteraction(
                 isMacCatalyst: PlatformCapabilities.isMacCatalyst
             ),
             showsThinkingAndToolCards: showsThinkingAndToolCards,
-            showsAssistantTypingIndicator: showsAssistantTypingIndicator,
+            workingRowStartedAt: workingRowStartedAt,
             showsScrollToBottomButton: showsScrollToBottomButton,
             shouldFollowLatestMessage: shouldFollowLatestMessage,
+            isDisclosureSettling: isDisclosureSettling,
             latestTranscriptMessageRole: latestTranscriptMessageRole,
             isScrolledNearBottom: isScrolledNearBottom,
             activeStreamID: viewModel.activeStreamID,
             streamingScrollTrigger: viewModel.streamingScrollTrigger,
-            cacheFirstReconcileScrollToken: viewModel.cacheFirstReconcileScrollToken,
+            transcriptRelayoutScrollToken: viewModel.transcriptRelayoutScrollToken,
             bottomAnchorID: bottomAnchorID,
-            transcriptMessageSpacing: transcriptMessageSpacing,
-            transcriptBlockSpacing: transcriptBlockSpacing,
+            transcriptSpacing: transcriptSpacing,
             transcriptBottomInsetHeight: transcriptBottomInsetHeight,
             scrollToBottomButtonBottomPadding: scrollToBottomButtonBottomPadding,
             localAttachmentPreviews: viewModel.localAttachmentPreviews,
@@ -1165,6 +1438,12 @@ struct ChatView: View {
             onCacheFirstFrameCommitted: { marker in
                 viewModel.markCacheFirstTranscriptFrameCommitted(marker)
             },
+            onFollowEvent: handleFollowEvent,
+            onDisclosureToggle: handleDisclosureToggle,
+            turnFolds: turnFolds(reasoningGroups: reasoningGroups),
+            terminalReplyRenderIDs: terminalReplyRenderIDs,
+            expandedTurnKeys: expandedTurnKeys,
+            onToggleTurnFold: toggleTurnFold,
             onDismissKeyboard: handleTranscriptFocusInteraction,
             onScrollToBottom: scrollToBottom,
             onScrollToLatestTranscriptMessage: { proxy in
@@ -1174,27 +1453,19 @@ struct ChatView: View {
                 scrollToLatestContent(proxy, animated: animated)
             },
             onPreviewAttachment: { attachment, localData in
-                presentPreviewRestoringComposerFocusIfNeeded {
-                    attachmentPreviewItem = ChatAttachmentPreviewItem(message: attachment, localData: localData)
-                }
+                presentAttachmentPreview(
+                    ChatAttachmentPreviewItem(message: attachment, localData: localData)
+                )
             },
             onPreviewTranscriptMedia: { reference in
-                transcriptMediaPreviewItem = TranscriptMediaPreviewItem(reference: reference)
+                presentTranscriptMediaPreview(reference)
             },
             onToggleListening: { context in
                 viewModel.toggleListening(to: context)
             },
-            onSubmitClarification: { response in
-                Task {
-                    let didRespond = await viewModel.respondToClarification(response)
-                    if didRespond {
-                        ChatHaptics.clarificationSubmitted(isEnabled: isHapticsEnabled)
-                    }
-                }
-            },
             onSelectText: { context in
                 prepareForTemporaryComposerFocusHandoff()
-                selectableResponseText = SelectableResponseText(context: context)
+                selectableResponseText = SelectableTextPresentation(context: context)
             },
             onRegenerate: beginRegenerateResponse,
             onEdit: beginEditMessage,
@@ -1203,6 +1474,7 @@ struct ChatView: View {
             },
             onCopy: { context in
                 UIPasteboard.general.string = context.copyText
+                ChatHaptics.copied(isEnabled: isHapticsEnabled)
             },
             inlineCommitContext: inlineCommitContext,
             onInlineCommit: {
@@ -1213,9 +1485,78 @@ struct ChatView: View {
                 presentTurnDiff(for: turnChangesRecapSummary)
             },
             onOpenTurnFileDiff: { file in
-                turnDiffPresentation = .file(file)
+                turnDiffPresentation = .turnFiles(turnChangesRecapSummary?.diffFiles ?? [file], initial: file)
             }
         )
+        // Off the main body chain, which is at the type-checker's limit.
+        .onChange(of: viewModel.latestRunOutcome) {
+            handleLatestRunOutcomeChange(viewModel.latestRunOutcome)
+        }
+        .environment(\.composerChipCatalog, viewModel.composerChipCatalog)
+        .environment(\.openURL, OpenURLAction(handler: handleTranscriptLink))
+        .environment(\.chatWorkspaceRoot, session.workspace)
+        .task(id: transcriptSkillReferenceCount) {
+            await loadSkillSuggestionsForTranscriptChipsIfNeeded()
+        }
+        .task(id: fileChipReferenceScanToken) {
+            await viewModel.loadFileChipReferences(draft: draftMessage)
+        }
+    }
+
+    /// Changes whenever there is new text that could name a workspace file, or
+    /// whenever the answers already given have been thrown away: the transcript
+    /// grew, was swapped for the server's copy (which can rewrite a message in
+    /// the middle without changing the count or the last id), the workspace
+    /// moved, or the draft gained or lost a finished `@…`.
+    ///
+    /// Everything here is O(1) or bounded by the draft, because it runs on every
+    /// transcript update, including each token of a live stream. The scan of the
+    /// transcript itself is the view model's, and it skips candidates the server
+    /// has already answered for.
+    private var fileChipReferenceScanToken: String {
+        let draftCandidates = ComposerChipTokenizer.fileReferenceCandidates(in: draftMessage)
+        return [
+            String(viewModel.messages.count),
+            String(viewModel.transcriptRevision),
+            String(viewModel.fileChipScopeRevision),
+            draftCandidates.joined(separator: " ")
+        ].joined(separator: "|")
+    }
+
+    /// How many sent messages look like they name a skill.
+    ///
+    /// It is both the trigger and the task's identity, so a cache-first
+    /// transcript that swaps in the server's messages still warms the list when
+    /// the count of messages did not change but their text did. Zero once the
+    /// list has loaded or this chat has already asked, which is what keeps the
+    /// scan off the streaming path.
+    private var transcriptSkillReferenceCount: Int {
+        guard !hasRequestedSkillsForTranscriptChips, !viewModel.hasLoadedSkillSlashSuggestions else {
+            return 0
+        }
+
+        return viewModel.messages.reduce(into: 0) { count, message in
+            guard message.role == "user",
+                  ComposerChipTokenizer.mayContainReference(message.content ?? "")
+            else { return }
+            count += 1
+        }
+    }
+
+    /// A sent message draws its skill reference as a chip only for skills the
+    /// app has heard of, so a transcript that names one warms the skill list the
+    /// way a restored draft does — and a chat that never mentions a skill still
+    /// costs no skills request.
+    private func loadSkillSuggestionsForTranscriptChipsIfNeeded() async {
+        guard transcriptSkillReferenceCount > 0 else { return }
+
+        await viewModel.loadSkillSlashSuggestions()
+
+        // One ask per chat. A skills request that failed must not turn every
+        // later transcript update into another one; typing `/` in the composer
+        // still retries on the reader's behalf. Set after the wait so a
+        // cancelled task leaves the chat free to ask again.
+        hasRequestedSkillsForTranscriptChips = true
     }
 
     /// The chat-canvas layout direction. Driven by the manual Settings → Chat
@@ -1225,36 +1566,53 @@ struct ChatView: View {
         ChatTranscriptDisplaySettings.chatLayoutDirection(rtlEnabled: rtlChatLayoutEnabled)
     }
 
+    private var shouldFollowLatestMessage: Bool {
+        followLatch.isFollowing
+    }
+
+    /// Automatic follows run only while the latch is on and no disclosure
+    /// toggle is mid-animation.
+    private var isFollowingLatestContent: Bool {
+        shouldFollowLatestMessage && !isDisclosureSettling
+    }
+
     private var showsScrollToBottomButton: Bool {
         !isScrolledNearBottom && (viewModel.activeStreamID == nil || !shouldFollowLatestMessage)
     }
 
-    private var showsAssistantTypingIndicator: Bool {
-        ChatTranscriptDisplaySettings.shouldShowAssistantTypingIndicator(
-            hasActiveStream: viewModel.activeStreamID != nil,
+    private var workingRowStartedAt: Date? {
+        ChatWorkingRowPolicy.startedAt(
+            activeRunStartedAt: viewModel.activeRunStartedAt,
             isCancellingStream: viewModel.isCancellingStream,
-            hasStreamingAssistantMessage: viewModel.hasStreamingAssistantMessageContent,
-            hasPendingClarificationPrompt: viewModel.clarificationPrompt != nil,
-            liveReasoningText: viewModel.liveReasoningText,
-            hasLiveToolCalls: !viewModel.liveToolCalls.isEmpty,
-            showsThinkingAndToolCards: showsThinkingAndToolCards
+            hasPendingClarificationPrompt: viewModel.clarificationPrompt != nil
         )
     }
 
-    private var isComposerChromeCompact: Bool {
-        isReadingOlderTranscript && !viewModel.messages.isEmpty
-    }
-
     private var transcriptBottomInsetHeight: CGFloat {
-        max(96, composerHeight + 44 + composerAccessorySpacerHeight)
+        max(96, composerHeight + 44 + composerAccessorySpacerHeight + clarificationFootprintHeight)
     }
 
     private var scrollToBottomButtonBottomPadding: CGFloat {
-        composerHeight + 12 + composerAccessorySpacerHeight
+        composerHeight + 12 + composerAccessorySpacerHeight + clarificationFootprintHeight
+    }
+
+    /// Bar height plus its gap above the composer while a clarification is
+    /// pending. Constant across expand and collapse, so the transcript never
+    /// moves while the card animates.
+    private var clarificationFootprintHeight: CGFloat {
+        viewModel.clarificationPrompt == nil ? 0 : clarificationBarHeight + 8
     }
 
     private var pinnedNoticeSpacerHeight: CGFloat {
-        viewModel.pinnedLocalNotices.isEmpty ? 0 : CGFloat(viewModel.pinnedLocalNotices.count) * 60
+        composerLocalNotices.isEmpty ? 0 : CGFloat(composerLocalNotices.count) * 60
+    }
+
+    private var composerLocalNotices: [String] {
+        var notices = viewModel.pinnedLocalNotices
+        if let steeringConfirmationNotice = viewModel.steeringConfirmationNotice {
+            notices.append(steeringConfirmationNotice)
+        }
+        return notices
     }
 
     private var activeRunStatusPresentation: ChatActiveRunStatusPresentation? {
@@ -1289,7 +1647,7 @@ struct ChatView: View {
 
     private var composerAccessoryVisibleItemCount: Int {
         var count = 0
-        if !viewModel.pinnedLocalNotices.isEmpty {
+        if !composerLocalNotices.isEmpty {
             count += 1
         }
         if activeRunStatusPresentation != nil {
@@ -1328,6 +1686,56 @@ struct ChatView: View {
         transcriptMessages
     }
 
+    /// Settled-turn folds for the current transcript. Activity anchors count
+    /// only while thinking and tool cards are shown, so a turn with nothing
+    /// visible to hide gets no row.
+    private func turnFolds(reasoningGroups: [ReasoningGroup]) -> TranscriptTurnFolds {
+        guard foldsSettledTurns else { return .none }
+
+        let activityAnchorIDs: Set<String> = showsThinkingAndToolCards
+            ? Set(reasoningGroups.compactMap(\.anchorMessageID))
+                .union(viewModel.completedToolCallGroups.compactMap(\.anchorMessageID))
+            : []
+
+        return TranscriptTurnFolds.derive(
+            transcriptMessages: transcriptMessages,
+            messages: viewModel.messages,
+            messageOffset: viewModel.messagesOffset,
+            activityAnchorIDs: activityAnchorIDs,
+            rendersBubble: shouldRenderMessageRow,
+            isStreamActive: viewModel.activeStreamID != nil,
+            streamingAssistantMessageID: viewModel.streamingAssistantMessageID,
+            latestRunOutcome: viewModel.latestRunOutcome
+        )
+    }
+
+    /// Rows that get the time + copy row as the reply closing a settled turn.
+    private var terminalReplyRenderIDs: Set<String> {
+        TranscriptMessageMetaPolicy.terminalReplyRenderIDs(
+            transcriptMessages: transcriptMessages,
+            messages: viewModel.messages,
+            messageOffset: viewModel.messagesOffset,
+            rendersBubble: shouldRenderMessageRow,
+            isStreamActive: viewModel.activeStreamID != nil,
+            streamingAssistantMessageID: viewModel.streamingAssistantMessageID
+        )
+    }
+
+    private func toggleTurnFold(_ turnKey: String) {
+        handleDisclosureToggle()
+        withAnimation(ChatMotion.disclosure(reduceMotion: reduceMotion)) {
+            if !expandedTurnKeys.insert(turnKey).inserted {
+                expandedTurnKeys.remove(turnKey)
+            }
+        }
+    }
+
+    /// Failed or stopped turns start open so the work that went wrong is in view.
+    private func handleLatestRunOutcomeChange(_ outcome: TranscriptTurnRunOutcome?) {
+        guard let outcome, outcome.ending != .completed else { return }
+        expandedTurnKeys.insert(outcome.turnKey)
+    }
+
     private var latestTranscriptMessageID: String? {
         transcriptMessages.last?.id
     }
@@ -1341,6 +1749,7 @@ struct ChatView: View {
     }
 
     private func handleInitialAppearanceTask() async {
+        await hydrateDraftIfNeeded()
         prepareInitialAppearance()
         await viewModel.configureCacheWriter(cacheWriter)
 
@@ -1352,11 +1761,13 @@ struct ChatView: View {
 
         async let chatStartup: Void = performInitialAsyncWork()
         async let gitAvailability: Void = loadInitialGitAvailability()
-        _ = await (chatStartup, gitAvailability)
+        async let draftAttachments: Void = restoreDraftAttachmentsIfNeeded()
+        _ = await (chatStartup, gitAvailability, draftAttachments)
     }
 
     private func performInitialAsyncWork() async {
         guard !Task.isCancelled else { return }
+        let draftSettingsInteractionGeneration = viewModel.composerConfigurationInteractionGeneration
 
         if loadsInitialMessages {
             await viewModel.prepareInitialMessageLoad(modelContext: modelContext)
@@ -1371,6 +1782,11 @@ struct ChatView: View {
             applyInitialComposerFocusPolicyIfNeeded()
         }
         await viewModel.loadComposerConfiguration()
+        guard !Task.isCancelled else { return }
+
+        await applyRestoredDraftSettingsIfNeeded(
+            expectedInteractionGeneration: draftSettingsInteractionGeneration
+        )
         guard !Task.isCancelled else { return }
 
         await viewModel.refreshApprovalBypassState()
@@ -1423,12 +1839,7 @@ struct ChatView: View {
     }
 
     private func loadOlderMessages() async -> Bool {
-        shouldFollowLatestMessage = false
-        if !isReadingOlderTranscript {
-            withAnimation(ChatMotion.quickState(reduceMotion: reduceMotion)) {
-                isReadingOlderTranscript = true
-            }
-        }
+        followLatch.isFollowing = false
 
         let didLoad = await viewModel.loadOlderMessages(modelContext: modelContext)
         if let lastError = viewModel.lastError {
@@ -1459,14 +1870,54 @@ struct ChatView: View {
         }
     }
 
+    private func confirmClearConversation(_ pending: PendingClearConfirmation) {
+        Task { await clearConversation(pending) }
+    }
+
+    private func clearConversation(_ pending: PendingClearConfirmation) async {
+        let result = await viewModel.clearConversationFromSlashCommand(modelContext: modelContext)
+        handleSlashExecutionResult(
+            result,
+            parsedCommand: SlashCommandCatalog.command(named: "clear"),
+            submittedDraft: pending.draft,
+            submittedDraftRevision: pending.draftRevision
+        )
+
+        if let lastError = viewModel.lastError {
+            onAPIError(lastError)
+        }
+    }
+
     private func sendDraftMessage() async {
         let submittedDraft = draftMessage
+        let submittedDraftRevision = draftRevision
         let shouldRestoreFocusAfterSend = composerIsFocused
 
         if submittedDraft.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("/") {
             let parsedCommand = SlashCommandExecutor.parse(submittedDraft)?.command
-            let result = await SlashCommandExecutor.execute(text: submittedDraft, viewModel: viewModel)
-            handleSlashExecutionResult(result, parsedCommand: parsedCommand)
+            // `/clear` wipes the conversation on the server, so it always asks
+            // first. The draft stays in the composer until the user confirms.
+            // A refusal the app already knows about (cached view, CLI session,
+            // live stream) skips the alert and falls through to the normal
+            // slash path, which surfaces it.
+            if parsedCommand?.handler == .clientSide(.clear), viewModel.clearConversationRefusal == nil {
+                pendingClearConfirmation = PendingClearConfirmation(
+                    draft: submittedDraft,
+                    draftRevision: submittedDraftRevision
+                )
+                return
+            }
+            let result = await SlashCommandExecutor.execute(
+                text: submittedDraft,
+                viewModel: viewModel,
+                modelContext: modelContext
+            )
+            handleSlashExecutionResult(
+                result,
+                parsedCommand: parsedCommand,
+                submittedDraft: submittedDraft,
+                submittedDraftRevision: submittedDraftRevision
+            )
 
             if result != .sendAsMessage {
                 if let lastError = viewModel.lastError {
@@ -1483,10 +1934,19 @@ struct ChatView: View {
                 submittedDraft,
                 behavior: StreamingSendBehavior.storedValue(streamingSendBehaviorRawValue)
             )
-            handleSlashExecutionResult(result, parsedCommand: SlashCommandCatalog.command(named: streamingSendBehaviorCommandName))
+            handleSlashExecutionResult(
+                result,
+                parsedCommand: SlashCommandCatalog.command(named: streamingSendBehaviorCommandName),
+                submittedDraft: submittedDraft,
+                submittedDraftRevision: submittedDraftRevision,
+                consumesDraft: result.isSuccessfulSubmission
+            )
             didStart = result.isSuccessfulSubmission
         } else {
-            didStart = await sendStandardMessage(submittedDraft)
+            didStart = await sendStandardMessage(
+                submittedDraft,
+                submittedDraftRevision: submittedDraftRevision
+            )
         }
 
         if didStart {
@@ -1515,6 +1975,7 @@ struct ChatView: View {
 
         if didSend {
             await onMessageSubmitted()
+            onConversationStarted()
             ChatHaptics.messageSent(isEnabled: isHapticsEnabled)
         }
 
@@ -1523,18 +1984,49 @@ struct ChatView: View {
         }
     }
 
-    private func sendStandardMessage(_ submittedDraft: String) async -> Bool {
-        guard !submittedDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+    private func sendStandardMessage(
+        _ submittedDraft: String,
+        submittedDraftRevision: Int
+    ) async -> Bool {
+        // Attachment-only sends (empty text) flow through; the view model
+        // synthesize the message text. `draftStore.setDraft("")` below is the
+        // correct end state for them: the draft is empty after sending.
+        let hasStagedAttachments = !viewModel.pendingAttachments.isEmpty
+        guard !submittedDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || hasStagedAttachments else {
             return false
         }
 
         prepareTranscriptForExplicitSend()
 
-        setDraftMessage("")
+        // Reconcile against what the composer actually staged, not against the
+        // draft's whole record set. A record that is not staged — awaiting a
+        // re-upload retry, or not yet reached by an in-flight restore — was
+        // never carried by this send, so its durable copy must survive.
+        let sendReconciliation = ChatDraftSendReconciliation.outcome(
+            draftRecords: lastSyncedDraftAttachments,
+            stagedAttachmentIDs: Set(viewModel.pendingAttachments.map(\.id))
+        )
+        draftStore.setDraft(submittedDraft, for: draftKey)
+        draftMessage = ""
 
         let didStart = await viewModel.sendMessage(submittedDraft, modelContext: modelContext)
-        if !didStart, draftMessage.isEmpty {
-            setDraftMessage(submittedDraft)
+        if didStart {
+            onConversationStarted()
+            draftAttachmentsPendingRetry = sendReconciliation.retained
+        }
+        draftMessage = draftStore.resolveSubmission(
+            submittedText: submittedDraft,
+            currentText: draftMessage,
+            didStart: didStart,
+            draftWasEdited: draftRevision != submittedDraftRevision,
+            for: draftKey
+        )
+        if didStart {
+            // `resolveSubmission` cleared the draft's attachment records; put
+            // back the ones the send never carried so they retry on a later
+            // open. Deterministic here rather than waiting on the observation
+            // sync that the emptied composer strip will also trigger.
+            syncDraftAttachments()
         }
 
         return didStart
@@ -1542,7 +2034,10 @@ struct ChatView: View {
 
     private func handleSlashExecutionResult(
         _ result: SlashCommandExecutionResult,
-        parsedCommand: SlashCommand?
+        parsedCommand: SlashCommand?,
+        submittedDraft: String,
+        submittedDraftRevision: Int,
+        consumesDraft: Bool = true
     ) {
         switch result {
         case .executed(let message):
@@ -1557,13 +2052,28 @@ struct ChatView: View {
                     viewModel.appendLocalAssistantMessage(message)
                 }
             }
-            setDraftMessage("")
+            if consumesDraft {
+                reconcileConsumedDraft(
+                    submittedDraft,
+                    submittedDraftRevision: submittedDraftRevision
+                )
+            }
         case .openedSession(let session):
             forkedSession = session
-            setDraftMessage("")
+            if consumesDraft {
+                reconcileConsumedDraft(
+                    submittedDraft,
+                    submittedDraftRevision: submittedDraftRevision
+                )
+            }
         case .unsupported(let friendlyMessage):
             viewModel.setSendErrorMessage(friendlyMessage)
-            setDraftMessage("")
+            if consumesDraft {
+                reconcileConsumedDraft(
+                    submittedDraft,
+                    submittedDraftRevision: submittedDraftRevision
+                )
+            }
         case .needsSubArg:
             viewModel.setSendErrorMessage(String(localized: "Choose a slash command or continue typing."))
         case .sendAsMessage:
@@ -1587,6 +2097,214 @@ struct ChatView: View {
             "interrupt"
         case .queue:
             "queue"
+        }
+    }
+
+    private var draftKey: ChatDraftKey {
+        let normalizedSessionID = session.sessionId?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sessionID = normalizedSessionID.flatMap { $0.isEmpty ? nil : $0 } ?? session.id
+        return .session(
+            server: server,
+            sessionID: sessionID
+        )
+    }
+
+    private var persistedDraftBinding: Binding<String> {
+        Binding(
+            get: { draftMessage },
+            set: { newValue in
+                draftMessage = newValue
+                draftRevision &+= 1
+                draftStore.setDraft(newValue, for: draftKey)
+            }
+        )
+    }
+
+    private func hydrateDraftIfNeeded() async {
+        guard !didHydrateDraft else { return }
+        let textBeforeHydration = draftMessage
+        let persistedDraft = await draftStore.draft(for: draftKey)
+        guard !Task.isCancelled, draftMessage == textBeforeHydration else { return }
+
+        if textBeforeHydration.isEmpty {
+            if let persistedDraft, !persistedDraft.text.isEmpty {
+                draftMessage = persistedDraft.text
+            }
+        } else {
+            draftStore.setDraft(textBeforeHydration, for: draftKey)
+        }
+        didHydrateDraft = true
+
+        restoredDraftSettings = persistedDraft?.settings
+        lastSyncedDraftAttachments = persistedDraft?.attachments ?? []
+        if let persistedDraft, !persistedDraft.attachments.isEmpty {
+            // Hold the sync gate now and restore later: re-uploading staged
+            // files is network work and must not delay the transcript.
+            isRestoringDraftAttachments = true
+            draftAttachmentsAwaitingRestore = persistedDraft.attachments
+        }
+    }
+
+    private func restoreDraftAttachmentsIfNeeded() async {
+        let records = draftAttachmentsAwaitingRestore
+        guard !records.isEmpty else { return }
+        draftAttachmentsAwaitingRestore = []
+        await restoreDraftAttachments(records)
+    }
+
+    /// Rebuilds the composer's staged attachments from a persisted draft by
+    /// re-uploading each record's durable local copy against this session. The
+    /// persisted server path is never trusted: uploads live in a per-session
+    /// inbox the server deletes with the session, so only the app-owned copy
+    /// is a sound restore source. Records whose copy is missing are dropped
+    /// (with a notice); records whose re-upload fails stay in the draft and
+    /// retry on a later open. The rest of the draft loads either way.
+    private func restoreDraftAttachments(_ records: [ChatDraftAttachment]) async {
+        var pendingRetry: [ChatDraftAttachment] = []
+        var unrecoverableCount = 0
+        var wasCancelled = false
+
+        for (offset, record) in records.enumerated() {
+            if Task.isCancelled {
+                // Leaving the chat mid-restore is not a restore failure. Every
+                // record from here on is untried, so carry the whole remainder
+                // into the retry set: the sync below is authoritative, and
+                // anything missing from it would be dropped from the draft and
+                // later swept from disk.
+                wasCancelled = true
+                pendingRetry.append(contentsOf: records[offset...])
+                break
+            }
+            guard let fileName = record.file else {
+                // Tolerate an older or partially corrupt record that predates
+                // the durable-staging invariant.
+                unrecoverableCount += 1
+                continue
+            }
+
+            let data: Data
+            do {
+                data = try await draftAttachmentStore.data(named: fileName)
+            } catch {
+                // Only a copy that is genuinely gone is dropped. Any other
+                // read failure keeps the record so a later open can retry it.
+                switch ChatDraftAttachmentReadFailure.classify(error) {
+                case .unrecoverable:
+                    unrecoverableCount += 1
+                case .transient:
+                    pendingRetry.append(record)
+                }
+                continue
+            }
+
+            if await viewModel.reuploadDraftAttachment(record, data: data) == nil {
+                pendingRetry.append(record)
+            }
+        }
+
+        isRestoringDraftAttachments = false
+        draftAttachmentsPendingRetry = pendingRetry
+        // Authoritative sync after restore: persists the restored set plus the
+        // retry union, and drops unrecoverable records from the draft.
+        syncDraftAttachments()
+
+        // Report only a real restore outcome. A cancelled pass has nothing to
+        // say, and its view is going away regardless.
+        guard !wasCancelled else { return }
+        if !pendingRetry.isEmpty || unrecoverableCount > 0 {
+            viewModel.setUploadAttachmentError(
+                draftRestoreFailureMessage(retryCount: pendingRetry.count, droppedCount: unrecoverableCount)
+            )
+        }
+    }
+
+    /// Copy uses catalog plural variations rather than a hand-branched
+    /// singular/plural, so languages whose plural rules differ from English
+    /// still read correctly. The mixed case avoids a two-number sentence.
+    private func draftRestoreFailureMessage(retryCount: Int, droppedCount: Int) -> String {
+        switch (retryCount > 0, droppedCount > 0) {
+        case (true, false):
+            return String(localized: "Couldn't restore \(retryCount) saved attachments yet. They're still saved in this draft.")
+        case (false, true):
+            return String(localized: "\(droppedCount) saved attachments are no longer available and were removed from this draft.")
+        default:
+            return String(localized: "Some saved attachments couldn't be restored. Check this draft's attachments before sending.")
+        }
+    }
+
+    /// Mirrors the composer's staged attachments into the persisted draft.
+    /// Restored records whose re-upload failed are unioned back in so a
+    /// mid-restore or post-restore sync can't silently drop them. Gated during
+    /// hydration/restore so an empty or partial composer never overwrites the
+    /// persisted set.
+    private func syncDraftAttachments() {
+        guard didHydrateDraft, !isRestoringDraftAttachments else { return }
+        // Only records backed by a durable copy are persisted. Without one the
+        // record could never be restored, and keeping it would hold the draft
+        // alive just to report the attachment as lost on the next open.
+        let pendingRecords = viewModel.pendingAttachments
+            .map(ChatDraftAttachment.init(pending:))
+            .filter { $0.file != nil }
+        let retryRecords = draftAttachmentsPendingRetry.filter { retry in
+            !pendingRecords.contains(where: { $0.id == retry.id })
+        }
+        let records = pendingRecords + retryRecords
+        lastSyncedDraftAttachments = records
+        draftStore.setAttachments(records, for: draftKey)
+    }
+
+    /// Snapshots the effective composer settings into the draft whenever they
+    /// change. Only new-chat contexts snapshot: an existing session's
+    /// configuration is owned by the server and is never re-applied from a
+    /// draft, so persisting it would just store choices at rest that nothing
+    /// reads. Snapshotting here is what lets an abandoned new chat carry its
+    /// model/workspace/profile/reasoning picks to the next new chat.
+    private func syncDraftSettings(_ settings: ChatDraftSettings) {
+        guard didHydrateDraft, restoresDraftSettings else { return }
+        draftStore.setSettings(settings, for: draftKey)
+    }
+
+    /// The composer choices that make up a draft's settings snapshot, as one
+    /// Equatable value so a single `onChange` covers all five.
+    private var currentComposerSettings: ChatDraftSettings {
+        ChatDraftSettings(
+            modelID: viewModel.selectedModelID,
+            modelProviderID: viewModel.selectedModelProviderID,
+            reasoningEffort: viewModel.selectedReasoningEffort,
+            profileName: viewModel.selectedProfileName,
+            workspacePath: viewModel.selectedWorkspacePath
+        )
+    }
+
+    /// New-chat only. The view owns the one-shot restore trigger while the
+    /// model owns validation, interaction fencing, and profile ordering.
+    private func applyRestoredDraftSettingsIfNeeded(
+        expectedInteractionGeneration: Int
+    ) async {
+        guard restoresDraftSettings, !didApplyRestoredDraftSettings else { return }
+        didApplyRestoredDraftSettings = true
+        guard let settings = restoredDraftSettings, !Task.isCancelled else { return }
+        await viewModel.restoreDraftSettings(
+            settings,
+            expectedInteractionGeneration: expectedInteractionGeneration
+        )
+    }
+
+    private func reconcileConsumedDraft(
+        _ submittedDraft: String,
+        submittedDraftRevision: Int
+    ) {
+        draftMessage = draftStore.resolveConsumedInput(
+            submittedText: submittedDraft,
+            currentText: draftMessage,
+            draftWasEdited: draftRevision != submittedDraftRevision,
+            for: draftKey
+        )
+    }
+
+    private func flushDraftsBestEffort() {
+        Task {
+            try? await draftStore.flush()
         }
     }
 
@@ -1614,6 +2332,7 @@ struct ChatView: View {
     }
 
     private func handleProfileSelection(_ profile: ProfileSummary) {
+        viewModel.markComposerConfigurationInteraction()
         if viewModel.isSelectedProfile(profile) {
             return
         }
@@ -1627,7 +2346,11 @@ struct ChatView: View {
     }
 
     private func switchProfile(_ profile: ProfileSummary, startNewSession: Bool) async {
-        let outcome = await viewModel.switchProfile(profile, startNewSession: startNewSession)
+        let outcome = await viewModel.switchProfile(
+            profile,
+            startNewSession: startNewSession,
+            recordsInteraction: false
+        )
         pendingProfileSelection = nil
 
         if let lastError = viewModel.lastError {
@@ -1833,6 +2556,10 @@ struct ChatView: View {
     }
 
     private func handleScenePhaseChange(_ phase: ScenePhase) {
+        if phase != .active {
+            flushDraftsBestEffort()
+        }
+
         switch phase {
         case .background:
             if viewModel.activeStreamID != nil {
@@ -1875,6 +2602,12 @@ struct ChatView: View {
             return
         }
 
+        // A new turn starting folds the previous one, even one that opened
+        // itself after failing or being stopped.
+        if let previousTurnKey = viewModel.latestRunOutcome?.turnKey {
+            expandedTurnKeys.remove(previousTurnKey)
+        }
+
         startActiveStreamStatusRefreshTask(streamID: activeStreamID)
     }
 
@@ -1898,6 +2631,10 @@ struct ChatView: View {
     }
 
     private func handleResponseCompletionSideEffects() {
+        if !viewModel.responseCompletionNeedsTranscriptRefresh {
+            Task { await viewModel.cacheCompletedResponse(modelContext: modelContext) }
+        }
+
         guard let completionContext = responseCompletionNotificationTracker.completionContext(
             completionTrigger: viewModel.responseCompletionHapticTrigger,
             sceneIsActive: scenePhase == .active
@@ -1950,6 +2687,7 @@ struct ChatView: View {
         // Deliberate jump to the latest content. Snap without animation while a
         // response is streaming so the tap lands immediately instead of racing
         // the short follow animations already chasing incoming tokens.
+        ChatHaptics.scrolledToLatest(isEnabled: isHapticsEnabled)
         scrollToLatestContent(
             proxy,
             animated: viewModel.activeStreamID == nil,
@@ -1996,18 +2734,15 @@ struct ChatView: View {
         animated: Bool,
         isUserInitiated: Bool
     ) {
-        // Auto-follow (streaming tokens, new rows) must not override the user's
-        // scroll position while they are interacting or within the cooldown.
-        if !isUserInitiated, isAutoFollowScrollPaused {
+        // Explicit jumps re-arm the follow latch; automatic follows (streaming
+        // tokens, new rows) only run while the latch is already on and no
+        // disclosure toggle is settling.
+        if isUserInitiated {
+            handleFollowEvent(.reset)
+        } else if !isFollowingLatestContent {
             return
         }
 
-        if isUserInitiated {
-            userScrollCooldownUntil = nil
-        }
-
-        shouldFollowLatestMessage = true
-        isReadingOlderTranscript = false
         followScrollGeneration += 1
         let generation = followScrollGeneration
 
@@ -2015,8 +2750,9 @@ struct ChatView: View {
             await Task.yield()
             try? await Task.sleep(nanoseconds: 16_000_000)
             guard !Task.isCancelled, generation == followScrollGeneration else { return }
-            // Re-check at fire time: a gesture may have begun during the delay.
-            if !isUserInitiated, isAutoFollowScrollPaused { return }
+            // Re-check at fire time: a drag or a disclosure toggle may have
+            // begun during the delay.
+            if !isUserInitiated, !isFollowingLatestContent { return }
 
             // Snap (no animation) while inside the cache-first reconcile window so the
             // taller server transcript replacing the cached one doesn't animate a jump
@@ -2117,57 +2853,57 @@ struct ChatView: View {
         }
     }
 
+    private func handleFollowEvent(_ event: ChatScrollPolicy.FollowEvent) {
+        let resolved = ChatScrollPolicy.resolveFollow(current: followLatch, event: event)
+        if resolved != followLatch {
+            followLatch = resolved
+        }
+    }
+
+    /// Suspends follow scrolls and the bottom anchor through a disclosure
+    /// animation; the transcript view pins the offset itself. The latch is
+    /// untouched, so the next streaming trigger catches up once the toggle has
+    /// settled.
+    private func handleDisclosureToggle() {
+        ChatHaptics.disclosureToggled(isEnabled: isHapticsEnabled)
+        suspendBottomAnchorForDisclosure()
+    }
+
+    /// One tick per view-model bump; the view model already throttles and skips replay.
+    private func handleStreamingHapticPulse() {
+        ChatHaptics.streamingPulse(isEnabled: isHapticsEnabled && isStreamingPulseEnabled)
+    }
+
+    private func suspendBottomAnchorForDisclosure() {
+        disclosureSettleGeneration += 1
+        let generation = disclosureSettleGeneration
+        isDisclosureSettling = true
+
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(ChatScrollPolicy.disclosureAnchorSuspension))
+            guard generation == disclosureSettleGeneration else { return }
+            isDisclosureSettling = false
+        }
+    }
+
     private func updateScrollMetrics(_ metrics: ChatScrollMetrics) {
         let isStreaming = viewModel.activeStreamID != nil
         let isNearBottom = ChatScrollPolicy.isNearBottom(
             distanceFromBottom: metrics.distanceFromBottom,
             isStreaming: isStreaming
         )
+        let wasNearBottom = isScrolledNearBottom
         isScrolledNearBottom = isNearBottom
-        isUserInteractingWithScroll = metrics.isUserInteracting
-
-        // Touching the scroll view pauses auto-follow for a short window so
-        // streaming layout growth cannot yank the viewport mid-gesture.
-        if metrics.isUserInteracting {
-            userScrollCooldownUntil = ChatScrollPolicy.cooldownDeadline()
-        }
-
-        if isNearBottom {
-            shouldFollowLatestMessage = true
-            if isReadingOlderTranscript {
-                withAnimation(ChatMotion.quickState(reduceMotion: reduceMotion)) {
-                    isReadingOlderTranscript = false
-                }
-            }
-        } else if metrics.isUserInteracting {
-            shouldFollowLatestMessage = false
-            if !isReadingOlderTranscript,
-               ChatScrollPolicy.shouldEnterReadingOlder(
-                   distanceFromBottom: metrics.distanceFromBottom,
-                   isStreaming: isStreaming
-               ) {
-                withAnimation(ChatMotion.quickState(reduceMotion: reduceMotion)) {
-                    isReadingOlderTranscript = true
-                }
-            }
-        }
-    }
-
-    private var isAutoFollowScrollPaused: Bool {
-        ChatScrollPolicy.isAutoScrollPaused(
-            isUserInteracting: isUserInteractingWithScroll,
-            cooldownUntil: userScrollCooldownUntil
-        )
+        handleFollowEvent(.contentScrolled(
+            isAtBottom: ChatScrollPolicy.isAtBottom(distanceFromBottom: metrics.distanceFromBottom),
+            isUserScrolling: metrics.isUserInteracting,
+            movedAwayFromBottom: metrics.movedAwayFromBottom,
+            wasNearBottom: wasNearBottom
+        ))
     }
 
     private func prepareTranscriptForExplicitSend() {
-        shouldFollowLatestMessage = true
-        userScrollCooldownUntil = nil
-        if isReadingOlderTranscript {
-            withAnimation(ChatMotion.quickState(reduceMotion: reduceMotion)) {
-                isReadingOlderTranscript = false
-            }
-        }
+        handleFollowEvent(.reset)
     }
 
     private func beginEditMessage(_ context: MessageActionContext) {
@@ -2236,18 +2972,6 @@ struct ChatView: View {
         }
 
         return String(localized: "Switch to \(profile.displayName) and start a new session. This keeps the current transcript on its original profile.")
-    }
-
-    private var persistedDraftMessage: Binding<String> {
-        Binding(
-            get: { draftMessage },
-            set: { setDraftMessage($0) }
-        )
-    }
-
-    private func setDraftMessage(_ newDraft: String) {
-        draftMessage = newDraft
-        SessionDraftPersistence.save(newDraft, for: session.sessionId, server: server)
     }
 
     private func transcriptMessagesAfter(_ context: MessageActionContext) -> Int {
@@ -2448,6 +3172,47 @@ enum PastedAttachmentLoader {
     }
 }
 
+/// The draft that raised the destructive `/clear` confirmation, so confirming
+/// consumes exactly the text that was sent and cancelling leaves it alone.
+private struct PendingClearConfirmation: Equatable {
+    let draft: String
+    let draftRevision: Int
+}
+
+/// The `/clear` confirmation, in its own modifier so `ChatView.body`'s alert
+/// chain stays inside the compiler's type-checking budget.
+private struct ClearConversationAlertModifier: ViewModifier {
+    @Binding var pending: PendingClearConfirmation?
+    let isHapticsEnabled: Bool
+    let onConfirm: (PendingClearConfirmation) -> Void
+
+    func body(content: Content) -> some View {
+        content.alert(
+            "Clear Conversation?",
+            isPresented: Binding(
+                get: { pending != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        pending = nil
+                    }
+                }
+            )
+        ) {
+            Button("Cancel", role: .cancel) {
+                pending = nil
+            }
+            Button("Clear", role: .destructive) {
+                guard let confirmed = pending else { return }
+                ChatHaptics.destructiveConfirmationAccepted(isEnabled: isHapticsEnabled)
+                pending = nil
+                onConfirm(confirmed)
+            }
+        } message: {
+            Text("This deletes every message in this conversation on the server. It cannot be undone.")
+        }
+    }
+}
+
 struct PastedFile: Equatable, Sendable {
     let data: Data
     let filename: String
@@ -2478,5 +3243,25 @@ private extension SlashCommandExecutionResult {
         case .sendAsMessage, .unsupported, .needsSubArg:
             false
         }
+    }
+}
+
+/// Mirrors composer state into the persisted draft. Extracted from `ChatView`'s
+/// modifier chain: folding these two observers into one modifier keeps the
+/// chain within the Swift type-checker's budget.
+private struct ChatDraftSyncModifier: ViewModifier {
+    let pendingAttachments: [PendingAttachment]
+    let composerSettings: ChatDraftSettings
+    let onAttachmentsChange: () -> Void
+    let onSettingsChange: (ChatDraftSettings) -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: pendingAttachments) { _, _ in
+                onAttachmentsChange()
+            }
+            .onChange(of: composerSettings) { _, newSettings in
+                onSettingsChange(newSettings)
+            }
     }
 }

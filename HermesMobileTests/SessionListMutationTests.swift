@@ -99,7 +99,7 @@ final class SessionListMutationTests: XCTestCase {
         XCTAssertFalse(viewModel.isViewingCachedData)
         XCTAssertEqual(
             viewModel.errorMessage,
-            "The server did not respond in time. Check that the Mac is awake, hermes-webui is running, and the tunnel is connected."
+            "The server did not respond in time. Check that the server is running and the connection is available."
         )
         XCTAssertNotNil(viewModel.lastError)
     }
@@ -130,7 +130,7 @@ final class SessionListMutationTests: XCTestCase {
         XCTAssertTrue(CacheFallbackPolicy.shouldUseCache(for: sessionLoadError))
         XCTAssertEqual(
             viewModel.errorMessage,
-            "The server did not respond in time. Check that the Mac is awake, hermes-webui is running, and the tunnel is connected."
+            "The server did not respond in time. Check that the server is running and the connection is available."
         )
 
         await viewModel.searchSessions(query: "later", debounceNanoseconds: 0)
@@ -139,7 +139,7 @@ final class SessionListMutationTests: XCTestCase {
         XCTAssertTrue(CacheFallbackPolicy.shouldUseCache(for: try XCTUnwrap(viewModel.sessionLoadError)))
         XCTAssertEqual(
             viewModel.errorMessage,
-            "The server did not respond in time. Check that the Mac is awake, hermes-webui is running, and the tunnel is connected."
+            "The server did not respond in time. Check that the server is running and the connection is available."
         )
     }
 
@@ -193,6 +193,17 @@ final class SessionListMutationTests: XCTestCase {
             return apiTestJSONResponse("""
             {
               "sessions": [
+                {
+                  "title": "Missing identity",
+                  "message_count": 2,
+                  "archived": false
+                },
+                {
+                  "session_id": "   ",
+                  "title": "Blank identity",
+                  "message_count": 2,
+                  "archived": false
+                },
                 {
                   "session_id": "empty-placeholder",
                   "title": "Untitled Session",
@@ -812,6 +823,10 @@ final class SessionListMutationTests: XCTestCase {
                     #"{"active":true,"stream_id":"stream-123"}"#,
                     for: request
                 )
+            case "/api/approval/pending", "/api/clarify/pending":
+                // The same tick also probes the streaming row's attention state
+                // (see SessionRowAttentionStateTests); nothing is pending here.
+                return apiTestJSONResponse(#"{"pending": null}"#, for: request)
             default:
                 XCTFail("Unexpected request path: \(request.url?.path ?? "nil")")
                 throw URLError(.badURL)
@@ -977,20 +992,22 @@ final class SessionListMutationTests: XCTestCase {
         )
     }
 
-    func testSessionMutatorDuplicateBranchesThenLoadsReturnedSession() async throws {
+    /// Duplicate goes to `/api/session/duplicate`, not `/api/session/branch`.
+    /// Branch means "fork a child from here": it dropped `tool_calls` and the
+    /// token totals, and filed the copy under the original in the lineage tree —
+    /// three wrong outcomes for a menu item labelled Duplicate (#25). The
+    /// duplicate endpoint also returns the whole session, so the follow-up fetch
+    /// the branch flow needed is gone.
+    func testSessionMutatorDuplicateUsesTheDuplicateEndpointAndNeedsNoSecondFetch() async throws {
         var requestedPaths: [String] = []
         let client = try makeClient { request in
             let path = request.url?.path ?? "nil"
             requestedPaths.append(path)
 
             switch path {
-            case "/api/session/branch":
+            case "/api/session/duplicate":
                 let body = try XCTUnwrap(apiTestJSONBody(from: request))
                 XCTAssertEqual(body["session_id"] as? String, "session-abc")
-                XCTAssertEqual(body["title"] as? String, "Planning (copy)")
-                return apiTestJSONResponse(#"{"session_id":"copy-123"}"#, for: request)
-            case "/api/session":
-                XCTAssertEqual(request.url?.query?.contains("session_id=copy-123"), true)
                 return apiTestJSONResponse(
                     """
                     {
@@ -1009,12 +1026,9 @@ final class SessionListMutationTests: XCTestCase {
             }
         }
 
-        let result = try await SessionMutator(client: client).duplicate(
-            sessionID: "session-abc",
-            title: "Planning (copy)"
-        )
+        let result = try await SessionMutator(client: client).duplicate(sessionID: "session-abc")
 
-        XCTAssertEqual(requestedPaths, ["/api/session/branch", "/api/session"])
+        XCTAssertEqual(requestedPaths, ["/api/session/duplicate"])
         XCTAssertEqual(result.session?.sessionId, "copy-123")
         XCTAssertEqual(result.session?.title, "Planning (copy)")
         XCTAssertNil(result.errorMessage)
@@ -2110,10 +2124,13 @@ final class SessionListMutationTests: XCTestCase {
         XCTAssertEqual(viewModel.sessions.compactMap(\.sessionId), ["session-abc"])
     }
 
+    /// The copy is inserted from the duplicate response itself and survives a
+    /// list reload that hasn't caught up yet. The endpoint changed from
+    /// `/api/session/branch` to `/api/session/duplicate` (#25), which also
+    /// removed the follow-up detail fetch and the client-side title.
     @MainActor
-    func testDuplicateBranchesWithCopyTitleLoadsDetailAndInsertsWhenReloadOmitsCopy() async throws {
+    func testDuplicateInsertsTheCopyWhenTheReloadOmitsIt() async throws {
         var branchCount = 0
-        var didRequestDuplicatedDetail = false
         let source = try makeSessionSummary(
             id: "session-abc",
             title: "Planning",
@@ -2122,37 +2139,25 @@ final class SessionListMutationTests: XCTestCase {
         )
         let viewModel = try makeViewModel { request in
             switch request.url?.path {
-            case "/api/session/branch":
+            case "/api/session/duplicate":
                 branchCount += 1
                 let body = try XCTUnwrap(apiTestJSONBody(from: request))
                 XCTAssertEqual(body["session_id"] as? String, "session-abc")
-                XCTAssertEqual(body["title"] as? String, "Planning (copy)")
+                XCTAssertNil(body["title"], "The server names the copy itself.")
 
                 if branchCount == 1 {
                     return apiTestJSONResponse("""
                     {
-                      "session_id": "copy-123",
-                      "parent_session_id": "session-abc"
+                      "session": {
+                        "session_id": "copy-123",
+                        "title": "Planning (copy)",
+                        "archived": false
+                      }
                     }
                     """, for: request)
                 }
 
-                return apiTestJSONResponse("""
-                {
-                  "error": "copy failed"
-                }
-                """, for: request)
-            case "/api/session":
-                didRequestDuplicatedDetail = true
-                return apiTestJSONResponse("""
-                {
-                  "session": {
-                    "session_id": "copy-123",
-                    "title": "Planning (copy)",
-                    "archived": false
-                  }
-                }
-                """, for: request)
+                return apiTestJSONResponse(#"{"error": "copy failed"}"#, for: request)
             case "/api/sessions":
                 return apiTestJSONResponse("""
                 {
@@ -2174,11 +2179,10 @@ final class SessionListMutationTests: XCTestCase {
         let duplicated = await viewModel.duplicate(source)
         let missingID = await viewModel.duplicate(source)
 
-        XCTAssertTrue(didRequestDuplicatedDetail)
         XCTAssertEqual(duplicated?.sessionId, "copy-123")
         XCTAssertEqual(viewModel.sessions.compactMap(\.sessionId), ["copy-123", "session-abc"])
         XCTAssertNil(missingID)
-        XCTAssertEqual(viewModel.actionErrorMessage, "copy failed")
+        XCTAssertNotNil(viewModel.actionErrorMessage)
     }
 
     @MainActor
@@ -2340,6 +2344,87 @@ final class SessionListMutationTests: XCTestCase {
         )
     }
 
+    /// The excerpt has to reach the row that displays it, which comes from the
+    /// local session list, not the search response — so it is looked up by
+    /// session ID and paired with the query that produced it.
+    @MainActor
+    func testRemoteSessionSearchExposesMatchPreviewPerSession() async throws {
+        let viewModel = try makeViewModel { request in
+            switch request.url?.path {
+            case "/api/sessions":
+                return apiTestJSONResponse("""
+                {
+                  "sessions": [
+                    {"session_id": "with-preview", "title": "Budget", "archived": false},
+                    {"session_id": "no-preview", "title": "Roadmap", "archived": false},
+                    {"session_id": "title-match", "title": "Needle plan", "archived": false}
+                  ]
+                }
+                """, for: request)
+            case "/api/sessions/search":
+                return apiTestJSONResponse("""
+                {
+                  "sessions": [
+                    {
+                      "session_id": "with-preview",
+                      "title": "Budget",
+                      "match_type": "content",
+                      "match_preview": "...found the needle in the haystack..."
+                    },
+                    {"session_id": "no-preview", "title": "Roadmap", "match_type": "content"},
+                    {
+                      "session_id": "title-match",
+                      "title": "Needle plan",
+                      "match_type": "title",
+                      "match_preview": "ignored on a title match"
+                    }
+                  ],
+                  "query": "needle",
+                  "count": 3
+                }
+                """, for: request)
+            default:
+                XCTFail("Unexpected request path: \(request.url?.path ?? "nil")")
+                throw URLError(.badURL)
+            }
+        }
+
+        await viewModel.load()
+        await viewModel.searchSessions(query: "Needle", debounceNanoseconds: 0)
+
+        let excerpt = viewModel.searchExcerpt(
+            for: SessionSummary(sessionId: "with-preview"),
+            searchText: "Needle"
+        )
+        XCTAssertEqual(excerpt?.text, "...found the needle in the haystack...")
+        // The query is normalized, so the row bolds case-insensitively either way.
+        XCTAssertEqual(excerpt?.query, "needle")
+
+        // An older server sends the row without a preview: no excerpt, no crash.
+        XCTAssertNil(
+            viewModel.searchExcerpt(for: SessionSummary(sessionId: "no-preview"), searchText: "needle")
+        )
+        // A title match never gets an excerpt, even if the server sent one.
+        XCTAssertNil(
+            viewModel.searchExcerpt(for: SessionSummary(sessionId: "title-match"), searchText: "needle")
+        )
+
+        // Scheduled sessions has its own search field and shares this view
+        // model. Its empty query must not inherit the sidebar's excerpts.
+        XCTAssertNil(
+            viewModel.searchExcerpt(for: SessionSummary(sessionId: "with-preview"), searchText: "")
+        )
+        // Nor may a different query on another screen borrow them.
+        XCTAssertNil(
+            viewModel.searchExcerpt(for: SessionSummary(sessionId: "with-preview"), searchText: "haystack")
+        )
+
+        viewModel.clearSearchResults()
+        XCTAssertNil(
+            viewModel.searchExcerpt(for: SessionSummary(sessionId: "with-preview"), searchText: "needle")
+        )
+    }
+
     // MARK: - Cron/CLI session classification (#256)
 
     func testCronSessionDetectedBySessionIdPrefix() {
@@ -2434,6 +2519,376 @@ final class SessionListMutationTests: XCTestCase {
                 isViewingCachedData: false
             )
         )
+    }
+
+    @MainActor
+    func testOpeningExternalSessionImportsAndCachesAuthoritativeSession() async throws {
+        let context = try makeContext()
+        let viewModel = try makeViewModel { request in
+            switch request.url?.path {
+            case "/api/sessions":
+                return apiTestJSONResponse("""
+                {
+                  "sessions": [{
+                    "session_id": "telegram-1",
+                    "title": "Support chat",
+                    "pinned": true,
+                    "project_id": "support",
+                    "last_message_at": 1770000123,
+                    "active_stream_id": "stream-live",
+                    "is_streaming": true,
+                    "is_cli_session": true,
+                    "raw_source": "telegram",
+                    "session_source": "messaging",
+                    "source_label": "Telegram"
+                  }]
+                }
+                """, for: request)
+            case "/api/session/import_cli":
+                return apiTestJSONResponse("""
+                {
+                  "session": {
+                    "session_id": "telegram-1",
+                    "title": "Support chat",
+                    "workspace": "/workspace",
+                    "model": "test-model",
+                    "is_cli_session": true,
+                    "raw_source": "telegram",
+                    "session_source": "messaging",
+                    "source_label": "Telegram",
+                    "read_only": false,
+                    "messages": []
+                  },
+                  "imported": true
+                }
+                """, for: request)
+            default:
+                XCTFail("Unexpected request path: \(request.url?.path ?? "nil")")
+                throw URLError(.badURL)
+            }
+        }
+
+        await viewModel.load(modelContext: context)
+        let listed = try XCTUnwrap(viewModel.sessions.first)
+        let opened = await viewModel.sessionForOpening(listed, modelContext: context)
+
+        XCTAssertEqual(opened?.sessionId, "telegram-1")
+        XCTAssertEqual(opened?.sourceDisplayLabel, "Telegram")
+        XCTAssertEqual(opened?.readOnly, false)
+        XCTAssertEqual(opened?.pinned, true)
+        XCTAssertEqual(opened?.projectId, "support")
+        XCTAssertEqual(opened?.lastMessageAt, 1_770_000_123)
+        XCTAssertEqual(opened?.activeStreamId, "stream-live")
+        XCTAssertEqual(opened?.isStreaming, true)
+        XCTAssertEqual(viewModel.sessions.first, opened)
+        let cached = try XCTUnwrap(
+            CacheStore.cachedSessions(serverURL: URL(string: "https://example.test")!, in: context).first
+        )
+        XCTAssertEqual(cached.sourceDisplayLabel, "Telegram")
+        XCTAssertEqual(cached.readOnly, false)
+        XCTAssertEqual(cached.pinned, true)
+        XCTAssertEqual(cached.projectId, "support")
+        XCTAssertEqual(cached.lastMessageAt, 1_770_000_123)
+        XCTAssertEqual(cached.activeStreamId, "stream-live")
+        XCTAssertEqual(cached.isStreaming, true)
+    }
+
+    @MainActor
+    func testOpeningExternalReadOnlySessionKeepsComposerBlocked() async throws {
+        let viewModel = try makeViewModel { request in
+            XCTAssertEqual(request.url?.path, "/api/session/import_cli")
+            return apiTestJSONResponse("""
+            {
+              "session": {
+                "session_id": "telegram-read-only",
+                "is_cli_session": true,
+                "raw_source": "telegram",
+                "source_label": "Telegram",
+                "read_only": true,
+                "messages": []
+              },
+              "imported": false
+            }
+            """, for: request)
+        }
+        let listed = SessionSummary(
+            sessionId: "telegram-read-only",
+            isCliSession: true,
+            rawSource: "telegram",
+            sourceLabel: "Telegram"
+        )
+
+        let result = await viewModel.sessionForOpening(listed)
+        let opened = try XCTUnwrap(result)
+
+        XCTAssertTrue(opened.isSessionReadOnly)
+        XCTAssertEqual(
+            ChatView.composerReadOnlyMessage(for: opened, isViewingCachedData: false),
+            "Read-only"
+        )
+    }
+
+    @MainActor
+    func testOpeningExternalSessionFallsBackToCanonicalDetailAndRemainsRefreshable() async throws {
+        var requestedPaths: [String] = []
+        let viewModel = try makeViewModel { request in
+            let path = request.url?.path ?? "nil"
+            requestedPaths.append(path)
+
+            switch path {
+            case "/api/sessions":
+                return apiTestJSONResponse("""
+                {
+                  "sessions": [{
+                    "session_id": "telegram-existing",
+                    "title": "Support chat",
+                    "is_cli_session": true,
+                    "raw_source": "telegram",
+                    "source_label": "Telegram"
+                  }]
+                }
+                """, for: request)
+            case "/api/session/import_cli":
+                let response = HTTPURLResponse(
+                    url: try XCTUnwrap(request.url),
+                    statusCode: 503,
+                    httpVersion: nil,
+                    headerFields: ["Content-Type": "application/json"]
+                )
+                return (try XCTUnwrap(response), Data(#"{"error":"Refresh unavailable"}"#.utf8))
+            case "/api/session":
+                return apiTestJSONResponse("""
+                {
+                  "session": {
+                    "session_id": "telegram-existing",
+                    "title": "Support chat",
+                    "workspace": "/workspace",
+                    "is_cli_session": true,
+                    "raw_source": "telegram",
+                    "source_label": "Telegram",
+                    "read_only": false,
+                    "messages": []
+                  }
+                }
+                """, for: request)
+            default:
+                XCTFail("Unexpected request path: \(path)")
+                throw URLError(.badURL)
+            }
+        }
+
+        await viewModel.load()
+        let listed = try XCTUnwrap(viewModel.sessions.first)
+        let firstOpen = await viewModel.sessionForOpening(listed)
+        let secondOpen = await viewModel.sessionForOpening(try XCTUnwrap(firstOpen))
+
+        XCTAssertEqual(firstOpen?.sessionId, "telegram-existing")
+        XCTAssertEqual(secondOpen?.sessionId, "telegram-existing")
+        XCTAssertEqual(viewModel.sessions.first, secondOpen)
+        XCTAssertNil(viewModel.actionErrorMessage)
+        XCTAssertEqual(
+            requestedPaths,
+            [
+                "/api/sessions",
+                "/api/session/import_cli",
+                "/api/session",
+                "/api/session/import_cli",
+                "/api/session"
+            ]
+        )
+    }
+
+    @MainActor
+    func testOpeningExternalSessionCanonicalFallbackKeepsReadOnlyAuthority() async throws {
+        let viewModel = try makeViewModel { request in
+            switch request.url?.path {
+            case "/api/session/import_cli":
+                throw URLError(.timedOut)
+            case "/api/session":
+                return apiTestJSONResponse("""
+                {
+                  "session": {
+                    "session_id": "telegram-read-only",
+                    "is_cli_session": true,
+                    "raw_source": "telegram",
+                    "source_label": "Telegram",
+                    "read_only": true,
+                    "messages": []
+                  }
+                }
+                """, for: request)
+            default:
+                XCTFail("Unexpected request path: \(request.url?.path ?? "nil")")
+                throw URLError(.badURL)
+            }
+        }
+        let listed = SessionSummary(
+            sessionId: "telegram-read-only",
+            isCliSession: true,
+            rawSource: "telegram",
+            sourceLabel: "Telegram"
+        )
+
+        let result = await viewModel.sessionForOpening(listed)
+        let opened = try XCTUnwrap(result)
+
+        XCTAssertTrue(opened.isSessionReadOnly)
+        XCTAssertEqual(
+            ChatView.composerReadOnlyMessage(for: opened, isViewingCachedData: false),
+            "Read-only"
+        )
+        XCTAssertNil(viewModel.actionErrorMessage)
+    }
+
+    @MainActor
+    func testOpeningExternalSessionFailureKeepsRowAndSurfacesServerMessage() async throws {
+        let serverMessage = "Messaging sessions cannot be imported"
+        var requestedPaths: [String] = []
+        let viewModel = try makeViewModel { request in
+            requestedPaths.append(request.url?.path ?? "nil")
+            switch request.url?.path {
+            case "/api/sessions":
+                return apiTestJSONResponse("""
+                {
+                  "sessions": [{
+                    "session_id": "telegram-1",
+                    "title": "Support chat",
+                    "is_cli_session": true,
+                    "raw_source": "telegram",
+                    "source_label": "Telegram"
+                  }]
+                }
+                """, for: request)
+            case "/api/session/import_cli":
+                let response = HTTPURLResponse(
+                    url: try XCTUnwrap(request.url),
+                    statusCode: 403,
+                    httpVersion: nil,
+                    headerFields: ["Content-Type": "application/json"]
+                )
+                return (try XCTUnwrap(response), Data(#"{"error":"\#(serverMessage)"}"#.utf8))
+            case "/api/session":
+                throw URLError(.cannotFindHost)
+            default:
+                XCTFail("Unexpected request path: \(request.url?.path ?? "nil")")
+                throw URLError(.badURL)
+            }
+        }
+
+        await viewModel.load()
+        let listed = try XCTUnwrap(viewModel.sessions.first)
+        let opened = await viewModel.sessionForOpening(listed)
+
+        XCTAssertNil(opened)
+        XCTAssertEqual(viewModel.sessions, [listed])
+        XCTAssertEqual(viewModel.actionErrorMessage, serverMessage)
+        XCTAssertNotNil(viewModel.lastError)
+        XCTAssertEqual(
+            requestedPaths,
+            ["/api/sessions", "/api/session/import_cli", "/api/session"]
+        )
+    }
+
+    @MainActor
+    func testStaleCanonicalFallbackCannotReplaceNewerDestination() async throws {
+        let detailRequestStarted = expectation(description: "canonical fallback request started")
+        let releaseDetailRequest = DispatchSemaphore(value: 0)
+        let viewModel = try makeViewModel { request in
+            switch request.url?.path {
+            case "/api/session/import_cli":
+                throw URLError(.timedOut)
+            case "/api/session":
+                detailRequestStarted.fulfill()
+                releaseDetailRequest.wait()
+                return apiTestJSONResponse("""
+                {
+                  "session": {
+                    "session_id": "telegram-stale",
+                    "title": "Stale result",
+                    "is_cli_session": true,
+                    "raw_source": "telegram"
+                  }
+                }
+                """, for: request)
+            default:
+                XCTFail("Unexpected request path: \(request.url?.path ?? "nil")")
+                throw URLError(.badURL)
+            }
+        }
+        let staleSession = SessionSummary(
+            sessionId: "telegram-stale",
+            title: "Original title",
+            isCliSession: true,
+            rawSource: "telegram"
+        )
+        let newerDestination = SessionSummary(
+            sessionId: "webui-newer",
+            title: "Newer destination",
+            sessionSource: "webui"
+        )
+
+        let staleOpen = Task { @MainActor in
+            await viewModel.sessionForOpening(staleSession)
+        }
+        await fulfillment(of: [detailRequestStarted], timeout: 1)
+
+        let openedNewerDestination = await viewModel.sessionForOpening(newerDestination)
+        releaseDetailRequest.signal()
+        let staleResult = await staleOpen.value
+
+        XCTAssertEqual(openedNewerDestination, newerDestination)
+        XCTAssertNil(staleResult)
+        XCTAssertTrue(viewModel.sessions.isEmpty)
+        XCTAssertNil(viewModel.actionErrorMessage)
+        XCTAssertNil(viewModel.lastError)
+    }
+
+    @MainActor
+    func testOpeningWebUISessionSkipsImportRequest() async throws {
+        var requestedPaths: [String] = []
+        let viewModel = try makeViewModel { request in
+            requestedPaths.append(request.url?.path ?? "nil")
+            XCTFail("WebUI sessions must not reach the import endpoint.")
+            throw URLError(.badURL)
+        }
+        let session = SessionSummary(sessionId: "webui", sessionSource: "webui")
+
+        let opened = await viewModel.sessionForOpening(session)
+
+        XCTAssertEqual(opened, session)
+        XCTAssertTrue(requestedPaths.isEmpty)
+    }
+
+    @MainActor
+    func testDuplicatePolicyRejectsExternalSessionsBeforeAnyRequest() async throws {
+        var requestedPaths: [String] = []
+        let viewModel = try makeViewModel { request in
+            requestedPaths.append(request.url?.path ?? "nil")
+            XCTFail("External sessions must not reach the duplicate endpoint.")
+            throw URLError(.badURL)
+        }
+        let cliSession = SessionSummary(sessionId: "cli", isCliSession: true)
+        let messagingSession = SessionSummary(
+            sessionId: "telegram",
+            rawSource: "telegram",
+            sessionSource: "messaging"
+        )
+
+        XCTAssertFalse(SessionRowActionPolicy.canDuplicate(cliSession))
+        XCTAssertFalse(SessionRowActionPolicy.canDuplicate(messagingSession))
+        XCTAssertTrue(SessionRowActionPolicy.canDuplicate(SessionSummary(sessionId: "webui")))
+        XCTAssertTrue(SessionRowActionPolicy.canDuplicate(SessionSummary(
+            sessionId: "webui-override",
+            isCliSession: true,
+            sessionSource: "webui"
+        )))
+        let duplicatedCLI = await viewModel.duplicate(cliSession)
+        let duplicatedMessaging = await viewModel.duplicate(messagingSession)
+
+        XCTAssertNil(duplicatedCLI)
+        XCTAssertNil(duplicatedMessaging)
+        XCTAssertEqual(viewModel.actionErrorMessage, "This command is not available in the mobile app.")
+        XCTAssertTrue(requestedPaths.isEmpty)
     }
 
     func testCopyDeepLinkUsesExportAvailabilityRules() throws {
@@ -2985,6 +3440,15 @@ final class SessionListMutationTests: XCTestCase {
         """
         {
           "sessions": [
+            {
+              "title": "Missing archived identity",
+              "archived": true
+            },
+            {
+              "session_id": "   ",
+              "title": "Blank archived identity",
+              "archived": true
+            },
             {
               "session_id": "session-abc",
               "title": "Planning",

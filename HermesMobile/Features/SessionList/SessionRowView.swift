@@ -9,6 +9,13 @@ struct SessionRowView: View {
     var showsMessageCount = true
     var showsWorkspace = true
     var isViewingCachedData = false
+    /// The resolved attention state for this row, supplied by the screen that
+    /// polls the server (`SessionListViewModel`). Screens that do not poll pass
+    /// nothing and the row falls back to what the session itself reports.
+    var attentionState: SessionRowAttentionState?
+    /// Set only while a remote content search is showing this row, so the row
+    /// can say why it matched.
+    var searchExcerpt: SessionSearchExcerpt?
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -52,14 +59,44 @@ struct SessionRowView: View {
         return parts.isEmpty ? nil : parts.joined(separator: " • ")
     }
 
+    /// The state the row actually shows: what the polling screen resolved, or —
+    /// for screens that do not poll — whatever the session alone can say.
+    ///
+    /// The fallback is off while the row is showing cached data: a cached
+    /// summary keeps whatever `isStreaming`/`activeStreamId` it was captured
+    /// with, so an offline row would otherwise claim the agent is still
+    /// working. Cached rows fall back to their relative time instead.
+    static func effectiveAttentionState(
+        for session: SessionSummary,
+        attentionState: SessionRowAttentionState?,
+        isViewingCachedData: Bool
+    ) -> SessionRowAttentionState? {
+        if let attentionState {
+            return attentionState
+        }
+
+        guard !isViewingCachedData else { return nil }
+
+        return SessionRowAttentionState.resolve(
+            session: session,
+            hasPendingApproval: false,
+            hasPendingClarification: false
+        )
+    }
+
     static func accessibilityStateLabels(
         for session: SessionSummary,
-        isViewingCachedData: Bool
+        isViewingCachedData: Bool,
+        attentionState: SessionRowAttentionState? = nil
     ) -> [String] {
         var labels: [String] = []
 
-        if isActiveStreaming(session) {
-            labels.append(String(localized: "Streaming"))
+        if let state = effectiveAttentionState(
+            for: session,
+            attentionState: attentionState,
+            isViewingCachedData: isViewingCachedData
+        ) {
+            labels.append(state.accessibilityLabel)
         }
 
         if session.pinned == true {
@@ -68,6 +105,14 @@ struct SessionRowView: View {
 
         if isViewingCachedData {
             labels.append(String(localized: "Cached"))
+        }
+
+        if let sourceLabel = session.sourceDisplayLabel {
+            labels.append(sourceLabel)
+        }
+
+        if session.isSessionReadOnly {
+            labels.append(String(localized: "Read-only"))
         }
 
         return labels
@@ -107,6 +152,10 @@ struct SessionRowView: View {
         VStack(alignment: .leading, spacing: rowContentSpacing) {
             titleArea
 
+            if let searchExcerpt {
+                excerptText(searchExcerpt)
+            }
+
             if showsSupplementalContent {
                 supplementalArea
             }
@@ -120,21 +169,53 @@ struct SessionRowView: View {
             VStack(alignment: .leading, spacing: 3) {
                 titleAndPin
 
-                if let relativeDate {
-                    relativeDateText(relativeDate)
-                }
+                trailingStatusSlot
             }
         } else {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 titleAndPin
 
-                if let relativeDate {
+                if showsTrailingStatus {
                     Spacer(minLength: 8)
-
-                    relativeDateText(relativeDate)
                 }
+
+                trailingStatusSlot
             }
         }
+    }
+
+    /// One line, one meaning: the attention state when the session wants
+    /// something, otherwise the relative time. Never both, so the row keeps its
+    /// height in every state.
+    @ViewBuilder
+    private var trailingStatusSlot: some View {
+        if let effectiveAttentionState {
+            attentionStateText(effectiveAttentionState)
+        } else if let relativeDate {
+            relativeDateText(relativeDate)
+        }
+    }
+
+    private var showsTrailingStatus: Bool {
+        effectiveAttentionState != nil || relativeDate != nil
+    }
+
+    private var effectiveAttentionState: SessionRowAttentionState? {
+        Self.effectiveAttentionState(
+            for: session,
+            attentionState: attentionState,
+            isViewingCachedData: isViewingCachedData
+        )
+    }
+
+    private func attentionStateText(_ state: SessionRowAttentionState) -> some View {
+        Text(state.title)
+            .font(AppFont.caption(weight: .semibold))
+            .monospacedDigit()
+            .foregroundStyle(state.tint)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
+            .accessibilityHidden(true)
     }
 
     private var titleAndPin: some View {
@@ -165,16 +246,36 @@ struct SessionRowView: View {
             .accessibilityHidden(true)
     }
 
+    /// One-line "why this row matched", with the query bolded. Hidden from
+    /// VoiceOver because `accessibilitySummary` already reads it in order.
+    private func excerptText(_ excerpt: SessionSearchExcerpt) -> some View {
+        Text(excerpt.highlighted)
+            .font(AppFont.caption())
+            .foregroundStyle(.secondary)
+            .lineLimit(excerptLineLimit)
+            .truncationMode(.tail)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityHidden(true)
+    }
+
     @ViewBuilder
     private var supplementalArea: some View {
         if dynamicTypeSize.isAccessibilitySize {
-            VStack(alignment: .leading, spacing: 4) {
-                if !visibleStateBadges.isEmpty {
-                    stateBadgesRow
+            HStack(alignment: .top, spacing: 8) {
+                VStack(alignment: .leading, spacing: 4) {
+                    if !visibleStateBadges.isEmpty {
+                        stateBadgesRow
+                    }
+
+                    if let metadataLabel {
+                        metadataText(metadataLabel)
+                    }
                 }
 
-                if let metadataLabel {
-                    metadataText(metadataLabel)
+                Spacer(minLength: 8)
+
+                if let sourceLabel = session.sourceDisplayLabel {
+                    SessionSourceBadge(label: sourceLabel)
                 }
             }
         } else {
@@ -185,6 +286,12 @@ struct SessionRowView: View {
 
                 if let metadataLabel {
                     metadataText(metadataLabel)
+                }
+
+                Spacer(minLength: 8)
+
+                if let sourceLabel = session.sourceDisplayLabel {
+                    SessionSourceBadge(label: sourceLabel)
                 }
             }
         }
@@ -208,21 +315,27 @@ struct SessionRowView: View {
     }
 
     private var visibleStateBadges: [SessionRowStateBadgeKind] {
+        // Streaming has no badge: the trailing "Working" label and the pulsing
+        // dot already say it, and a third marker only added noise.
         var badges: [SessionRowStateBadgeKind] = []
-
-        if Self.isActiveStreaming(session) {
-            badges.append(.streaming)
-        }
 
         if isViewingCachedData {
             badges.append(.cached)
         }
 
+        if session.isSessionReadOnly {
+            badges.append(.readOnly)
+        }
+
         return badges
     }
 
+    private var showsStateBadges: Bool {
+        session.sourceDisplayLabel != nil || !visibleStateBadges.isEmpty
+    }
+
     private var showsSupplementalContent: Bool {
-        metadataLabel != nil || !visibleStateBadges.isEmpty
+        metadataLabel != nil || showsStateBadges
     }
 
     private var rowContentSpacing: CGFloat {
@@ -230,7 +343,8 @@ struct SessionRowView: View {
     }
 
     private var rowMinimumHeight: CGFloat {
-        showsSupplementalContent ? 54 : 46
+        let base: CGFloat = showsSupplementalContent ? 54 : 46
+        return searchExcerpt == nil ? base : base + 16
     }
 
     private var titleLineLimit: Int {
@@ -238,6 +352,10 @@ struct SessionRowView: View {
     }
 
     private var metadataLineLimit: Int {
+        dynamicTypeSize.isAccessibilitySize ? 3 : 1
+    }
+
+    private var excerptLineLimit: Int {
         dynamicTypeSize.isAccessibilitySize ? 3 : 1
     }
 
@@ -258,7 +376,15 @@ struct SessionRowView: View {
     private var accessibilitySummary: String {
         var parts = [displayTitle]
 
-        parts.append(contentsOf: Self.accessibilityStateLabels(for: session, isViewingCachedData: isViewingCachedData))
+        if let searchExcerpt {
+            parts.append(String(localized: "Matched: \(searchExcerpt.text)"))
+        }
+
+        parts.append(contentsOf: Self.accessibilityStateLabels(
+            for: session,
+            isViewingCachedData: isViewingCachedData,
+            attentionState: attentionState
+        ))
 
         if let metadataLabel {
             parts.append(metadataLabel)
@@ -272,28 +398,103 @@ struct SessionRowView: View {
     }
 }
 
-private enum SessionRowStateBadgeKind: String, Identifiable {
-    case streaming
-    case cached
+/// What one session row is asking of the user, shown where the relative time
+/// otherwise sits. `nil` means ready: nothing is waiting and the row shows its
+/// time as usual.
+enum SessionRowAttentionState: String, Equatable {
+    case approval
+    case input
+    case working
 
-    var id: String { rawValue }
+    /// Precedence: approval → input → working → ready. Pure by design — the
+    /// caller decides which sessions are worth asking the server about, so a
+    /// pending flag on a non-streaming session still resolves here.
+    static func resolve(
+        session: SessionSummary,
+        hasPendingApproval: Bool,
+        hasPendingClarification: Bool
+    ) -> SessionRowAttentionState? {
+        if hasPendingApproval {
+            return .approval
+        }
+
+        if hasPendingClarification {
+            return .input
+        }
+
+        return SessionRowView.isActiveStreaming(session) ? .working : nil
+    }
 
     var title: String {
         switch self {
-        case .streaming:
-            return String(localized: "Live")
-        case .cached:
-            return String(localized: "Cached")
+        case .approval:
+            return String(localized: "Approval")
+        case .input:
+            return String(localized: "Input")
+        case .working:
+            return String(localized: "Working")
+        }
+    }
+
+    var accessibilityLabel: String {
+        switch self {
+        case .approval:
+            return String(localized: "Waiting for approval")
+        case .input:
+            return String(localized: "Needs input")
+        case .working:
+            return String(localized: "Working")
         }
     }
 
     var tint: Color {
         switch self {
-        case .streaming:
-            return .green
+        case .approval:
+            return Color("AttentionApproval")
+        case .input:
+            return Color("AttentionInput")
+        case .working:
+            return Color("AttentionWorking")
+        }
+    }
+}
+
+private enum SessionRowStateBadgeKind: String, Identifiable {
+    case cached
+    case readOnly
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .cached:
+            return String(localized: "Cached")
+        case .readOnly:
+            return String(localized: "Read-only")
+        }
+    }
+
+    var tint: Color {
+        switch self {
         case .cached:
             return .orange
+        case .readOnly:
+            return .gray
         }
+    }
+}
+
+private struct SessionSourceBadge: View {
+    let label: String
+
+    var body: some View {
+        Text(label)
+            .font(AppFont.caption2(weight: .semibold))
+            .foregroundStyle(Color.accentColor)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(Color.accentColor.opacity(0.12), in: Capsule())
+            .accessibilityHidden(true)
     }
 }
 

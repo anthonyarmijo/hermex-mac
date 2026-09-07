@@ -19,6 +19,7 @@ struct SessionNavigationState: Equatable {
     private(set) var lastSelectedSessionID: String?
     private(set) var rootRevision = 0
     private var newChatSessionID: String?
+    private var deepLinkedSessionLoadID: String?
 
     init(lastSelectedSessionID: String? = nil) {
         self.lastSelectedSessionID = Self.normalized(lastSelectedSessionID)
@@ -71,13 +72,35 @@ struct SessionNavigationState: Equatable {
         newChatSessionID = nil
     }
 
+    mutating func beginDeepLinkedSessionLoad(id: String?) -> String? {
+        guard deepLinkedSessionLoadID == nil,
+              let sessionID = Self.normalized(id)
+        else { return nil }
+
+        deepLinkedSessionLoadID = sessionID
+        return sessionID
+    }
+
+    mutating func finishDeepLinkedSessionLoad(id: String?) {
+        guard Self.normalized(id) == deepLinkedSessionLoadID else { return }
+        deepLinkedSessionLoadID = nil
+    }
+
     /// Restores only when no explicit route already won. Deep links, shared drafts,
     /// and App Intent requests therefore take precedence over the stored selection.
+    /// A pending or in-flight deep link (not yet resolved into a destination) also
+    /// blocks the restore, so its network load is never pre-empted by the stored
+    /// selection; the stored ID is kept for a later restore.
     mutating func restoreIfNeeded(
         from sessions: [SessionSummary],
-        clearsMissingSelection: Bool = true
+        clearsMissingSelection: Bool = true,
+        pendingDeepLinkedSessionID: String? = nil
     ) {
-        guard destination == nil, let lastSelectedSessionID else { return }
+        guard destination == nil,
+              deepLinkedSessionLoadID == nil,
+              Self.normalized(pendingDeepLinkedSessionID) == nil,
+              let lastSelectedSessionID
+        else { return }
 
         guard let session = sessions.first(where: {
             Self.normalized($0.sessionId) == lastSelectedSessionID
@@ -183,6 +206,22 @@ enum SessionDraftPersistence {
         for key in defaults.dictionaryRepresentation().keys where key.hasPrefix(prefix) {
             defaults.removeObject(forKey: key)
         }
+    }
+
+    static func draftsForMigration(defaults: UserDefaults) -> [ChatDraftKey: ChatDraft] {
+        var drafts: [ChatDraftKey: ChatDraft] = [:]
+        for (key, value) in defaults.dictionaryRepresentation() where key.hasPrefix(keyPrefix) {
+            guard let text = value as? String, !text.isEmpty else { continue }
+            let parts = String(key.dropFirst(keyPrefix.count)).components(separatedBy: ".session.")
+            guard parts.count == 2,
+                  let serverBytes = Data(base64Encoded: parts[0]),
+                  let server = String(data: serverBytes, encoding: .utf8),
+                  let url = URL(string: server), url.host != nil,
+                  let sessionBytes = Data(base64Encoded: parts[1]),
+                  let session = String(data: sessionBytes, encoding: .utf8), !session.isEmpty else { continue }
+            drafts[.session(server: url, sessionID: session)] = ChatDraft(text: text)
+        }
+        return drafts
     }
 
     private static func key(for sessionID: String?, server: URL) -> String? {

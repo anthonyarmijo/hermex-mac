@@ -55,9 +55,8 @@ struct MarkdownRenderer: View {
 
     @ViewBuilder
     private var markdownContent: some View {
-        let segments = MarkdownMathSegmenter.segments(in: content)
-
-        if segments.containsMath {
+        switch MarkdownMathLayoutCache.layout(for: content) {
+        case .segmented(let segments):
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
                     switch segment {
@@ -75,9 +74,9 @@ struct MarkdownRenderer: View {
                 }
             }
             .textSelection(.enabled)
-        } else {
+        case .plain(let markdown):
             ChatMarkdownView(
-                content: MarkdownMathFormatter.replacingInlineMath(in: content),
+                content: markdown,
                 colorScheme: colorScheme,
                 isStreaming: isStreaming
             )
@@ -120,9 +119,11 @@ struct StreamingMarkdownRenderer: View {
 
     @ViewBuilder
     private var streamingMarkdownContent: some View {
-        let segments = MarkdownMathSegmenter.segments(in: displayedContent)
-
-        if segments.containsMath {
+        // Streaming text changes on nearly every token, so this deliberately
+        // does not memoize; it only avoids the redundant second full-string
+        // `replacingInlineMath` pass the no-math branch used to run.
+        switch MarkdownMathLayoutCache.uncachedLayout(for: displayedContent) {
+        case .segmented(let segments):
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
                     switch segment {
@@ -138,9 +139,9 @@ struct StreamingMarkdownRenderer: View {
                     }
                 }
             }
-        } else {
+        case .plain(let markdown):
             StreamingMarkdownChunkedView(
-                content: MarkdownMathFormatter.replacingInlineMath(in: displayedContent),
+                content: markdown,
                 colorScheme: colorScheme
             )
         }
@@ -423,7 +424,7 @@ private struct ChatCodeBlock: View {
 
     @Environment(\.colorScheme) private var colorScheme
     @AppStorage(ChatTranscriptDisplaySettings.wrapsCodeBlockLinesKey) private var wrapsCodeBlockLines = false
-    @State private var didCopy = false
+    @AppStorage(AppHaptics.isEnabledKey) private var isHapticsEnabled = true
     @State private var highlightedCode: NSAttributedString?
 
     private let logger = Logger.hermesMarkdownRendering
@@ -444,22 +445,21 @@ private struct ChatCodeBlock: View {
                         .frame(width: 36, height: 36)
                         .contentTransition(.symbolEffect(.replace))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.chatTactile(.icon))
                 .foregroundStyle(SwiftUI.Color.primary)
                 .accessibilityLabel(wrapsCodeBlockLines ? "Disable code line wrapping" : "Enable code line wrapping")
 
-                Button {
+                ChatCopyButton(
+                    label: String(localized: "Copy code"),
+                    copiedLabel: String(localized: "Copied code"),
+                    size: 36,
+                    glyphSize: 18,
+                    glyphWeight: .semibold
+                ) {
                     UIPasteboard.general.string = content
-                    didCopy = true
-                } label: {
-                    Image(systemName: didCopy ? "checkmark" : "square.on.square")
-                        .font(.system(size: 18, weight: .semibold))
-                    .frame(width: 36, height: 36)
-                    .contentTransition(.symbolEffect(.replace))
+                    ChatHaptics.copied(isEnabled: isHapticsEnabled)
                 }
-                .buttonStyle(.plain)
                 .foregroundStyle(SwiftUI.Color.primary)
-                .accessibilityLabel(didCopy ? "Copied code" : "Copy code")
             }
             .padding(.leading, 16)
             .padding(.trailing, 10)
@@ -480,9 +480,6 @@ private struct ChatCodeBlock: View {
         .overlay {
             RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .stroke(SwiftUI.Color(.separator).opacity(0.35), lineWidth: 1)
-        }
-        .onChange(of: content) { _, _ in
-            didCopy = false
         }
         .task(id: highlightRequest) {
             await updateHighlightedCode(for: highlightRequest)
@@ -888,7 +885,7 @@ enum MarkdownHighlightPolicy {
         "text",
         "txt"
     ]
-    private static let highlightrLanguages: Set<String> = [
+    static let highlightrLanguages: Set<String> = [
         "bash",
         "c",
         "cpp",

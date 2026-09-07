@@ -44,23 +44,19 @@ enum PhotoLibrarySaver {
         }
     }
 
-    static func saveVideoData(_ data: Data, contentType: UTType) async throws {
+    static func saveVideoFile(at sourceURL: URL) async throws {
         let status = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
         guard status == .authorized || status == .limited else {
             throw PhotoLibrarySaveError.notAuthorized
         }
 
-        guard contentType.conforms(to: .movie) || contentType.conforms(to: .video) else {
-            throw PhotoLibrarySaveError.notVideo
-        }
-
-        let options = PHAssetResourceCreationOptions()
-        options.uniformTypeIdentifier = contentType.identifier
+        let stagedVideo = try StagedPhotoLibraryVideo(sourceURL: sourceURL)
+        defer { stagedVideo.cleanup() }
 
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             PHPhotoLibrary.shared().performChanges {
                 let request = PHAssetCreationRequest.forAsset()
-                request.addResource(with: .video, data: data, options: options)
+                request.addResource(with: .video, fileURL: stagedVideo.fileURL, options: nil)
             } completionHandler: { didSave, error in
                 if let error {
                     continuation.resume(throwing: error)
@@ -74,11 +70,54 @@ enum PhotoLibrarySaver {
     }
 }
 
-enum PhotoLibrarySaveError: LocalizedError {
+private struct StagedPhotoLibraryVideo {
+    let fileURL: URL
+
+    private let directoryURL: URL
+    private let fileManager: FileManager
+
+    init(sourceURL: URL, fileManager: FileManager = .default) throws {
+        guard sourceURL.isFileURL else {
+            throw PhotoLibrarySaveError.videoFileUnavailable
+        }
+
+        let values: URLResourceValues
+        do {
+            values = try sourceURL.resourceValues(forKeys: [.isRegularFileKey, .isReadableKey])
+        } catch {
+            throw PhotoLibrarySaveError.videoFileUnavailable
+        }
+
+        guard values.isRegularFile == true, values.isReadable != false else {
+            throw PhotoLibrarySaveError.videoFileUnavailable
+        }
+
+        let directoryURL = fileManager.temporaryDirectory
+            .appendingPathComponent("Hermex-Photo-Import-\(UUID().uuidString)", isDirectory: true)
+        do {
+            try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: false)
+            let filename = sourceURL.lastPathComponent.isEmpty ? "Hermex Video.mp4" : sourceURL.lastPathComponent
+            let fileURL = directoryURL.appendingPathComponent(filename, isDirectory: false)
+            try fileManager.copyItem(at: sourceURL, to: fileURL)
+            self.fileURL = fileURL
+            self.directoryURL = directoryURL
+            self.fileManager = fileManager
+        } catch {
+            try? fileManager.removeItem(at: directoryURL)
+            throw PhotoLibrarySaveError.videoFileUnavailable
+        }
+    }
+
+    func cleanup() {
+        try? fileManager.removeItem(at: directoryURL)
+    }
+}
+
+enum PhotoLibrarySaveError: LocalizedError, Equatable {
     case notAuthorized
     case notImage
-    case notVideo
     case notPhotosMedia
+    case videoFileUnavailable
     case saveFailed
 
     var errorDescription: String? {
@@ -87,10 +126,10 @@ enum PhotoLibrarySaveError: LocalizedError {
             String(localized: "Allow Photos access to save media from Hermex.")
         case .notImage:
             String(localized: "This file is not an image that can be saved to Photos.")
-        case .notVideo:
-            String(localized: "This file is not a video that can be saved to Photos.")
         case .notPhotosMedia:
             String(localized: "Photos can save images and videos. Export audio to Files instead.")
+        case .videoFileUnavailable:
+            String(localized: "This video is no longer available to save. Try loading it again.")
         case .saveFailed:
             String(localized: "Photos could not save this media.")
         }

@@ -7,6 +7,39 @@ import UniformTypeIdentifiers
 @testable import HermesMobile
 
 final class APIClientSessionListTests: APIClientTestCase {
+    func testImportExternalSessionPostsSessionIDAndDecodesSourceMetadata() async throws {
+        let client = makeClient { request in
+            XCTAssertEqual(request.url?.path, "/api/session/import_cli")
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
+
+            let body = try XCTUnwrap(apiTestBodyData(from: request))
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: String])
+            XCTAssertEqual(json, ["session_id": "telegram-1"])
+
+            return apiTestJSONResponse("""
+            {
+              "session": {
+                "session_id": "telegram-1",
+                "title": "Support chat",
+                "is_cli_session": true,
+                "raw_source": "telegram",
+                "session_source": "messaging",
+                "source_label": "Telegram",
+                "read_only": false
+              },
+              "imported": true
+            }
+            """, for: request)
+        }
+
+        let response = try await client.importExternalSession(id: "telegram-1")
+
+        XCTAssertEqual(response.session?.sessionId, "telegram-1")
+        XCTAssertEqual(response.session?.sourceLabel, "Telegram")
+        XCTAssertEqual(response.session?.readOnly, false)
+    }
+
     func testSessionsDecodesSnakeCaseResponse() async throws {
         let client = makeClient { request in
             XCTAssertEqual(request.url?.path, "/api/sessions")
@@ -151,6 +184,7 @@ final class APIClientSessionListTests: APIClientTestCase {
                   "session_id": "content-123",
                   "title": "Planning",
                   "match_type": "content",
+                  "match_preview": "...we compared the billing plan tiers...",
                   "unexpected": "ignored"
                 }
               ],
@@ -166,6 +200,7 @@ final class APIClientSessionListTests: APIClientTestCase {
         XCTAssertEqual(response.count, 1)
         XCTAssertEqual(response.sessions?.first?.sessionId, "content-123")
         XCTAssertEqual(response.sessions?.first?.matchType, "content")
+        XCTAssertEqual(response.sessions?.first?.matchPreview, "...we compared the billing plan tiers...")
     }
 
     func testSessionSearchDecodesEmptyQueryResponseWithoutQueryOrCount() async throws {
@@ -194,7 +229,46 @@ final class APIClientSessionListTests: APIClientTestCase {
 
         XCTAssertEqual(response.sessions?.first?.sessionId, "abc123")
         XCTAssertNil(response.sessions?.first?.matchType)
+        // A server older than `_session_search_preview` omits match_preview.
+        XCTAssertNil(response.sessions?.first?.matchPreview)
         XCTAssertNil(response.query)
         XCTAssertNil(response.count)
+    }
+    /// One malformed row used to fail the whole array, so a single CLI or
+    /// subagent session with a drifted field emptied the entire list and
+    /// pull-to-refresh could never bring it back. Rows are decoded
+    /// independently and each field is lossy, matching `SessionDetail` and
+    /// `ProjectSummary`, which already worked this way.
+    func testSessionListSurvivesOneMalformedRow() async throws {
+        let client = makeClient { request in
+            apiTestJSONResponse("""
+            {"sessions": [
+              {"session_id": "good-1", "title": "Fine", "message_count": 3},
+              {"session_id": "drifted", "title": "Odd", "message_count": "12", "created_at": "not-a-number"},
+              {"session_id": 42},
+              {"title": "Missing server identity"},
+              {"session_id": "   ", "title": "Blank server identity"},
+              {"session_id": "good-2", "title": "Also fine"}
+            ]}
+            """, for: request)
+        }
+
+        let response = try await client.sessions()
+        let ids = (response.sessions ?? []).compactMap(\.sessionId)
+
+        XCTAssertEqual(response.sessions?.count, 6)
+        XCTAssertEqual(ids, ["good-1", "drifted", "42", "   ", "good-2"])
+        XCTAssertNil(response.sessions?[3].sessionId)
+        XCTAssertEqual(response.sessions?[4].sessionId, "   ")
+        XCTAssertEqual(
+            response.sessions?.first(where: { $0.sessionId == "drifted" })?.messageCount,
+            12,
+            "A numeric string still reads as a count."
+        )
+        XCTAssertEqual(
+            response.sessions?.first(where: { $0.sessionId == "42" })?.sessionId,
+            "42",
+            "A numeric id is coerced rather than dropped."
+        )
     }
 }

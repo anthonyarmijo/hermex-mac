@@ -49,6 +49,16 @@ extension APIClient {
         try await send(endpoint: .sessionStatus(id: id), method: "GET")
     }
 
+    /// Imports a CLI or messaging session into the WebUI-owned session store.
+    /// The returned session is authoritative for whether continuation is safe.
+    func importExternalSession(id: String) async throws -> SessionResponse {
+        try await send(
+            endpoint: .importCLISession,
+            method: "POST",
+            body: SessionIDRequest(sessionId: id)
+        )
+    }
+
     func createSession(
         workspace: String?,
         model: String?,
@@ -109,11 +119,33 @@ extension APIClient {
         )
     }
 
+    /// Copies a session. Answers with the whole duplicated session, so no
+    /// follow-up fetch is needed. Rejects subagent sessions with a 400 — they
+    /// are view-only upstream.
+    func duplicateSession(id: String) async throws -> SessionResponse {
+        try await send(
+            endpoint: .duplicateSession,
+            method: "POST",
+            body: SessionIDRequest(sessionId: id)
+        )
+    }
+
     func compressSession(id: String, focusTopic: String? = nil) async throws -> SessionCompressResponse {
         try await send(
             endpoint: .compressSession,
             method: "POST",
             body: CompressSessionRequest(sessionId: id, focusTopic: focusTopic)
+        )
+    }
+
+    /// Truncates the session to empty on the server and resets its title to
+    /// Untitled. Destructive and irreversible — only call it behind a
+    /// confirmation. Answers the same compact session shape as rename (#389).
+    func clearSession(id: String) async throws -> SessionMutationResponse {
+        try await send(
+            endpoint: .clearSession,
+            method: "POST",
+            body: SessionIDRequest(sessionId: id)
         )
     }
 

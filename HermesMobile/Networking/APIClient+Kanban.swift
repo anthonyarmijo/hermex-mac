@@ -3,6 +3,11 @@ import Foundation
 protocol KanbanDataClient: Sendable {
     func kanbanConfiguration() async throws -> KanbanConfiguration
     func kanbanBoards() async throws -> KanbanBoardsResponse
+    func createKanbanBoard(_ request: KanbanCreateBoardRequest) async throws -> KanbanBoardMutationEnvelope
+    func editKanbanBoard(_ request: KanbanEditBoardRequest) async throws -> KanbanBoardMutationEnvelope
+    func archiveKanbanBoard(_ request: KanbanBoardMutationRequest) async throws -> KanbanBoardMutationEnvelope
+    func makeKanbanBoardActive(_ request: KanbanBoardMutationRequest) async throws -> KanbanBoardMutationEnvelope
+    func dispatchKanban(_ request: KanbanDispatchRequest) async throws -> KanbanDispatchResult
     func kanbanBoard(_ request: KanbanBoardRequest) async throws -> KanbanBoardSnapshot
     func kanbanStats(board: String) async throws -> KanbanStats
     func kanbanAssignees(board: String) async throws -> KanbanAssigneeHistory
@@ -11,10 +16,36 @@ protocol KanbanDataClient: Sendable {
     func kanbanWorkerLog(_ request: KanbanWorkerLogRequest) async throws -> KanbanWorkerLog
     func addKanbanComment(_ request: KanbanAddCommentRequest) async throws -> KanbanAddCommentResponse
     func createKanbanCard(_ request: KanbanCreateCardRequest) async throws -> KanbanCardMutationEnvelope
+    func performKanbanBulkAction(_ request: KanbanBulkActionRequest) async throws -> KanbanBulkActionEnvelope
     func editKanbanCard(_ request: KanbanEditCardRequest) async throws -> KanbanCardMutationEnvelope
+    func setKanbanCardStatus(_ request: KanbanCardStatusRequest) async throws -> KanbanCardMutationEnvelope
+    func blockKanbanCard(_ request: KanbanCardActionRequest) async throws -> KanbanCardMutationEnvelope
+    func unblockKanbanCard(_ request: KanbanCardActionRequest) async throws -> KanbanCardMutationEnvelope
+    func addKanbanDependency(_ request: KanbanDependencyMutationRequest) async throws -> KanbanDependencyMutationEnvelope
+    func removeKanbanDependency(_ request: KanbanDependencyMutationRequest) async throws -> KanbanDependencyMutationEnvelope
 }
 
 extension KanbanDataClient {
+    func createKanbanBoard(_ request: KanbanCreateBoardRequest) async throws -> KanbanBoardMutationEnvelope {
+        throw KanbanUnsupportedClientMethod.createBoard
+    }
+
+    func editKanbanBoard(_ request: KanbanEditBoardRequest) async throws -> KanbanBoardMutationEnvelope {
+        throw KanbanUnsupportedClientMethod.editBoard
+    }
+
+    func archiveKanbanBoard(_ request: KanbanBoardMutationRequest) async throws -> KanbanBoardMutationEnvelope {
+        throw KanbanUnsupportedClientMethod.archiveBoard
+    }
+
+    func makeKanbanBoardActive(_ request: KanbanBoardMutationRequest) async throws -> KanbanBoardMutationEnvelope {
+        throw KanbanUnsupportedClientMethod.makeBoardActive
+    }
+
+    func dispatchKanban(_ request: KanbanDispatchRequest) async throws -> KanbanDispatchResult {
+        throw KanbanUnsupportedClientMethod.dispatch
+    }
+
     func kanbanCardDetail(_ request: KanbanCardDetailRequest) async throws -> KanbanCardDetailEnvelope {
         throw KanbanUnsupportedClientMethod.cardDetail
     }
@@ -31,17 +62,52 @@ extension KanbanDataClient {
         throw KanbanUnsupportedClientMethod.createCard
     }
 
+    func performKanbanBulkAction(_ request: KanbanBulkActionRequest) async throws -> KanbanBulkActionEnvelope {
+        throw KanbanUnsupportedClientMethod.bulkAction
+    }
+
     func editKanbanCard(_ request: KanbanEditCardRequest) async throws -> KanbanCardMutationEnvelope {
         throw KanbanUnsupportedClientMethod.editCard
+    }
+
+    func setKanbanCardStatus(_ request: KanbanCardStatusRequest) async throws -> KanbanCardMutationEnvelope {
+        throw KanbanUnsupportedClientMethod.cardStatus
+    }
+
+    func blockKanbanCard(_ request: KanbanCardActionRequest) async throws -> KanbanCardMutationEnvelope {
+        throw KanbanUnsupportedClientMethod.blockCard
+    }
+
+    func unblockKanbanCard(_ request: KanbanCardActionRequest) async throws -> KanbanCardMutationEnvelope {
+        throw KanbanUnsupportedClientMethod.unblockCard
+    }
+
+    func addKanbanDependency(_ request: KanbanDependencyMutationRequest) async throws -> KanbanDependencyMutationEnvelope {
+        throw KanbanUnsupportedClientMethod.addDependency
+    }
+
+    func removeKanbanDependency(_ request: KanbanDependencyMutationRequest) async throws -> KanbanDependencyMutationEnvelope {
+        throw KanbanUnsupportedClientMethod.removeDependency
     }
 }
 
 private enum KanbanUnsupportedClientMethod: Error {
+    case createBoard
+    case editBoard
+    case archiveBoard
+    case makeBoardActive
+    case dispatch
     case cardDetail
     case workerLog
     case addComment
     case createCard
+    case bulkAction
     case editCard
+    case cardStatus
+    case blockCard
+    case unblockCard
+    case addDependency
+    case removeDependency
 }
 
 extension APIClient: KanbanDataClient {
@@ -51,6 +117,47 @@ extension APIClient: KanbanDataClient {
 
     func kanbanBoards() async throws -> KanbanBoardsResponse {
         try await kanbanJSON(endpoint: .kanbanBoards)
+    }
+
+    func createKanbanBoard(_ request: KanbanCreateBoardRequest) async throws -> KanbanBoardMutationEnvelope {
+        try await kanbanJSON(
+            endpoint: .kanbanCreateBoard,
+            method: "POST",
+            body: KanbanCreateBoardBody(request: request)
+        )
+    }
+
+    func editKanbanBoard(_ request: KanbanEditBoardRequest) async throws -> KanbanBoardMutationEnvelope {
+        try await kanbanJSON(
+            endpoint: .kanbanEditBoard(request),
+            method: "PATCH",
+            body: KanbanEditBoardBody(request: request)
+        )
+    }
+
+    func archiveKanbanBoard(_ request: KanbanBoardMutationRequest) async throws -> KanbanBoardMutationEnvelope {
+        try await kanbanJSON(
+            endpoint: .kanbanArchiveBoard(request),
+            method: "DELETE"
+        )
+    }
+
+    func makeKanbanBoardActive(_ request: KanbanBoardMutationRequest) async throws -> KanbanBoardMutationEnvelope {
+        try await kanbanJSON(
+            endpoint: .kanbanMakeBoardActive(request),
+            method: "POST"
+        )
+    }
+
+    func dispatchKanban(_ request: KanbanDispatchRequest) async throws -> KanbanDispatchResult {
+        let result: KanbanDispatchResult = try await kanbanJSON(
+            endpoint: .kanbanDispatch(request),
+            method: "POST"
+        )
+        guard result.hasKnownCategory else {
+            throw KanbanDispatchResponseError.missingResultCategories
+        }
+        return result
     }
 
     func kanbanBoard(_ request: KanbanBoardRequest) async throws -> KanbanBoardSnapshot {
@@ -93,6 +200,14 @@ extension APIClient: KanbanDataClient {
         )
     }
 
+    func performKanbanBulkAction(_ request: KanbanBulkActionRequest) async throws -> KanbanBulkActionEnvelope {
+        try await kanbanJSON(
+            endpoint: .kanbanBulkAction(request),
+            method: "POST",
+            body: KanbanBulkActionBody(request: request)
+        )
+    }
+
     func editKanbanCard(_ request: KanbanEditCardRequest) async throws -> KanbanCardMutationEnvelope {
         try await kanbanJSON(
             endpoint: .kanbanEditCard(request),
@@ -101,14 +216,64 @@ extension APIClient: KanbanDataClient {
         )
     }
 
+    func setKanbanCardStatus(_ request: KanbanCardStatusRequest) async throws -> KanbanCardMutationEnvelope {
+        guard request.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() != "running" else {
+            throw KanbanRequestError.runningStatusRequiresDispatcher
+        }
+        return try await kanbanJSON(
+            endpoint: .kanbanCardStatus(request),
+            method: "PATCH",
+            body: KanbanStatusBody(status: request.status)
+        )
+    }
+
+    func blockKanbanCard(_ request: KanbanCardActionRequest) async throws -> KanbanCardMutationEnvelope {
+        try await kanbanJSON(
+            endpoint: .kanbanBlockCard(request),
+            method: "POST",
+            body: KanbanActionBody(reason: request.reason)
+        )
+    }
+
+    func unblockKanbanCard(_ request: KanbanCardActionRequest) async throws -> KanbanCardMutationEnvelope {
+        try await kanbanJSON(
+            endpoint: .kanbanUnblockCard(request),
+            method: "POST",
+            body: KanbanActionBody(reason: nil)
+        )
+    }
+
+    func addKanbanDependency(_ request: KanbanDependencyMutationRequest) async throws -> KanbanDependencyMutationEnvelope {
+        try await kanbanJSON(
+            endpoint: .kanbanAddDependency(request),
+            method: "POST",
+            body: KanbanDependencyBody(request: request)
+        )
+    }
+
+    func removeKanbanDependency(_ request: KanbanDependencyMutationRequest) async throws -> KanbanDependencyMutationEnvelope {
+        try await kanbanJSON(
+            endpoint: .kanbanRemoveDependency(request),
+            method: "POST",
+            body: KanbanDependencyBody(request: request)
+        )
+    }
+
     nonisolated func kanbanEventsStreamURL(_ request: KanbanEventsStreamRequest) -> URL {
         Endpoint.kanbanEventsStream(request).url(relativeTo: baseURL)
     }
 
     private func kanbanJSON<Response: Decodable>(endpoint: Endpoint) async throws -> Response {
+        try await kanbanJSON(endpoint: endpoint, method: "GET")
+    }
+
+    private func kanbanJSON<Response: Decodable>(
+        endpoint: Endpoint,
+        method: String
+    ) async throws -> Response {
         let (data, response) = try await sendDataReturningResponse(
             endpoint: endpoint,
-            method: "GET",
+            method: method,
             encodedBody: nil
         )
         let contentType = response.value(forHTTPHeaderField: "Content-Type")?.lowercased() ?? ""
@@ -139,8 +304,92 @@ extension APIClient: KanbanDataClient {
     }
 }
 
+private struct KanbanCreateBoardBody: Encodable {
+    let slug: String
+    let name: String
+    let description: String
+    let icon: String
+    let color: String
+
+    init(request: KanbanCreateBoardRequest) {
+        slug = request.slug
+        name = request.name
+        description = request.description
+        icon = request.icon
+        color = request.color
+    }
+}
+
+private struct KanbanEditBoardBody: Encodable {
+    let request: KanbanEditBoardRequest
+
+    enum CodingKeys: CodingKey {
+        case name, description, icon, color
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(request.name, forKey: .name)
+        try container.encode(request.description, forKey: .description)
+        try container.encode(request.icon, forKey: .icon)
+        try container.encode(request.color, forKey: .color)
+    }
+}
+
 private struct KanbanCommentBody: Encodable {
     let body: String
+}
+
+private struct KanbanBulkActionBody: Encodable {
+    let request: KanbanBulkActionRequest
+
+    enum CodingKeys: String, CodingKey {
+        case ids, archive, status, assignee, priority
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(request.cardIDs, forKey: .ids)
+        switch request.action {
+        case let .changeStatus(status):
+            try container.encode(status, forKey: .status)
+        case let .assignProfile(profile):
+            try container.encode(profile ?? "", forKey: .assignee)
+        case let .setPriority(priority):
+            try container.encode(priority, forKey: .priority)
+        case .archiveCards:
+            try container.encode(true, forKey: .archive)
+        }
+    }
+}
+
+enum KanbanRequestError: Error, Equatable {
+    case runningStatusRequiresDispatcher
+}
+
+private struct KanbanStatusBody: Encodable {
+    let status: String
+}
+
+private struct KanbanActionBody: Encodable {
+    let reason: String?
+
+    enum CodingKeys: CodingKey { case reason }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(reason, forKey: .reason)
+    }
+}
+
+private struct KanbanDependencyBody: Encodable {
+    let parentID: String
+    let childID: String
+
+    init(request: KanbanDependencyMutationRequest) {
+        parentID = request.prerequisiteID
+        childID = request.dependentID
+    }
 }
 
 private struct KanbanCreateCardBody: Encodable {

@@ -613,4 +613,59 @@ final class APIClientWorkspaceFileTests: APIClientTestCase {
         XCTAssertFalse(payload.isImage)
         XCTAssertEqual(requestedPaths, ["/api/file/raw"])
     }
+
+    // MARK: - Prefetch
+
+    @MainActor
+    func testFilePreviewUsesPrefetchedContentWithoutRefetching() async throws {
+        let client = makeClient { request in
+            XCTFail("Prefetched content must not be fetched again: \(request.url?.path ?? "")")
+            return apiTestJSONResponse("{}", for: request, status: 500)
+        }
+        let prefetched = Task<FileResponse, Error> {
+            try JSONDecoder().decode(FileResponse.self, from: Data(#"{"path": "Sources/Notes.txt", "content": "warm"}"#.utf8))
+        }
+        let viewModel = try FilePreviewViewModel(
+            session: makeFilePreviewSession(),
+            server: XCTUnwrap(URL(string: "https://example.test")),
+            path: "Sources/Notes.txt",
+            apiClient: client,
+            prefetchedFile: prefetched
+        )
+
+        await viewModel.load()
+
+        guard case let .text(file) = viewModel.preview else {
+            return XCTFail("Expected a text preview, got \(String(describing: viewModel.preview))")
+        }
+        XCTAssertEqual(file.content, "warm")
+        XCTAssertNil(viewModel.errorMessage)
+    }
+
+    @MainActor
+    func testFilePreviewFallsBackToNetworkWhenPrefetchWasCancelled() async throws {
+        let client = makeClient { request in
+            XCTAssertEqual(request.url?.path, "/api/file")
+            return apiTestJSONResponse(#"{"path": "Sources/Notes.txt", "content": "fresh"}"#, for: request)
+        }
+        let prefetched = Task<FileResponse, Error> {
+            try Task.checkCancellation()
+            return try JSONDecoder().decode(FileResponse.self, from: Data(#"{"content": "stale"}"#.utf8))
+        }
+        prefetched.cancel()
+        let viewModel = try FilePreviewViewModel(
+            session: makeFilePreviewSession(),
+            server: XCTUnwrap(URL(string: "https://example.test")),
+            path: "Sources/Notes.txt",
+            apiClient: client,
+            prefetchedFile: prefetched
+        )
+
+        await viewModel.load()
+
+        guard case let .text(file) = viewModel.preview else {
+            return XCTFail("Expected a text preview, got \(String(describing: viewModel.preview))")
+        }
+        XCTAssertEqual(file.content, "fresh")
+    }
 }

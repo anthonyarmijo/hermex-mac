@@ -46,6 +46,8 @@ final class KanbanCardDetailState {
 
     private let client: any KanbanDataClient
     private let onAPIError: (Error) -> Void
+    private let onDetailLoaded: (KanbanCardDetailEnvelope) -> Void
+    private let onCapabilityUnavailable: (KanbanWriteCapability) -> Void
     private var activeDetailLoadID: UUID?
     private var activeMutationID: UUID?
     private var lastReconciledRevision = -1
@@ -55,12 +57,16 @@ final class KanbanCardDetailState {
         cardID: String,
         board: String,
         client: any KanbanDataClient,
-        onAPIError: @escaping (Error) -> Void = { _ in }
+        onAPIError: @escaping (Error) -> Void = { _ in },
+        onDetailLoaded: @escaping (KanbanCardDetailEnvelope) -> Void = { _ in },
+        onCapabilityUnavailable: @escaping (KanbanWriteCapability) -> Void = { _ in }
     ) {
         self.cardID = cardID
         self.board = board
         self.client = client
         self.onAPIError = onAPIError
+        self.onDetailLoaded = onDetailLoaded
+        self.onCapabilityUnavailable = onCapabilityUnavailable
     }
 
     var canSubmitDraft: Bool {
@@ -122,7 +128,12 @@ final class KanbanCardDetailState {
             guard activeMutationID == mutationID else { return }
             guard !isCancellation(error) else { return }
             forwardAuthentication(error)
-            if isNotFound(error) {
+            if KanbanEndpointCompatibility.isMissingCapability(error) {
+                onCapabilityUnavailable(.comments)
+                commentSubmission = .failed
+                pendingAttempt = nil
+                activeMutationID = nil
+            } else if isNotFound(error) {
                 pendingAttempt = nil
                 activeMutationID = nil
                 await reconcileMissingEntity(loadID: nil)
@@ -173,6 +184,7 @@ final class KanbanCardDetailState {
             guard !Task.isCancelled, activeDetailLoadID == loadID, activeMutationID == nil else { return }
             detail = response
             loadState = .loaded
+            onDetailLoaded(response)
         } catch {
             guard activeDetailLoadID == loadID, activeMutationID == nil else { return }
             guard !isCancellation(error) else { return }
@@ -198,6 +210,7 @@ final class KanbanCardDetailState {
             guard !Task.isCancelled, activeMutationID == expectedMutationID else { return }
             detail = response
             loadState = .loaded
+            onDetailLoaded(response)
             if attempt.appears(in: response.comments ?? []) {
                 commentDraft = ""
                 commentSubmission = .succeeded
