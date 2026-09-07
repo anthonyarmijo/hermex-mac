@@ -146,3 +146,21 @@ coalescing, cancellation, server switching and stale versions. The full Mac suit
 passes (2349 tests, four expected skips, zero failures). The signed normal UI
 review remains pending desktop unlock, including keyboard/VoiceOver, themes,
 small/large windows and sign-in/edit navigation. No server setting was changed.
+
+## Client drift watch (#12)
+
+The new weekly workflow reports original Hermex client changes separately from
+Hermes-WebUI. Its stable baseline and deliberately applied post-stable patches
+live in `UPSTREAM_CLIENT_INTEGRATED_SHA` and `UPSTREAM_CLIENT_ADDITIONAL_COMMITS`.
+The client has its own standing issue title, concurrency group and report
+artifact. The shared issue composer bounds either source to 60,000 UTF-8 bytes.
+The workflow becomes scheduled after promotion to the default branch; it does
+not automatically integrate changes or touch the running server.
+
+Eleven maintenance tests pass, including source identity, Unicode limits,
+non-descendant targets and omission of explicitly applied patches. Workflow YAML
+and all changed shell blocks parse. A real report at client `9c618bd` identifies
+three commits after v1.6.0, omits the applied gesture correction, and leaves two
+for future triage: provider account limits in Usage and the 1.7 release train.
+These post-stable additions are outside this run's fixed stable target. App
+suites were not repeated for this scripts/workflow-only slice.

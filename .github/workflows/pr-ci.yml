@@ -49,7 +49,7 @@ jobs:
           echo "${files}"
           # Fail closed for application/config changes. Documentation and
           # workflow-only changes do not validate application behavior.
-          app_changes=$(echo "${files}" | grep -vE '^(docs/.*|LICENSE|\.gitignore|\.github/.*|.*\.md|scripts/(compose-upstream-watch-issue|verify-release-notes|test-repo-maintenance\.py))$' || true)
+          app_changes=$(echo "${files}" | grep -vE '^(docs/.*|LICENSE|\.gitignore|\.github/.*|.*\.md|UPSTREAM_CLIENT_(INTEGRATED_SHA|ADDITIONAL_COMMITS)|scripts/(compose-upstream-watch-issue|upstream-client-watch|verify-release-notes|test-repo-maintenance\.py))$' || true)
 
           # A project-file-only marketing/build version bump cannot affect
           # compilation or runtime behavior, so avoid spending two macOS
