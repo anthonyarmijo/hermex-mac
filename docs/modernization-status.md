@@ -123,3 +123,26 @@ and settings: WebUI `exp-v0.52.215`, agent `v2026.8.27-432-g4209d371aa`, passwor
 auth enabled and signed-in status true. Credentials and cookies were held only
 in the check process and were not printed or committed. The existing app's
 separate expired session was not reset. No server or validated pin was updated.
+
+## Connection status (#10)
+
+Settings > Active Server > Connection Status and the Mac sidebar open the same
+screen. It shows a sanitized server address/name, copy action, separate
+reachability and authentication, verified WebUI/agent versions, health latency
+and last check time. Existing server editing and explicit sign-in flows are
+reused. Requests use the current cookies and a frozen snapshot of the selected
+server's custom headers; neither credentials nor raw server error bodies are
+shown. Queries, fragments and URL user information are omitted from copied URLs.
+
+Checks run on appearance or explicit refresh. Three verified read endpoints run
+concurrently with eight-second request timeouts and a ten-second overall deadline.
+Overlapping refreshes coalesce; cancellation and a server generation guard reject
+late results. Versions retained after a failed check are marked last-known and
+never carried across servers. Localhost copy explains the remote-Mac distinction.
+
+Validation: eight focused diagnostic tests pass on Mac and iPhone, covering
+optional fields, HTML responses, header handling, redaction, error categories,
+coalescing, cancellation, server switching and stale versions. The full Mac suite
+passes (2349 tests, four expected skips, zero failures). The signed normal UI
+review remains pending desktop unlock, including keyboard/VoiceOver, themes,
+small/large windows and sign-in/edit navigation. No server setting was changed.

@@ -7,6 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		2D0902D998FD467F8C4843F1 /* ConnectionStatusTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FD75FC0A675467EA3112B25 /* ConnectionStatusTests.swift */; };
+		7BD319C3C0AF4CCE9F11ECBC /* ConnectionStatusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E7922F67CDF442CBDE35208 /* ConnectionStatusView.swift */; };
+		1F9AE73C58C343B8986576F9 /* ConnectionStatusModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F38F05753B94EC7B1474399 /* ConnectionStatusModel.swift */; };
 		C0BA5E000000000000000001 /* PerformanceBaselineFixtures.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0BA5E000000000000000002 /* PerformanceBaselineFixtures.swift */; };
 		05814DEA5DE4690F730B1E15 /* InsightsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 931EC010A2D940B0E42287A4 /* InsightsViewModel.swift */; };
 		26AB000000000000000000B1 /* ProvidersViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26AB000000000000000000F1 /* ProvidersViewModel.swift */; };
@@ -464,6 +467,9 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		4FD75FC0A675467EA3112B25 /* ConnectionStatusTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionStatusTests.swift; sourceTree = "<group>"; };
+		3E7922F67CDF442CBDE35208 /* ConnectionStatusView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionStatusView.swift; sourceTree = "<group>"; };
+		9F38F05753B94EC7B1474399 /* ConnectionStatusModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionStatusModel.swift; sourceTree = "<group>"; };
 		C0BA5E000000000000000002 /* PerformanceBaselineFixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PerformanceBaselineFixtures.swift; sourceTree = "<group>"; };
 		0485E1E1FFB64A24BB729CD4 /* SlashCommandTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SlashCommandTests.swift; sourceTree = "<group>"; };
 		DFB41BE54A19587EB9037B7B /* ComposerFileTriggerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerFileTriggerTests.swift; sourceTree = "<group>"; };
@@ -977,6 +983,7 @@
 		1A2B3C4D5E6F700000000034 /* HermesMobileTests */ = {
 			isa = PBXGroup;
 			children = (
+				4FD75FC0A675467EA3112B25 /* ConnectionStatusTests.swift */,
 				C0BA5E000000000000000002 /* PerformanceBaselineFixtures.swift */,
 				C0CA71000000000000000004 /* PlatformCapabilitiesTests.swift */,
 				C28702000000000000000004 /* ChatDraftStoreTests.swift */,
@@ -1428,6 +1435,8 @@
 		1A2B3C4D5E6F7000000000F7 /* Settings */ = {
 			isa = PBXGroup;
 			children = (
+				3E7922F67CDF442CBDE35208 /* ConnectionStatusView.swift */,
+				9F38F05753B94EC7B1474399 /* ConnectionStatusModel.swift */,
 				1A2B3C4D5E6F7000000000F6 /* SettingsView.swift */,
 				C012400000000000000003 /* AppIconSettingsSection.swift */,
 				1A2B3C4D5E6F70000000115 /* DefaultModelPickerView.swift */,
@@ -1768,6 +1777,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				7BD319C3C0AF4CCE9F11ECBC /* ConnectionStatusView.swift in Sources */,
+				1F9AE73C58C343B8986576F9 /* ConnectionStatusModel.swift in Sources */,
 				1A2B3C4D5E6F700000000001 /* HermesMobileApp.swift in Sources */,
 				1A2B3C4D5E6F700000000002 /* ContentView.swift in Sources */,
 				1A2B3C4D5E6F700000000338 /* HermexAppIntents.swift in Sources */,
@@ -2033,6 +2044,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				2D0902D998FD467F8C4843F1 /* ConnectionStatusTests.swift in Sources */,
 				C0BA5E000000000000000001 /* PerformanceBaselineFixtures.swift in Sources */,
 				10CA110C0DE000000000C001 /* LocalizationCatalogTests.swift in Sources */,
 				1A2B3C4D5E6F7000000000AC /* APIClientTests.swift in Sources */,

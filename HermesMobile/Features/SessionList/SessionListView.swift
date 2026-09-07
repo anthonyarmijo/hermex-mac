@@ -41,6 +41,7 @@ struct SessionListView: View {
     @State private var sessionExportErrorMessage: String?
     @State private var isPresentingProjectCreation = false
     @State private var isPresentingAddServer = false
+    @State private var isPresentingConnectionStatus = false
     @State private var projectPendingDeletion: ProjectSummary?
     @State private var projectPendingRename: ProjectSummary?
     @State private var searchText = ""
@@ -137,6 +138,18 @@ struct SessionListView: View {
                 if hasWaitingSharedImport {
                     waitingSharedImportBanner
                 }
+            }
+            .sheet(isPresented: $isPresentingConnectionStatus) {
+                NavigationStack {
+                    ConnectionStatusView(authManager: authManager, onManageServers: { openSettings(scrollTo: .servers) })
+                        .id(authManager.activeServerID)
+                        .toolbar {
+                            ToolbarItem(placement: .confirmationAction) {
+                                Button("Done") { isPresentingConnectionStatus = false }
+                            }
+                        }
+                }
+                .frame(minWidth: 540, idealWidth: 620, minHeight: 560, idealHeight: 700)
             }
             .sheet(item: $sessionExportShareItem) { item in
                 SessionExportShareSheet(fileURL: item.fileURL)
@@ -625,6 +638,7 @@ struct SessionListView: View {
     }
 
     private var header: some View {
+        VStack(alignment: .leading, spacing: 8) {
         HStack(alignment: .center, spacing: searchChromeIsExpanded ? 0 : 16) {
             Button(action: openHome) {
                 HermesHeaderLogo(selectedColor: selectedHeaderLogoColor)
@@ -641,6 +655,16 @@ struct SessionListView: View {
 
             searchChrome
                 .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+        #if targetEnvironment(macCatalyst)
+        if !searchChromeIsExpanded {
+            Button("Connection Status", systemImage: "network") { isPresentingConnectionStatus = true }
+                .font(.caption)
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Show the server address, versions and connection status")
+        }
+        #endif
         }
         .padding(.horizontal, 24)
         .padding(.top, 28)
