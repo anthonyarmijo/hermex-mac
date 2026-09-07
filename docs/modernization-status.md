@@ -179,3 +179,17 @@ The 48-unique-4K-image fixture stabilizes at 60 MiB retained decoded pixels,
 five entries and 43 evictions. Detailed measurements and limitations are in
 [the image report](performance/bounded-images-2026-09-07.md). Normal signed UI
 checks still require the locked desktop to be available.
+
+## Prepare Git diffs once (#17)
+
+Upstream already removed parsing from SwiftUI body evaluation. This slice fixes
+its remaining repeated work as each additional file arrives: immutable prepared
+rows reduce eight 5,000-line responses from 36 parses to eight. The matched
+synthetic median for all incremental rebuilds falls from 1733.564 to 390.713 ms.
+Twenty unchanged rebuilds add zero parses, including the 25,000-line fixture;
+async preparation records zero main-thread parser calls. Cancelled/dismissed
+and superseded work is guarded before publication. See the [Git report](performance/git-diff-parse-once-2026-09-07.md).
+
+Validation for #17: full Mac 2364 tests, four expected skips and zero failures;
+all eleven focused iPhone row-builder tests pass. Signed Mac signature verified.
+PR #16 image CI is also green, with no inline automated-review findings.

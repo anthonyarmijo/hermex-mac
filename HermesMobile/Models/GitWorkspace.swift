@@ -73,7 +73,7 @@ struct GitTotals: Decodable, Equatable {
     let conflicts: Int?
 }
 
-struct GitFile: Decodable, Equatable, Identifiable {
+struct GitFile: Decodable, Equatable, Identifiable, Sendable {
     let id: String
     let path: String?
     let oldPath: String?
@@ -138,7 +138,7 @@ struct GitFile: Decodable, Equatable, Identifiable {
 extension GitFile {
     /// A normalized change kind derived from the booleans first (the reliable signal),
     /// falling back to the raw `status` code. UI maps this to a localized chip + colour.
-    enum ChangeKind: Equatable {
+    enum ChangeKind: Equatable, Sendable {
         case conflict
         case untracked
         case added
@@ -312,7 +312,7 @@ struct GitDiffResponse: Decodable, Equatable {
     let diff: GitDiff?
 }
 
-struct GitDiff: Decodable, Equatable {
+struct GitDiff: Decodable, Equatable, Sendable {
     let path: String?
     let kind: String?
     let binary: Bool?
