@@ -3,7 +3,34 @@ import Foundation
 struct ChatStartResponse: Decodable, Equatable {
     let streamId: String?
     let sessionId: String?
+    /// Unix epoch seconds for when the server started this turn
+    /// (`pending_started_at`), matching the value `/api/sessions/<id>` reports
+    /// while the turn is in flight. Absent on servers that do not send it.
+    let pendingStartedAt: Double?
     let error: String?
+
+    enum CodingKeys: String, CodingKey {
+        case streamId
+        case sessionId
+        case pendingStartedAt
+        case error
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        streamId = container.decodeLossyStringIfPresent(forKey: .streamId)
+        sessionId = container.decodeLossyStringIfPresent(forKey: .sessionId)
+        pendingStartedAt = container.decodeLossyDoubleIfPresent(forKey: .pendingStartedAt)
+        error = container.decodeLossyStringIfPresent(forKey: .error)
+    }
+
+    /// When the turn this response opened really started: the server's
+    /// `pending_started_at` when it reported one, else the local moment the
+    /// client sent. Used to seed the run's "Working for" counter.
+    func runStartedAt(sentAt: Date) -> Date {
+        guard let pendingStartedAt, pendingStartedAt > 0 else { return sentAt }
+        return Date(timeIntervalSince1970: pendingStartedAt)
+    }
 }
 
 struct ChatCancelResponse: Decodable, Equatable {
@@ -681,7 +708,12 @@ struct ModelCatalogGroup: Identifiable, Equatable, Sendable {
 }
 
 extension ModelCatalogGroup {
-    var slashAutocompleteModels: [ModelCatalogOption] {
+    /// All models in the group, including the overflow tail the server
+    /// exposes as `extra_models` (visible `models` + searchable `extraModels`).
+    /// `slashAutocompleteModels` was the old name — it happens to be the same
+    /// set, but the concept is broader than one consumer. De-duplicated by `id`
+    /// to keep ForEach identity unique.
+    var allModels: [ModelCatalogOption] {
         var seen = Set<String>()
         return (models + extraModels).filter { seen.insert($0.id).inserted }
     }
@@ -693,11 +725,73 @@ struct ModelCatalogOption: Identifiable, Equatable, Hashable, Sendable {
     let providerID: String?
 }
 
+extension String {
+    /// The model id without the `@provider:` prefix the server adds to models
+    /// that belong to a provider other than the active one
+    /// (`_apply_provider_prefix`, `api/config.py:2279` @ 399cd7ab — verified on
+    /// the live deployment, where `openai-codex` is active and its models are
+    /// bare while `@deepseek:` and `@gemini:` ones are prefixed).
+    ///
+    /// The same model is therefore spelled differently depending on which
+    /// provider happens to be active, so a saved default written under one
+    /// spelling stopped matching the catalog under the other and the picker
+    /// showed no checkmark at all.
+    var bareModelID: String {
+        guard hasPrefix("@"), let separator = lastIndex(of: ":") else { return self }
+        return String(self[index(after: separator)...])
+    }
+
+    /// The provider named by an `@provider:` prefix, if there is one. The
+    /// provider may itself contain colons, so the final separator begins the
+    /// model id.
+    var modelIDProviderPrefix: String? {
+        guard hasPrefix("@"), let separator = lastIndex(of: ":") else { return nil }
+        let provider = self[index(after: startIndex)..<separator]
+        return provider.isEmpty ? nil : String(provider)
+    }
+}
+
 extension ModelCatalogOption {
     func matchesSelection(modelID: String?, providerID: String?) -> Bool {
-        guard id == modelID else { return false }
-        guard let providerID else { return true }
-        return self.providerID == providerID
+        guard let modelID else { return false }
+
+        let optionProvider = self.providerID ?? id.modelIDProviderPrefix
+        let selectionProvider = providerID
+            ?? optionProvider.flatMap { modelID.hasPrefix("@\($0):") ? $0 : nil }
+            ?? modelID.modelIDProviderPrefix
+        guard normalizedModelID(id, providerID: optionProvider)
+                == normalizedModelID(modelID, providerID: selectionProvider)
+        else { return false }
+
+        // A provider named on either side has to agree, so two providers
+        // offering the same bare id can't be confused — this deployment really
+        // does serve `@gemini:gemini-2.5-flash` and `@google:gemini-2.5-flash`
+        // side by side. The `@provider:` prefix counts as naming one.
+        guard let selectionProvider else {
+            // A selection that names no provider is the active provider's
+            // spelling, because the prefix is exactly what the server adds to
+            // everyone else. Matching it against a prefixed option would tick
+            // every provider that happens to offer the same bare id.
+            return id.modelIDProviderPrefix == nil
+        }
+        // Same rule in the other direction. An option carrying no provider at
+        // all cannot be shown to belong to the named one, and guessing "yes"
+        // here is the exact mirror of the double-checkmark bug the selection
+        // side above was just fixed for. This also restores what the original
+        // `self.providerID == providerID` comparison did before the prefix
+        // normalization was added, so it is not a new restriction.
+        //
+        // `parseModelOptions` fills `providerID` from the group's `provider_id`,
+        // so this is only reachable if a server returns a group without one.
+        guard let optionProvider else { return false }
+        return optionProvider == selectionProvider
+    }
+
+    private func normalizedModelID(_ modelID: String, providerID: String?) -> String {
+        guard let providerID else { return modelID.bareModelID }
+        let prefix = "@\(providerID):"
+        guard modelID.hasPrefix(prefix) else { return modelID.bareModelID }
+        return String(modelID.dropFirst(prefix.count))
     }
 }
 
@@ -705,11 +799,13 @@ extension Collection where Element == ModelCatalogOption {
     func firstMatchingSelection(modelID: String?, providerID: String?) -> ModelCatalogOption? {
         guard let modelID, !modelID.isEmpty else { return nil }
 
-        if let providerID {
-            return first { $0.id == modelID && $0.providerID == providerID }
+        // Prefer the identical spelling; only then fall back to the normalized
+        // comparison, so an exact match is never lost to a same-named model.
+        if let exact = first(where: { $0.id == modelID && (providerID == nil || $0.providerID == providerID) }) {
+            return exact
         }
 
-        return first { $0.id == modelID }
+        return first { $0.matchesSelection(modelID: modelID, providerID: providerID) }
     }
 }
 
@@ -721,7 +817,7 @@ extension ModelsResponse {
     func displayName(for modelID: String?) -> String? {
         guard let modelID else { return nil }
         return catalogGroups
-            .flatMap(\.slashAutocompleteModels)
+            .flatMap(\.allModels)
             .first(where: { $0.id == modelID })?
             .displayName
     }

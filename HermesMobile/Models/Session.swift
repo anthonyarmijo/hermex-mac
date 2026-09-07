@@ -9,12 +9,50 @@ struct SessionsResponse: Decodable {
     let archivedCount: Int?
     let serverTime: Double?
     let serverTz: String?
+
+    enum CodingKeys: String, CodingKey {
+        case sessions, cliCount, archivedCount, serverTime, serverTz
+    }
+
+    init(
+        sessions: [SessionSummary]? = nil,
+        cliCount: Int? = nil,
+        archivedCount: Int? = nil,
+        serverTime: Double? = nil,
+        serverTz: String? = nil
+    ) {
+        self.sessions = sessions
+        self.cliCount = cliCount
+        self.archivedCount = archivedCount
+        self.serverTime = serverTime
+        self.serverTz = serverTz
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        sessions = SessionSummary.decodingRowsIndependently(from: container, forKey: .sessions)
+        cliCount = container.decodeLossyIntIfPresent(forKey: .cliCount)
+        archivedCount = container.decodeLossyIntIfPresent(forKey: .archivedCount)
+        serverTime = container.decodeLossyDoubleIfPresent(forKey: .serverTime)
+        serverTz = container.decodeLossyStringIfPresent(forKey: .serverTz)
+    }
 }
 
 struct SessionSearchResponse: Decodable, Equatable {
     let sessions: [SessionSummary]?
     let query: String?
     let count: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case sessions, query, count
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        sessions = SessionSummary.decodingRowsIndependently(from: container, forKey: .sessions)
+        query = container.decodeLossyStringIfPresent(forKey: .query)
+        count = container.decodeLossyIntIfPresent(forKey: .count)
+    }
 }
 
 struct SessionResponse: Decodable {
@@ -184,6 +222,11 @@ struct SessionSummary: Decodable, Equatable, Hashable, Identifiable, Sendable {
     let readOnly: Bool?
     let isReadOnly: Bool?
     let matchType: String?
+    /// Server-built excerpt of the matched message text on a content-search row
+    /// (`match_preview`, upstream `_session_search_preview`, <=124 chars and
+    /// redacted like the title). Absent on title matches, on every non-search
+    /// response, and on servers older than the commit that added it.
+    let matchPreview: String?
 
     init(
         sessionId: String? = nil,
@@ -217,7 +260,8 @@ struct SessionSummary: Decodable, Equatable, Hashable, Identifiable, Sendable {
         relationshipType: String? = nil,
         readOnly: Bool? = nil,
         isReadOnly: Bool? = nil,
-        matchType: String? = nil
+        matchType: String? = nil,
+        matchPreview: String? = nil
     ) {
         self.sessionId = sessionId
         self.title = title
@@ -251,6 +295,88 @@ struct SessionSummary: Decodable, Equatable, Hashable, Identifiable, Sendable {
         self.readOnly = readOnly
         self.isReadOnly = isReadOnly
         self.matchType = matchType
+        self.matchPreview = matchPreview
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case sessionId, title, workspace, model, modelProvider
+        case messageCount, createdAt, updatedAt, lastMessageAt
+        case pinned, archived, projectId, profile
+        case inputTokens, outputTokens, estimatedCost
+        case activeStreamId, isStreaming, isCliSession
+        case userMessageCount, hasPendingUserMessage, pendingStartedAt, worktreePath
+        case sourceTag, rawSource, sessionSource, sourceLabel
+        case parentSessionId, relationshipType, readOnly, isReadOnly, matchType, matchPreview
+    }
+
+    /// Lossy field by field, like `SessionDetail` and `ProjectSummary` already
+    /// are (`AGENTS.md` hard rule 3).
+    ///
+    /// The synthesized `Decodable` this replaces failed the whole value on one
+    /// mistyped field, and `SessionsResponse` decoded the array as a unit — so a
+    /// single malformed row emptied the entire session list, with pull-to-refresh
+    /// unable to recover it. The rows come from three different sources (sidecar
+    /// JSON, the state.db overlay, `get_cli_sessions()`), and upstream coerces
+    /// these same fields with `_numeric_count` / `_safe_first` on its way out,
+    /// which is the server conceding the inputs are not uniform.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        sessionId = container.decodeLossyStringIfPresent(forKey: .sessionId)
+        title = container.decodeLossyStringIfPresent(forKey: .title)
+        workspace = container.decodeLossyStringIfPresent(forKey: .workspace)
+        model = container.decodeLossyStringIfPresent(forKey: .model)
+        modelProvider = container.decodeLossyStringIfPresent(forKey: .modelProvider)
+        messageCount = container.decodeLossyIntIfPresent(forKey: .messageCount)
+        createdAt = container.decodeLossyDoubleIfPresent(forKey: .createdAt)
+        updatedAt = container.decodeLossyDoubleIfPresent(forKey: .updatedAt)
+        lastMessageAt = container.decodeLossyDoubleIfPresent(forKey: .lastMessageAt)
+        pinned = container.decodeLossyBoolIfPresent(forKey: .pinned)
+        archived = container.decodeLossyBoolIfPresent(forKey: .archived)
+        projectId = container.decodeLossyStringIfPresent(forKey: .projectId)
+        profile = container.decodeLossyStringIfPresent(forKey: .profile)
+        inputTokens = container.decodeLossyIntIfPresent(forKey: .inputTokens)
+        outputTokens = container.decodeLossyIntIfPresent(forKey: .outputTokens)
+        estimatedCost = container.decodeLossyDoubleIfPresent(forKey: .estimatedCost)
+        activeStreamId = container.decodeLossyStringIfPresent(forKey: .activeStreamId)
+        isStreaming = container.decodeLossyBoolIfPresent(forKey: .isStreaming)
+        isCliSession = container.decodeLossyBoolIfPresent(forKey: .isCliSession)
+        userMessageCount = container.decodeLossyIntIfPresent(forKey: .userMessageCount)
+        hasPendingUserMessage = container.decodeLossyBoolIfPresent(forKey: .hasPendingUserMessage)
+        pendingStartedAt = container.decodeLossyDoubleIfPresent(forKey: .pendingStartedAt)
+        worktreePath = container.decodeLossyStringIfPresent(forKey: .worktreePath)
+        sourceTag = container.decodeLossyStringIfPresent(forKey: .sourceTag)
+        rawSource = container.decodeLossyStringIfPresent(forKey: .rawSource)
+        sessionSource = container.decodeLossyStringIfPresent(forKey: .sessionSource)
+        sourceLabel = container.decodeLossyStringIfPresent(forKey: .sourceLabel)
+        parentSessionId = container.decodeLossyStringIfPresent(forKey: .parentSessionId)
+        relationshipType = container.decodeLossyStringIfPresent(forKey: .relationshipType)
+        readOnly = container.decodeLossyBoolIfPresent(forKey: .readOnly)
+        isReadOnly = container.decodeLossyBoolIfPresent(forKey: .isReadOnly)
+        matchType = container.decodeLossyStringIfPresent(forKey: .matchType)
+        matchPreview = container.decodeLossyStringIfPresent(forKey: .matchPreview)
+    }
+
+    /// Decodes a session array a row at a time, so one unreadable row costs that
+    /// row instead of the whole list. Returns nil only when the key is absent
+    /// or is not an array at all.
+    static func decodingRowsIndependently<Key: CodingKey>(
+        from container: KeyedDecodingContainer<Key>,
+        forKey key: Key
+    ) -> [SessionSummary]? {
+        if let rows = try? container.decodeIfPresent([SessionSummary].self, forKey: key) {
+            return rows
+        }
+
+        guard let values = try? container.decodeIfPresent([JSONValue].self, forKey: key) else {
+            return nil
+        }
+
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return values.compactMap { value in
+            guard let data = try? JSONEncoder().encode(value) else { return nil }
+            return try? decoder.decode(SessionSummary.self, from: data)
+        }
     }
 
     init(from detail: SessionDetail) {
@@ -290,6 +416,48 @@ struct SessionSummary: Decodable, Equatable, Hashable, Identifiable, Sendable {
         readOnly = detail.readOnly
         isReadOnly = detail.isReadOnly
         matchType = nil
+        matchPreview = nil
+    }
+
+    /// Applies the import response without dropping list metadata that the
+    /// detail endpoint does not consistently return.
+    func mergingImportedDetail(_ detail: SessionDetail) -> SessionSummary {
+        let imported = SessionSummary(from: detail)
+        return SessionSummary(
+            sessionId: imported.sessionId ?? sessionId,
+            title: imported.title ?? title,
+            workspace: imported.workspace ?? workspace,
+            model: imported.model ?? model,
+            modelProvider: imported.modelProvider ?? modelProvider,
+            messageCount: imported.messageCount ?? messageCount,
+            createdAt: imported.createdAt ?? createdAt,
+            updatedAt: imported.updatedAt ?? updatedAt,
+            lastMessageAt: imported.lastMessageAt ?? lastMessageAt,
+            pinned: imported.pinned ?? pinned,
+            archived: imported.archived ?? archived,
+            projectId: imported.projectId ?? projectId,
+            profile: imported.profile ?? profile,
+            inputTokens: imported.inputTokens ?? inputTokens,
+            outputTokens: imported.outputTokens ?? outputTokens,
+            estimatedCost: imported.estimatedCost ?? estimatedCost,
+            activeStreamId: imported.activeStreamId ?? activeStreamId,
+            isStreaming: imported.isStreaming ?? isStreaming,
+            isCliSession: imported.isCliSession ?? isCliSession,
+            userMessageCount: imported.userMessageCount ?? userMessageCount,
+            hasPendingUserMessage: imported.hasPendingUserMessage ?? hasPendingUserMessage,
+            pendingStartedAt: imported.pendingStartedAt ?? pendingStartedAt,
+            worktreePath: imported.worktreePath ?? worktreePath,
+            sourceTag: imported.sourceTag ?? sourceTag,
+            rawSource: imported.rawSource ?? rawSource,
+            sessionSource: imported.sessionSource ?? sessionSource,
+            sourceLabel: imported.sourceLabel ?? sourceLabel,
+            parentSessionId: imported.parentSessionId ?? parentSessionId,
+            relationshipType: imported.relationshipType ?? relationshipType,
+            readOnly: imported.readOnly ?? readOnly,
+            isReadOnly: imported.isReadOnly ?? isReadOnly,
+            matchType: imported.matchType ?? matchType,
+            matchPreview: imported.matchPreview ?? matchPreview
+        )
     }
 
     /// Mirrors all stored fields so local title patches preserve session-list metadata.
@@ -327,7 +495,8 @@ struct SessionSummary: Decodable, Equatable, Hashable, Identifiable, Sendable {
             relationshipType: relationshipType,
             readOnly: readOnly,
             isReadOnly: isReadOnly,
-            matchType: matchType
+            matchType: matchType,
+            matchPreview: matchPreview
         )
     }
 
@@ -374,6 +543,11 @@ struct SessionSummary: Decodable, Equatable, Hashable, Identifiable, Sendable {
 }
 
 extension SessionSummary {
+    private static let messagingSourceMarkers: Set<String> = [
+        "discord", "email", "matrix", "slack", "telegram", "wecom", "wecom_callback", "weixin"
+    ]
+    private static let cliSourceMarkers: Set<String> = ["acp", "cli", "desktop", "tui"]
+
     /// Delegated children are identified only by an explicit source marker.
     /// Parent linkage is shared by ordinary forks and compression continuations,
     /// so it must never classify a row as a subagent on its own.
@@ -397,6 +571,56 @@ extension SessionSummary {
     /// true value preserves that safety for other imported sessions.
     var isSessionReadOnly: Bool {
         isDelegatedSubagentSession || readOnly == true || isReadOnly == true
+    }
+
+    /// External sessions need the same import step hermes-webui performs before
+    /// opening them. An explicit WebUI source wins over stale CLI flags left on
+    /// an already-imported sidecar.
+    var requiresExternalImport: Bool {
+        if Self.normalizedSourceMarker(sessionSource) == "webui" { return false }
+        if Self.normalizedSourceMarker(sessionSource) == "messaging" { return true }
+
+        let markers = [rawSource, sourceTag, sourceLabel]
+            .compactMap(Self.normalizedSourceMarker)
+        return isCliSession == true
+            || markers.contains(where: Self.messagingSourceMarkers.contains)
+            || markers.contains(where: Self.cliSourceMarkers.contains)
+    }
+
+    /// The source chip shown by hermes-webui, preferring the server's label and
+    /// falling back to stable brand/acronym casing for older servers.
+    var sourceDisplayLabel: String? {
+        guard requiresExternalImport else { return nil }
+
+        if let label = Self.nonEmpty(sourceLabel), label.lowercased() != "webui" {
+            return label
+        }
+
+        let marker = [rawSource, sourceTag, sessionSource]
+            .compactMap(Self.normalizedSourceMarker)
+            .first { $0 != "messaging" && $0 != "webui" }
+
+        switch marker {
+        case "cli": return "CLI"
+        case "tui": return "TUI"
+        case "acp": return "ACP"
+        case "telegram": return "Telegram"
+        case "discord": return "Discord"
+        case "slack": return "Slack"
+        case "email": return "Email"
+        case "matrix": return "Matrix"
+        case "weixin": return "WeChat"
+        case "wecom": return "WeCom"
+        case "wecom_callback": return "WeCom Callback"
+        case "desktop": return "Desktop"
+        case let marker?:
+            return marker
+                .replacingOccurrences(of: "_", with: " ")
+                .replacingOccurrences(of: "-", with: " ")
+                .capitalized
+        case nil:
+            return isCliSession == true ? "CLI" : "Messaging"
+        }
     }
 
     var shouldAppearInSessionList: Bool {

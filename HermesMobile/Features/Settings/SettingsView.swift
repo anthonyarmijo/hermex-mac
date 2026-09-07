@@ -62,6 +62,7 @@ struct SettingsView: View {
     @Environment(MacInterfacePreferences.self) private var macInterfacePreferences
     #endif
     @AppStorage(AppHaptics.isEnabledKey) private var isHapticsEnabled = true
+    @AppStorage(AppHaptics.streamingPulseIsEnabledKey) private var isStreamingPulseEnabled = false
     @AppStorage(ResponseCompletionNotifications.isEnabledKey) private var isResponseCompletionNotificationsEnabled = false
     @AppStorage(ResponseCompletionNotifications.hasRequestedPermissionKey) private var hasRequestedResponseCompletionNotificationPermission = false
     @AppStorage(AgentRunLiveActivityPrivacy.showsResponseExcerptsKey) private var showsLiveActivityResponseExcerpts = false
@@ -76,8 +77,10 @@ struct SettingsView: View {
     @AppStorage(ChatTranscriptDisplaySettings.showsThinkingAndToolCardsKey) private var showsThinkingAndToolCards = true
     @AppStorage(ChatTranscriptDisplaySettings.thinkingCardsStartExpandedKey) private var thinkingCardsStartExpanded = false
     @AppStorage(ChatTranscriptDisplaySettings.toolCardsStartExpandedKey) private var toolCardsStartExpanded = false
+    @AppStorage(ChatTranscriptDisplaySettings.foldsSettledTurnsKey) private var foldsSettledTurns = true
     @AppStorage(ChatTranscriptDisplaySettings.hidesAttachmentPathsKey) private var hidesAttachmentPaths = true
-    @AppStorage(ChatTranscriptDisplaySettings.showsAssistantTurnTimestampsKey) private var showsAssistantTurnTimestamps = false
+    @AppStorage(ChatTranscriptDisplaySettings.showsAssistantTurnTimestampsKey) private var showsAssistantTurnTimestamps = ChatTranscriptDisplaySettings.defaultShowsTimestamps
+    @AppStorage(ChatTranscriptDisplaySettings.showsResponseSpeedKey) private var showsResponseSpeed = false
     @AppStorage(ChatTranscriptDisplaySettings.wrapsCodeBlockLinesKey) private var wrapsCodeBlockLines = false
     @AppStorage(ChatTranscriptDisplaySettings.rtlChatLayoutEnabledKey) private var rtlChatLayoutEnabled = ChatTranscriptDisplaySettings.rtlChatLayoutDefaultEnabled
     @AppStorage(StreamedTextAnimationSettings.isEnabledKey) private var isStreamedTextAnimationEnabled = true
@@ -85,6 +88,15 @@ struct SettingsView: View {
     @AppStorage(PrimaryActionTintSettings.isEnabledKey) private var tintsPrimaryActions = false
     @AppStorage(SessionIdentitySettings.displayNameKey) private var identityDisplayName = ""
     @AppStorage(SessionIdentitySettings.initialsKey) private var identityInitials = ""
+    @AppStorage(SectionVisibilitySettings.tasksKey) private var showsTasksSection = true
+    @AppStorage(SectionVisibilitySettings.kanbanKey) private var showsKanbanSection = true
+    @AppStorage(SectionVisibilitySettings.skillsKey) private var showsSkillsSection = true
+    @AppStorage(SectionVisibilitySettings.memoryKey) private var showsMemorySection = true
+    @AppStorage(SectionVisibilitySettings.insightsKey) private var showsInsightsSection = true
+    @AppStorage(SectionVisibilitySettings.activeProfileKey) private var showsActiveProfileSection = true
+    @AppStorage(SectionVisibilitySettings.projectsKey) private var showsProjectsSection = true
+    @AppStorage(SectionVisibilitySettings.chatFilesKey) private var showsChatFilesButton = true
+    @AppStorage(SectionVisibilitySettings.chatGitKey) private var showsChatGitControls = true
     @Environment(\.modelContext) private var modelContext
     @Environment(\.cacheWriter) private var cacheWriter
     @Environment(\.dismiss) private var dismiss
@@ -177,7 +189,19 @@ struct SettingsView: View {
                             isOn: $isHapticsEnabled
                         )
 
+                    if isHapticsEnabled {
                         SettingsDivider()
+
+                        SettingsToggleRow(
+                            title: String(localized: "Pulse While Streaming"),
+                            systemImage: "waveform",
+                            isOn: $isStreamingPulseEnabled
+                        )
+
+                        SettingsFootnote(String(localized: "A light tick as each reply streams in."))
+                    }
+
+                    SettingsDivider()
                     }
 
                     SettingsToggleRow(
@@ -245,6 +269,16 @@ struct SettingsView: View {
                     SettingsDivider()
 
                     SettingsToggleRow(
+                        title: String(localized: "Fold Finished Turns"),
+                        systemImage: "rectangle.compress.vertical",
+                        isOn: $foldsSettledTurns
+                    )
+
+                    SettingsFootnote(String(localized: "Collapses a finished turn's thinking, tool calls, and interim replies behind one row that shows how long it took. Tap the row to expand it."))
+
+                    SettingsDivider()
+
+                    SettingsToggleRow(
                         title: String(localized: "Streamed Text Animation"),
                         systemImage: "sparkles",
                         isOn: $isStreamedTextAnimationEnabled
@@ -255,12 +289,20 @@ struct SettingsView: View {
                     SettingsDivider()
 
                     SettingsToggleRow(
-                        title: String(localized: "Response Timestamps"),
+                        title: String(localized: "Message Timestamps"),
                         systemImage: "clock",
                         isOn: $showsAssistantTurnTimestamps
                     )
 
-                    SettingsFootnote(String(localized: "Adds a small marker and the time above each response so back-to-back replies are easier to tell apart."))
+                    SettingsFootnote(String(localized: "Shows the time under your messages and under each finished response."))
+
+                    SettingsDivider()
+
+                    SettingsToggleRow(
+                        title: String(localized: "Response Speed"),
+                        systemImage: "gauge.with.dots.needle.67percent",
+                        isOn: $showsResponseSpeed
+                    )
 
                     SettingsDivider()
 
@@ -301,8 +343,85 @@ struct SettingsView: View {
                             isOn: $showsLiveActivityResponseExcerpts
                         )
 
-                        SettingsFootnote(String(localized: "Shows short response text on the Lock Screen and Dynamic Island."))
+                    SettingsFootnote(String(localized: "Shows short response text on the Lock Screen and Dynamic Island."))
+
                     }
+
+                    SettingsDivider()
+
+                    SettingsToggleRow(
+                        title: String(localized: "Files Button"),
+                        systemImage: "folder",
+                        isOn: $showsChatFilesButton
+                    )
+
+                    SettingsDivider()
+
+                    SettingsToggleRow(
+                        title: String(localized: "Git Actions"),
+                        systemImage: "arrow.triangle.branch",
+                        isOn: $showsChatGitControls
+                    )
+
+                    SettingsFootnote(String(localized: "Hides the git menu, branch picker, and commit controls."))
+                }
+
+                SettingsCard(title: String(localized: "Main Page")) {
+                    SettingsToggleRow(
+                        title: String(localized: "Tasks"),
+                        systemImage: "calendar.badge.clock",
+                        isOn: $showsTasksSection
+                    )
+
+                    SettingsDivider()
+
+                    SettingsToggleRow(
+                        title: String(localized: "Kanban"),
+                        systemImage: "rectangle.split.3x1",
+                        isOn: $showsKanbanSection
+                    )
+
+                    SettingsDivider()
+
+                    SettingsToggleRow(
+                        title: String(localized: "Skills"),
+                        systemImage: "hammer",
+                        isOn: $showsSkillsSection
+                    )
+
+                    SettingsDivider()
+
+                    SettingsToggleRow(
+                        title: String(localized: "Memory"),
+                        systemImage: "brain",
+                        isOn: $showsMemorySection
+                    )
+
+                    SettingsDivider()
+
+                    SettingsToggleRow(
+                        title: String(localized: "Usage"),
+                        systemImage: "chart.bar",
+                        isOn: $showsInsightsSection
+                    )
+
+                    SettingsDivider()
+
+                    SettingsToggleRow(
+                        title: String(localized: "Active Profile"),
+                        systemImage: "person.crop.circle",
+                        isOn: $showsActiveProfileSection
+                    )
+
+                    SettingsDivider()
+
+                    SettingsToggleRow(
+                        title: String(localized: "Projects"),
+                        systemImage: "folder.badge.gearshape",
+                        isOn: $showsProjectsSection
+                    )
+
+                    SettingsFootnote(String(localized: "Turn off the entries you never use to shorten the top of the session list. Each one is the only way into its screen, so turn it back on here when you need it again."))
                 }
 
                 SettingsCard(title: String(localized: "Sessions")) {
@@ -492,6 +611,13 @@ struct SettingsView: View {
                         StreamingLabView()
                     } label: {
                         SettingsAccessoryRow(title: String(localized: "Streaming Lab"), systemImage: "waveform.path.ecg")
+                    }
+                    .buttonStyle(.plain)
+
+                    NavigationLink {
+                        ProviderGlyphGalleryView()
+                    } label: {
+                        SettingsAccessoryRow(title: "Provider Glyphs", systemImage: "square.grid.2x2")
                     }
                     .buttonStyle(.plain)
 
@@ -2120,6 +2246,7 @@ private struct ServerDetailView: View {
                         _ = try? await writer.write(.clearServer(
                             serverURLString: removedServerURL.absoluteString
                         ))
+                        await ChatDraftStore.shared.discardDrafts(for: removedServerURL)
                     }
                     await authManager.removeServer(account)
                     // Only a non-active removal leaves this view alive to reset its

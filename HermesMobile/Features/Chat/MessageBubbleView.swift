@@ -2,10 +2,15 @@ import SwiftUI
 
 struct MessageBubbleView: View {
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+    @Environment(\.layoutDirection) private var layoutDirection
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The skills this chat can draw as chips, published by `ChatView`.
+    @Environment(\.composerChipCatalog) private var composerChipCatalog
+    @Environment(\.chatWorkspaceRoot) private var chatWorkspaceRoot
     @AppStorage(ChatTranscriptDisplaySettings.hidesAttachmentPathsKey) private var hidesAttachmentPaths = true
-    @AppStorage(ChatTranscriptDisplaySettings.showsAssistantTurnTimestampsKey) private var showsAssistantTurnTimestamps = false
+    @AppStorage(ChatTranscriptDisplaySettings.showsResponseSpeedKey) private var showsResponseSpeed = false
 
     let message: ChatMessage
     let loadAttachmentImage: ((String) async -> Data?)?
@@ -17,6 +22,10 @@ struct MessageBubbleView: View {
     let onPreviewAttachment: ((MessageAttachment, Data?) -> Void)?
     let onPreviewTranscriptMedia: ((TranscriptMediaReference) -> Void)?
     let isStreaming: Bool
+    let liveTokensPerSecond: Double?
+    /// Long-press actions, attached to the message content only so the empty
+    /// gutter beside a user bubble does not open its menu.
+    let contextMenu: ChatMessageActionMenu?
 
     init(
         message: ChatMessage,
@@ -28,7 +37,9 @@ struct MessageBubbleView: View {
         localAttachmentPreviews: [String: Data]? = nil,
         onPreviewAttachment: ((MessageAttachment, Data?) -> Void)? = nil,
         onPreviewTranscriptMedia: ((TranscriptMediaReference) -> Void)? = nil,
-        isStreaming: Bool = false
+        isStreaming: Bool = false,
+        liveTokensPerSecond: Double? = nil,
+        contextMenu: ChatMessageActionMenu? = nil
     ) {
         self.message = message
         self.loadAttachmentImage = loadAttachmentImage
@@ -40,6 +51,8 @@ struct MessageBubbleView: View {
         self.onPreviewAttachment = onPreviewAttachment
         self.onPreviewTranscriptMedia = onPreviewTranscriptMedia
         self.isStreaming = isStreaming
+        self.liveTokensPerSecond = liveTokensPerSecond
+        self.contextMenu = contextMenu
     }
 
     var body: some View {
@@ -72,15 +85,18 @@ struct MessageBubbleView: View {
                         }
                         linkPreview
                     }
+                    .chatMessageContextMenu(contextMenu)
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
-        .padding(.vertical, 2)
     }
 
     private var assistantMessageRow: some View {
-        let segments = TranscriptMediaParser.segments(in: messageText)
+        let segments = TranscriptMediaParser.segments(
+            in: messageText,
+            workspaceRoot: chatWorkspaceRoot
+        )
 
         return VStack(alignment: .leading, spacing: 6) {
             if showsAssistantTurnHeaderForThisMessage {
@@ -102,8 +118,8 @@ struct MessageBubbleView: View {
 
             linkPreview
         }
+        .chatMessageContextMenu(contextMenu)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 2)
         // While this row is the active streaming message, animate its height
         // growth at the same curve as the bottom-follow scroll so the streaming
         // edge stays visually stationary instead of stepping per word flush.
@@ -115,18 +131,18 @@ struct MessageBubbleView: View {
 
     // MARK: - Assistant turn header (issue #258)
 
-    /// A compact, generic `glyph + time` marker drawn above each assistant text
-    /// turn so back-to-back responses are visually separable. Deliberately carries
-    /// no model/profile/agent identity — only the message's own timestamp, which
-    /// is the single per-message-accurate datum available.
+    /// A compact `glyph + speed` marker drawn above an assistant reply while
+    /// Response Speed is on. Deliberately carries no model/profile/agent
+    /// identity. The reply's time is not here: it sits under the message in
+    /// `ChatMessageMetaRow`, next to the copy button.
     private var assistantTurnHeader: some View {
         HStack(spacing: 5) {
             Image(systemName: "sparkle")
                 .foregroundStyle(Color.accentColor)
                 .accessibilityHidden(true)
 
-            if let time = assistantTurnTimeText {
-                Text(time)
+            if let speed = assistantResponseSpeedText {
+                Text(speed)
                     .foregroundStyle(.secondary)
             }
         }
@@ -139,7 +155,8 @@ struct MessageBubbleView: View {
         ChatTranscriptDisplaySettings.showsAssistantTurnHeader(
             role: message.role,
             hasTextContent: hasVisibleAssistantText,
-            isEnabled: showsAssistantTurnTimestamps
+            showsResponseSpeed: showsResponseSpeed,
+            hasResponseSpeed: assistantResponseSpeedText != nil
         )
     }
 
@@ -151,13 +168,21 @@ struct MessageBubbleView: View {
         return !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    private var assistantTurnTimeText: String? {
-        AssistantTurnTimestampFormatter.shortTime(forUnixTimestamp: message.timestamp)
+    private var assistantResponseSpeedText: String? {
+        guard showsResponseSpeed else { return nil }
+        return ResponseSpeedFormatter.compactText(isStreaming ? liveTokensPerSecond : message.turnTps)
     }
 
     private var assistantTurnHeaderAccessibilityLabel: String {
-        guard let time = assistantTurnTimeText else { return String(localized: "Assistant") }
-        return String(localized: "Assistant, \(time)")
+        guard let speed = assistantResponseSpeedAccessibilityText else {
+            return String(localized: "Assistant")
+        }
+        return String(localized: "Assistant, \(speed)")
+    }
+
+    private var assistantResponseSpeedAccessibilityText: String? {
+        guard showsResponseSpeed else { return nil }
+        return ResponseSpeedFormatter.accessibilityText(isStreaming ? liveTokensPerSecond : message.turnTps)
     }
 
     private var localNoticeRow: some View {
@@ -195,8 +220,17 @@ struct MessageBubbleView: View {
         .padding(.vertical, 4)
     }
 
+    /// The sent message, with any skill reference drawn as the same chip the
+    /// composer showed before the send.
+    ///
+    /// A chip is a picture, so dragging a selection across one leaves its
+    /// `/slug` out of what is copied; the message's own Copy and Select Text
+    /// actions read `message.content`, which is always the exact text.
     private var userBubble: some View {
-        Text(verbatim: userBubbleText)
+        let text = userBubbleText
+        let chips = userBubbleChips(in: text)
+
+        return ComposerChipTextLine.text(text, tokens: chips, style: chipStyle)
             .font(.body)
             .textSelection(.enabled)
             .padding(.horizontal, 14)
@@ -207,6 +241,32 @@ struct MessageBubbleView: View {
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
                     .stroke(userBubbleBorder, lineWidth: 0.5)
             )
+            // VoiceOver reads a chip by its skill's name rather than announcing
+            // an image, the way both composer states already do.
+            .accessibilityLabel(
+                chips.isEmpty
+                    ? Text(verbatim: text)
+                    : Text(verbatim: ComposerChipTokenizer.spokenText(in: text, tokens: chips))
+            )
+    }
+
+    /// The references in a sent message. `isComplete` is what a send means: the
+    /// text will not grow, so a reference that ends the message is finished and
+    /// draws as a chip even though the composer was still waiting for a space.
+    /// A slug the server no longer knows resolves to nothing and stays plain
+    /// text, which is the same rule the composer follows.
+    private func userBubbleChips(in text: String) -> [ComposerChipToken] {
+        guard !composerChipCatalog.isEmpty else { return [] }
+        return ComposerChipTokenizer.tokens(in: text, catalog: composerChipCatalog, isComplete: true)
+    }
+
+    private var chipStyle: ComposerChipTextStyle {
+        ComposerChipTextStyle(
+            colorScheme: colorScheme,
+            contrast: colorSchemeContrast,
+            layoutDirection: layoutDirection,
+            dynamicTypeSize: dynamicTypeSize
+        )
     }
 
     @ViewBuilder
@@ -257,6 +317,8 @@ struct MessageBubbleView: View {
                 )
             }
         }
+        // Before the full-width frame, so the marker covers the grid only.
+        .chatMessageContextMenu(contextMenu)
         .frame(maxWidth: .infinity, alignment: .trailing)
     }
 
@@ -678,42 +740,21 @@ private actor AttachmentImageCache {
     }
 }
 
-// MARK: - Assistant turn timestamp formatting
-
-/// Formats an assistant turn's unix `timestamp` as a short, locale-/24h-aware
-/// time (e.g. `2:14 PM` or `14:14`). Returns `nil` for a missing or non-finite
-/// timestamp so the per-turn header falls back to glyph-only.
-enum AssistantTurnTimestampFormatter {
-    private static let sharedFormatter: DateFormatter = makeFormatter(
-        locale: .autoupdatingCurrent,
-        timeZone: .autoupdatingCurrent
-    )
-
-    static func shortTime(forUnixTimestamp timestamp: Double?) -> String? {
-        format(timestamp, with: sharedFormatter)
+enum ResponseSpeedFormatter {
+    static func compactText(_ tokensPerSecond: Double?, locale: Locale = .autoupdatingCurrent) -> String? {
+        guard let tokensPerSecond, tokensPerSecond.isFinite, tokensPerSecond > 0 else { return nil }
+        let value = tokensPerSecond.formatted(
+            .number.locale(locale).precision(.fractionLength(1))
+        )
+        return "\(value) t/s"
     }
 
-    /// Test seam: format against an explicit locale/time zone so 12h/24h
-    /// assertions stay deterministic regardless of host device settings.
-    static func shortTime(
-        forUnixTimestamp timestamp: Double?,
-        locale: Locale,
-        timeZone: TimeZone
+    static func accessibilityText(
+        _ tokensPerSecond: Double?,
+        locale: Locale = .autoupdatingCurrent
     ) -> String? {
-        format(timestamp, with: makeFormatter(locale: locale, timeZone: timeZone))
-    }
-
-    private static func makeFormatter(locale: Locale, timeZone: TimeZone) -> DateFormatter {
-        let formatter = DateFormatter()
-        formatter.locale = locale
-        formatter.timeZone = timeZone
-        formatter.dateStyle = .none
-        formatter.timeStyle = .short
-        return formatter
-    }
-
-    private static func format(_ timestamp: Double?, with formatter: DateFormatter) -> String? {
-        guard let timestamp, timestamp.isFinite else { return nil }
-        return formatter.string(from: Date(timeIntervalSince1970: timestamp))
+        guard let compact = compactText(tokensPerSecond, locale: locale) else { return nil }
+        let value = compact.dropLast(4)
+        return "\(value) \(String(localized: "tokens per second"))"
     }
 }

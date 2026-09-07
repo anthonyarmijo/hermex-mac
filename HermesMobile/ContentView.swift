@@ -4,7 +4,9 @@ struct ContentView: View {
     @Bindable var authManager: AuthManager
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage(ResponseCompletionNotifications.isEnabledKey) private var isResponseCompletionNotificationsEnabled = false
-    @State private var pendingSharedImport: SharedImport?
+    @State private var pendingSharedImport: SharedImportReservation?
+    @State private var hasWaitingSharedImport = false
+    @State private var hasRoutedSharedImport = false
     @State private var pendingDeepLinkedSessionID: String?
     @State private var pendingNewChatRequest: NewChatRequest?
     @State private var didCheckInitialPendingShare = false
@@ -62,6 +64,9 @@ struct ContentView: View {
                 authManager: authManager,
                 server: server,
                 pendingSharedImport: $pendingSharedImport,
+                didRoutePendingSharedImport: consumePendingSharedImport,
+                hasWaitingSharedImport: hasWaitingSharedImport,
+                openNextSharedImport: openNextSharedImport,
                 pendingDeepLinkedSessionID: $pendingDeepLinkedSessionID,
                 requestedNewChat: $pendingNewChatRequest
             )
@@ -119,17 +124,58 @@ struct ContentView: View {
     }
 
     private func importPendingSharedDraftIfAvailable() {
+        guard pendingSharedImport == nil else {
+            return
+        }
+
+        guard let directory = HermesShareDraft.containerURL() else {
+            return
+        }
+
+        guard !hasRoutedSharedImport else {
+            refreshWaitingSharedImport(in: directory)
+            return
+        }
+
+        do {
+            pendingSharedImport = try HermesShareDraft.reserveNextPendingImport(from: directory)
+            refreshWaitingSharedImport(in: directory)
+        } catch {
+            pendingSharedImport = nil
+            hasWaitingSharedImport = false
+        }
+    }
+
+    private func consumePendingSharedImport(_ reservation: SharedImportReservation) {
+        hasRoutedSharedImport = true
+
+        defer {
+            if pendingSharedImport?.reservationID == reservation.reservationID {
+                pendingSharedImport = nil
+            }
+        }
+
         guard let directory = HermesShareDraft.containerURL() else {
             return
         }
 
         do {
-            if let sharedImport = try HermesShareDraft.loadPendingImport(from: directory) {
-                pendingSharedImport = sharedImport
-            }
+            try HermesShareDraft.consume(reservation, from: directory)
         } catch {
-            pendingSharedImport = nil
+            // Keep the share recoverable if acknowledgement fails after routing.
+            try? HermesShareDraft.release(reservation, in: directory)
         }
+        refreshWaitingSharedImport(in: directory)
+    }
+
+    private func openNextSharedImport() {
+        hasWaitingSharedImport = false
+        hasRoutedSharedImport = false
+        importPendingSharedDraftIfAvailable()
+    }
+
+    private func refreshWaitingSharedImport(in directory: URL) {
+        hasWaitingSharedImport = (try? HermesShareDraft.hasPendingImport(in: directory)) ?? false
     }
 }
 

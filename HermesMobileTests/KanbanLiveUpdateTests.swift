@@ -3,6 +3,11 @@ import XCTest
 
 @MainActor
 final class KanbanLiveUpdateTests: XCTestCase {
+    override func setUp() {
+        super.setUp()
+        clearSavedKanbanBoards()
+    }
+
     func testVisibleBoardStartsAtSnapshotCursorAndCoalescesEventBurst() async throws {
         let client = LiveKanbanClient(boardResults: [.success(.rich), .success(.newer)])
         let stream = KanbanStreamSpy()
@@ -26,6 +31,25 @@ final class KanbanLiveUpdateTests: XCTestCase {
         let assigneeCallCount = await client.assigneeCallCount
         XCTAssertEqual(statsCallCount, 2)
         XCTAssertEqual(assigneeCallCount, 2)
+        state.setVisible(false)
+    }
+
+    func testLiveEventReconciliationMarksAdvisoryDispatchPreviewStale() async throws {
+        let client = LiveKanbanClient(boardResults: [.success(.rich), .success(.newer)])
+        let stream = KanbanStreamSpy()
+        let state = makeState(client: client, stream: stream)
+
+        await state.load()
+        await state.previewDispatch()
+        XCTAssertEqual(state.dispatchState?.phase, .succeeded)
+        XCTAssertFalse(state.isPreviewStale)
+
+        state.setVisible(true)
+        stream.emit(.hello(cursor: 11, board: "main"))
+        stream.emit(Self.eventsFrame(cursor: 12, kind: "task.updated"))
+
+        try await waitUntil { await client.boardCallCount == 2 }
+        XCTAssertTrue(state.isPreviewStale)
         state.setVisible(false)
     }
 
@@ -117,6 +141,29 @@ final class KanbanLiveUpdateTests: XCTestCase {
         state.setVisible(false)
     }
 
+    func testForegroundBoardCollectionFailureStillRefreshesAndRestartsStream() async {
+        let client = LiveKanbanClient(
+            boardResults: [.success(.rich), .success(.newer)],
+            boardsResults: [.success(.single), .success(.incomplete)]
+        )
+        let stream = KanbanStreamSpy()
+        let state = makeState(client: client, stream: stream)
+
+        await state.load()
+        state.setVisible(true)
+        await state.setSceneActive(false)
+
+        await state.setSceneActive(true)
+
+        let boardCallCount = await client.boardCallCount
+        XCTAssertEqual(boardCallCount, 2)
+        XCTAssertEqual(state.snapshot?.latestEventID, 13)
+        XCTAssertEqual(stream.startURLs.count, 2)
+        XCTAssertTrue(state.refreshFailed)
+        XCTAssertFalse(state.canUseServerAuthoritativeActions)
+        state.setVisible(false)
+    }
+
     func testForegroundRefreshCannotStopNewBoardStreamAfterBoardSwitch() async throws {
         let client = ForegroundBoardSwitchClient()
         let stream = KanbanStreamSpy()
@@ -171,6 +218,37 @@ final class KanbanLiveUpdateTests: XCTestCase {
 
         try await waitUntil { await client.boardCallCount == 3 }
         XCTAssertEqual(state.snapshot?.latestEventID, 21)
+        state.setVisible(false)
+    }
+
+    func testRestoredBoardIsReconciledAndRestreamedAfterForeground() async {
+        let server = URL(string: "https://example.test")!
+        let suiteName = "KanbanLiveUpdateTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        addTeardownBlock { defaults.removePersistentDomain(forName: suiteName) }
+        KanbanBoardPreference.save("release", for: server, in: defaults)
+        let client = LiveKanbanClient(
+            boards: .multiple,
+            boardResults: [.success(.release), .success(.releaseUpdated)]
+        )
+        let stream = KanbanStreamSpy()
+        let state = makeState(client: client, stream: stream, defaults: defaults)
+
+        await state.load()
+        state.setVisible(true)
+        XCTAssertEqual(state.selectedBoardSlug, "release")
+        XCTAssertEqual(stream.startURLs.first?.queryValue("board"), "release")
+        XCTAssertEqual(stream.startURLs.first?.queryValue("since"), "20")
+
+        await state.setSceneActive(false)
+        await state.setSceneActive(true)
+
+        let boardRequests = await client.boardRequests
+        XCTAssertEqual(boardRequests.map(\.board), ["release", "release"])
+        XCTAssertNil(boardRequests.last?.since)
+        XCTAssertEqual(state.snapshot?.latestEventID, 21)
+        XCTAssertEqual(stream.startURLs.count, 2)
+        XCTAssertEqual(stream.startURLs.last?.queryValue("board"), "release")
         state.setVisible(false)
     }
 
@@ -278,13 +356,15 @@ final class KanbanLiveUpdateTests: XCTestCase {
             reconnectDelays: [.milliseconds(5), .milliseconds(5)],
             pollingInterval: .seconds(60),
             failuresBeforePolling: 3
-        )
+        ),
+        defaults: UserDefaults = .standard
     ) -> KanbanFeatureState {
         KanbanFeatureState(
             server: URL(string: "https://example.test")!,
             client: client,
             streamClient: stream,
-            timing: timing
+            timing: timing,
+            defaults: defaults
         )
     }
 
@@ -339,7 +419,7 @@ private final class KanbanStreamSpy: KanbanEventStreamingClient {
 }
 
 private actor LiveKanbanClient: KanbanDataClient {
-    private let boards: KanbanBoardsResponse
+    private var boardsResults: [Result<KanbanBoardsResponse, Error>]
     private var boardResults: [Result<KanbanBoardSnapshot, Error>]
     private let eventsResult: Result<KanbanEventsEnvelope, Error>
     private(set) var boardRequests: [KanbanBoardRequest] = []
@@ -350,9 +430,10 @@ private actor LiveKanbanClient: KanbanDataClient {
     init(
         boards: KanbanBoardsResponse = .single,
         boardResults: [Result<KanbanBoardSnapshot, Error>],
-        eventsResult: Result<KanbanEventsEnvelope, Error> = .success(.events(cursor: 11))
+        eventsResult: Result<KanbanEventsEnvelope, Error> = .success(.events(cursor: 11)),
+        boardsResults: [Result<KanbanBoardsResponse, Error>]? = nil
     ) {
-        self.boards = boards
+        self.boardsResults = boardsResults ?? [.success(boards)]
         self.boardResults = boardResults
         self.eventsResult = eventsResult
     }
@@ -360,7 +441,13 @@ private actor LiveKanbanClient: KanbanDataClient {
     var boardCallCount: Int { boardRequests.count }
 
     func kanbanConfiguration() -> KanbanConfiguration { .liveConfiguration }
-    func kanbanBoards() -> KanbanBoardsResponse { boards }
+    func kanbanBoards() throws -> KanbanBoardsResponse {
+        guard !boardsResults.isEmpty else { return .single }
+        if boardsResults.count > 1 {
+            return try boardsResults.removeFirst().get()
+        }
+        return try boardsResults[0].get()
+    }
 
     func kanbanBoard(_ request: KanbanBoardRequest) throws -> KanbanBoardSnapshot {
         boardRequests.append(request)
@@ -376,6 +463,12 @@ private actor LiveKanbanClient: KanbanDataClient {
     func kanbanAssignees(board: String) -> KanbanAssigneeHistory {
         assigneeCallCount += 1
         return .emptyHistory
+    }
+
+    func dispatchKanban(_ request: KanbanDispatchRequest) -> KanbanDispatchResult {
+        decode(
+            #"{"spawned":[],"promoted":0,"reclaimed":0,"skipped_unassigned":[],"skipped_nonspawnable":[],"auto_blocked":[],"timed_out":[],"crashed":[]}"#
+        )
     }
 
     func kanbanEvents(_ request: KanbanEventsRequest) throws -> KanbanEventsEnvelope {
@@ -430,6 +523,7 @@ private extension KanbanConfiguration {
 private extension KanbanBoardsResponse {
     static let single: Self = decode(#"{"boards":[{"slug":"main","name":"Main"}],"current":"main","read_only":false}"#)
     static let multiple: Self = decode(#"{"boards":[{"slug":"main","name":"Main"},{"slug":"release","name":"Release"}],"current":"main","read_only":false}"#)
+    static let incomplete: Self = decode(#"{"current":"main","read_only":false}"#)
 }
 
 private extension KanbanBoardSnapshot {

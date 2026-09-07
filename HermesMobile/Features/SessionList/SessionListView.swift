@@ -10,7 +10,11 @@ struct SessionListView: View {
 
     @Bindable var authManager: AuthManager
     let server: URL
-    @Binding private var pendingSharedImport: SharedImport?
+    private let draftStore: ChatDraftStore
+    @Binding private var pendingSharedImport: SharedImportReservation?
+    private let didRoutePendingSharedImport: (SharedImportReservation) -> Void
+    private let hasWaitingSharedImport: Bool
+    private let openNextSharedImport: () -> Void
     @Binding private var pendingDeepLinkedSessionID: String?
     @Binding private var requestedNewChat: NewChatRequest?
 
@@ -27,6 +31,8 @@ struct SessionListView: View {
     @State private var sessionPendingRename: SessionSummary?
     @State private var sessionPendingDeletion: SessionSummary?
     @State private var sessionPendingProjectCreation: SessionSummary?
+    @State private var sessionOpenErrorMessage: String?
+    @State private var sessionOpenTask: Task<Void, Never>?
     @State private var sessionExportShareItem: SessionExportShareItem?
     @State private var sessionExportDocument = ExportedFileDocument(data: Data())
     @State private var sessionExportContentType = UTType.data
@@ -45,6 +51,7 @@ struct SessionListView: View {
     @State private var selectedProjectID: String?
     @State private var sidebarScrollPosition: String?
     @State private var didCompleteInitialLoad = false
+    @State private var returnRefreshID: UUID?
     @FocusState private var searchFieldIsFocused: Bool
     @AppStorage(SessionSidebarDisclosureSettings.profilesAreExpandedKey)
     private var profilesAreExpanded = SessionSidebarDisclosureSettings.defaultProfilesAreExpanded
@@ -57,6 +64,13 @@ struct SessionListView: View {
     @AppStorage(SessionRowDisplaySettings.showCronSessionsKey) private var showsCronSessions = true
     @AppStorage(SessionRowDisplaySettings.showSubagentSessionsKey)
     private var showsSubagentSessions = SessionRowDisplaySettings.defaultShowsSubagentSessions
+    @AppStorage(SectionVisibilitySettings.tasksKey) private var showsTasksSection = true
+    @AppStorage(SectionVisibilitySettings.kanbanKey) private var showsKanbanSection = true
+    @AppStorage(SectionVisibilitySettings.skillsKey) private var showsSkillsSection = true
+    @AppStorage(SectionVisibilitySettings.memoryKey) private var showsMemorySection = true
+    @AppStorage(SectionVisibilitySettings.insightsKey) private var showsInsightsSection = true
+    @AppStorage(SectionVisibilitySettings.activeProfileKey) private var showsActiveProfileSection = true
+    @AppStorage(SectionVisibilitySettings.projectsKey) private var showsProjectsSection = true
     // Per-server key (#19): the CLI toggle mirrors the active server's
     // `show_cli_sessions`, so its cached value must not leak across servers.
     // Configured in `init`, where the server URL is known.
@@ -72,13 +86,21 @@ struct SessionListView: View {
     init(
         authManager: AuthManager,
         server: URL,
-        pendingSharedImport: Binding<SharedImport?> = .constant(nil),
+        pendingSharedImport: Binding<SharedImportReservation?> = .constant(nil),
+        didRoutePendingSharedImport: @escaping (SharedImportReservation) -> Void = { _ in },
+        hasWaitingSharedImport: Bool = false,
+        openNextSharedImport: @escaping () -> Void = {},
         pendingDeepLinkedSessionID: Binding<String?> = .constant(nil),
-        requestedNewChat: Binding<NewChatRequest?> = .constant(nil)
+        requestedNewChat: Binding<NewChatRequest?> = .constant(nil),
+        draftStore: ChatDraftStore? = nil
     ) {
         self.authManager = authManager
         self.server = server
         _pendingSharedImport = pendingSharedImport
+        self.didRoutePendingSharedImport = didRoutePendingSharedImport
+        self.hasWaitingSharedImport = hasWaitingSharedImport
+        self.openNextSharedImport = openNextSharedImport
+        self.draftStore = draftStore ?? .shared
         _pendingDeepLinkedSessionID = pendingDeepLinkedSessionID
         _requestedNewChat = requestedNewChat
         _viewModel = State(initialValue: SessionListViewModel(server: server))
@@ -108,6 +130,12 @@ struct SessionListView: View {
                 if case .failure(let error) = result,
                    (error as NSError).code != NSUserCancelledError {
                     sessionExportErrorMessage = error.localizedDescription
+
+                }
+            }
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if hasWaitingSharedImport {
+                    waitingSharedImportBanner
                 }
             }
             .sheet(item: $sessionExportShareItem) { item in
@@ -158,6 +186,11 @@ struct SessionListView: View {
                     }
                 }
                 .presentationDetents([.height(180), .medium])
+            }
+            .alert("Session Action Failed", isPresented: sessionOpenErrorIsPresented) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(sessionOpenErrorMessage ?? "")
             }
             .sheet(item: $sessionPendingProjectCreation) { session in
                 ProjectCreationSheet(
@@ -230,8 +263,22 @@ struct SessionListView: View {
             }
             .task {
                 await viewModel.configureCacheWriter(cacheWriter)
-                await refreshSessionsAndActiveProfile()
+                // Start the normal refresh immediately so a slow direct session
+                // request cannot leave the sidebar empty. Deep-link resolution still
+                // owns navigation precedence and is awaited before stored selection
+                // restoration.
+                await SessionListInitialLoad.run(
+                    resolvePendingDeepLink: {
+                        await openPendingDeepLinkedSessionIfNeeded()
+                    },
+                    refreshSessionsAndActiveProfile: {
+                        await refreshSessionsAndActiveProfile()
+                    }
+                )
+                guard !Task.isCancelled else { return }
                 didCompleteInitialLoad = true
+                // Ordered after the deep link so restoreIfNeeded() sees the explicit
+                // destination and leaves the stored selection alone.
                 restoreLastSelectedSessionIfNeeded()
             }
             .task(id: remoteSearchTaskID) {
@@ -240,33 +287,42 @@ struct SessionListView: View {
             .task(id: activeSessionMonitorTaskID) {
                 await monitorActiveSessionRows()
             }
+            .task(id: returnRefreshID) {
+                guard returnRefreshID != nil else { return }
+                await refreshSessionsAndActiveProfile()
+            }
             .onAppear {
                 openPendingSharedImportIfNeeded()
-                openPendingDeepLinkedSessionIfNeeded()
                 openRequestedNewChatIfNeeded()
                 refreshAfterReturningIfNeeded()
+            }
+            .onDisappear {
+                sessionOpenTask?.cancel()
+                viewModel.invalidateSessionOpening()
             }
             .onChange(of: pendingSharedImport) {
                 openPendingSharedImportIfNeeded()
             }
             .onChange(of: pendingDeepLinkedSessionID) {
-                openPendingDeepLinkedSessionIfNeeded()
+                Task { await openPendingDeepLinkedSessionIfNeeded() }
             }
             .onChange(of: requestedNewChat) {
                 openRequestedNewChatIfNeeded()
             }
-            .onChange(of: navigationState.destination) { oldValue, newValue in
-                if case .newChat = oldValue,
-                   case .newChat = newValue {
-                    return
-                }
-
-                if case .newChat = oldValue {
-                    viewModel.removeEmptySidebarPlaceholders()
-                }
+            .onChange(of: showsProjectsSection) {
+                // The "All" button that clears a project filter lives in the
+                // Projects header, so hiding the section mid-filter would strand
+                // the list on one project with no way back (#189).
+                guard !showsProjectsSection else { return }
+                selectedProjectID = nil
             }
-            .refreshable {
-                await refreshSessionsAndActiveProfile()
+            .onChange(of: navigationState.destination) { oldValue, newValue in
+                SessionListDestinationReturn.run(
+                    from: oldValue,
+                    to: newValue,
+                    suppressEmptyPlaceholders: viewModel.removeEmptySidebarPlaceholders,
+                    refreshSessions: refreshAfterReturningIfNeeded
+                )
             }
             .modifier(
                 SessionActionConfirmations(
@@ -282,6 +338,34 @@ struct SessionListView: View {
                 )
             )
             .focusedSceneValue(\.hermexSceneActions, sceneActions)
+    }
+
+    private var waitingSharedImportBanner: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "square.and.arrow.down")
+                .foregroundStyle(.secondary)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Another shared item is waiting")
+                    .font(.subheadline.weight(.semibold))
+                Text("Open it when you are done with this draft.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 0)
+
+            Button("Open Next", action: openNextSharedImport)
+                .font(.subheadline.weight(.semibold))
+                .buttonStyle(.bordered)
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 10)
+        .background(Color(.secondarySystemBackground))
+        .overlay(alignment: .bottom) {
+            Divider()
+        }
+        .accessibilityElement(children: .contain)
     }
 
     @ViewBuilder
@@ -350,7 +434,8 @@ struct SessionListView: View {
                 session: session,
                 server: server,
                 onAPIError: authManager.handleAPIError,
-                externalComposerFocusRequestID: composerFocusRequestID
+                externalComposerFocusRequestID: composerFocusRequestID,
+                draftStore: draftStore
             )
                 .id(session.id)
         case .newChat(let route):
@@ -365,7 +450,8 @@ struct SessionListView: View {
                 server: server,
                 viewModel: viewModel,
                 onAPIError: authManager.handleAPIError,
-                onSessionCreated: rememberCreatedSession
+                onSessionCreated: rememberCreatedSession,
+                draftStore: draftStore
             )
             .id(route.id)
         case .utility(let destination):
@@ -402,6 +488,8 @@ struct SessionListView: View {
                 SettingsView(authManager: authManager, server: server, initialScrollTarget: scrollTo)
             case .tasks:
                 TasksView(server: server, onAPIError: authManager.handleAPIError)
+            case .kanban:
+                KanbanView(server: server, onAPIError: authManager.handleAPIError)
             case .skills:
                 SkillsView(server: server, onAPIError: authManager.handleAPIError)
             case .memory:
@@ -452,14 +540,13 @@ struct SessionListView: View {
                     viewModel: viewModel,
                     topPadding: 10,
                     automatedVisibility: automatedSessionVisibility,
+                    sectionVisibility: sidebarSectionVisibility,
                     profilesAreExpanded: $profilesAreExpanded,
                     projectsAreExpanded: $projectsAreExpanded,
                     selectedProjectID: $selectedProjectID,
                     projectPendingDeletion: $projectPendingDeletion,
                     projectPendingRename: $projectPendingRename,
-                    openDestination: { destination in
-                        navigationState.select(destination)
-                    },
+                    openDestination: selectDestination,
                     switchActiveProfile: { profile in
                         Task { await switchActiveProfile(profile) }
                     },
@@ -474,6 +561,7 @@ struct SessionListView: View {
             if scheduledSessionGroups.showsDisclosure(isSearchActive: isSearchingSessions) {
                 ScheduledSessionsDisclosure(
                     viewModel: viewModel,
+                    searchText: searchText,
                     sessions: scheduledSessionGroups.scheduled,
                     totalCount: scheduledSessionGroups.totalScheduledCount,
                     isSearchActive: isSearchingSessions,
@@ -484,12 +572,13 @@ struct SessionListView: View {
                         : nil,
                     userIsExpanded: $scheduledSessionsAreExpanded,
                     actions: sessionRowActions,
-                    viewAll: { navigationState.select(.scheduled) }
+                    viewAll: { selectDestination(.scheduled) }
                 )
             }
 
             SessionListRowsSection(
                 viewModel: viewModel,
+                searchText: searchText,
                 sessions: scheduledSessionGroups.ordinary,
                 emptyTitle: emptySessionsTitle,
                 emptyDescription: emptySessionsDescription,
@@ -514,6 +603,12 @@ struct SessionListView: View {
                 .accessibilityHidden(true)
         }
         .listStyle(.plain)
+        // On the List itself, not the navigation container: a refresh action
+        // set higher up is inherited by every ScrollView in pushed chats, which
+        // made the composer's attachment strip pullable.
+        .refreshable {
+            await refreshSessionsAndActiveProfile()
+        }
         // Let rows hug their content instead of the 44pt default minimum, so the
         // single-line utility/disclosure rows aren't padded out and stay aligned
         // with the tightly-packed navigation rows.
@@ -749,6 +844,18 @@ struct SessionListView: View {
         )
     }
 
+    private var sidebarSectionVisibility: SidebarSectionVisibility {
+        SidebarSectionVisibility(
+            tasks: showsTasksSection,
+            kanban: showsKanbanSection,
+            skills: showsSkillsSection,
+            memory: showsMemorySection,
+            insights: showsInsightsSection,
+            activeProfile: showsActiveProfileSection,
+            projects: showsProjectsSection
+        )
+    }
+
     /// Bottom-of-list entry to the Archived screen (issue #17). Hidden while
     /// searching, offline (cached data cannot fetch archived rows), and when the
     /// server reports zero archived sessions or omits `archived_count` (older
@@ -760,7 +867,7 @@ struct SessionListView: View {
 
     private var archivedEntryRow: some View {
         HapticButton {
-            navigationState.select(.archived)
+            selectDestination(.archived)
         } label: {
             HStack(spacing: 12) {
                 Image(systemName: "archivebox")
@@ -920,7 +1027,7 @@ struct SessionListView: View {
                 Task { await refreshSessionsAndActiveProfile() }
             },
             open: { session in
-                selectSession(session)
+                startOpeningSession(session)
             },
             togglePinned: { session in
                 Task { await togglePinned(session) }
@@ -954,6 +1061,7 @@ struct SessionListView: View {
 
     private func refreshSessionsAndActiveProfile() async {
         await loadSessions()
+        guard !Task.isCancelled else { return }
         await viewModel.loadActiveProfile()
     }
 
@@ -1033,10 +1141,7 @@ struct SessionListView: View {
 
     private func refreshAfterReturningIfNeeded() {
         guard didCompleteInitialLoad else { return }
-
-        Task {
-            await refreshSessionsAndActiveProfile()
-        }
+        returnRefreshID = UUID()
     }
 
     private func monitorActiveSessionRows() async {
@@ -1078,10 +1183,12 @@ struct SessionListView: View {
 
     private func loadSessions() async {
         await viewModel.load(modelContext: modelContext)
+        guard !Task.isCancelled else { return }
         handleLastError()
 
         if !viewModel.isViewingCachedData {
             await viewModel.loadProjects()
+            guard !Task.isCancelled else { return }
             handleLastError()
         }
     }
@@ -1123,9 +1230,16 @@ struct SessionListView: View {
         handleLastError()
 
         if didDelete {
+            await draftStore.discardDraft(for: draftKey(for: session))
             removeSessionFromNavigation(session)
             SessionHaptics.sessionDeleted(isEnabled: isHapticsEnabled)
         }
+    }
+
+    private func draftKey(for session: SessionSummary) -> ChatDraftKey {
+        let normalizedSessionID = session.sessionId?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sessionID = normalizedSessionID.flatMap { $0.isEmpty ? nil : $0 } ?? session.id
+        return .session(server: server, sessionID: sessionID)
     }
 
     private func rename(_ session: SessionSummary, to title: String) async -> Bool {
@@ -1207,43 +1321,58 @@ struct SessionListView: View {
     }
 
     private func openPendingSharedImportIfNeeded() {
-        guard let sharedImport = pendingSharedImport else {
+        guard let reservation = pendingSharedImport else {
             return
         }
 
-        pendingSharedImport = nil
+        let sharedImport = reservation.sharedImport
         let draft = HermesShareDraft.composerDraft(from: sharedImport.draft)
         guard !draft.isEmpty || !sharedImport.attachments.isEmpty else {
+            didRoutePendingSharedImport(reservation)
             return
         }
 
-        navigationState.select(
+        selectDestination(
             PendingNewChatRoute(
                 initialDraft: draft,
                 initialAttachments: sharedImport.attachments
             )
         )
+        didRoutePendingSharedImport(reservation)
     }
 
-    private func openPendingDeepLinkedSessionIfNeeded() {
-        guard let sessionID = pendingDeepLinkedSessionID?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !sessionID.isEmpty
-        else {
-            return
-        }
+    /// Awaited (not fire-and-forget) so the cold-start `.task` can resolve it before
+    /// `restoreLastSelectedSessionIfNeeded()` — otherwise the restore races the deep
+    /// link's network load and wins with the previous session.
+    private func openPendingDeepLinkedSessionIfNeeded() async {
+        guard !Task.isCancelled else { return }
 
-        pendingDeepLinkedSessionID = nil
+        while let sessionID = navigationState.beginDeepLinkedSessionLoad(
+            id: pendingDeepLinkedSessionID
+        ) {
+            pendingDeepLinkedSessionID = nil
+            await openDeepLinkedSession(id: sessionID)
+            navigationState.finishDeepLinkedSessionLoad(id: sessionID)
+            guard !Task.isCancelled else { return }
+        }
+    }
+
+    private func openDeepLinkedSession(id sessionID: String) async {
         if let loadedSession = viewModel.sessions.first(where: { $0.sessionId == sessionID }) {
             selectSession(loadedSession)
             return
         }
 
-        Task {
-            if let session = await viewModel.loadSessionForDeepLink(id: sessionID, modelContext: modelContext) {
-                selectSession(session)
-            }
-            handleLastError()
+        let session = await viewModel.loadSessionForDeepLink(id: sessionID, modelContext: modelContext)
+        // Re-checked post-await: the view (and this task) may have been torn down —
+        // e.g. dismissed, or the active server changed under `.id(server)` — while
+        // the network load was in flight. Selecting or persisting for a session
+        // whose owning view no longer exists is stale work, not a real navigation.
+        guard !Task.isCancelled else { return }
+        if let session {
+            selectSession(session)
         }
+        handleLastError()
     }
 
     /// Opens the New Chat composer in response to the "New Chat" App Intents (#337/#338),
@@ -1253,7 +1382,7 @@ struct SessionListView: View {
     private func openRequestedNewChatIfNeeded() {
         guard let request = requestedNewChat else { return }
         requestedNewChat = nil
-        navigationState.select(
+        selectDestination(
             PendingNewChatRoute(
                 autoStartsVoiceInput: request.autoStartsVoiceInput,
                 profileName: request.profileName
@@ -1262,7 +1391,7 @@ struct SessionListView: View {
     }
 
     private func openNewChat() {
-        navigationState.select(PendingNewChatRoute())
+        selectDestination(PendingNewChatRoute())
     }
 
     private func openNewChat(in project: ProjectSummary) {
@@ -1289,8 +1418,50 @@ struct SessionListView: View {
     }
 
     private func selectSession(_ session: SessionSummary) {
-        navigationState.select(session)
+        selectDestination(session)
         persistLastSelectedSession()
+    }
+
+    private func selectDestination(_ session: SessionSummary) {
+        viewModel.invalidateSessionOpening()
+        navigationState.select(session)
+    }
+
+    private func selectDestination(_ route: PendingNewChatRoute) {
+        viewModel.invalidateSessionOpening()
+        navigationState.select(route)
+    }
+
+    private func selectDestination(_ utility: SessionListUtilityDestination) {
+        viewModel.invalidateSessionOpening()
+        navigationState.select(utility)
+    }
+
+    private func startOpeningSession(_ session: SessionSummary) {
+        sessionOpenTask?.cancel()
+        sessionOpenTask = Task { await openSession(session) }
+    }
+
+    private func openSession(_ session: SessionSummary) async {
+        let sessionToOpen = await viewModel.sessionForOpening(session, modelContext: modelContext)
+        guard !Task.isCancelled else { return }
+
+        if let message = viewModel.actionErrorMessage {
+            sessionOpenErrorMessage = message
+        }
+
+        if let sessionToOpen {
+            selectSession(sessionToOpen)
+        }
+    }
+
+    private var sessionOpenErrorIsPresented: Binding<Bool> {
+        Binding(
+            get: { sessionOpenErrorMessage != nil },
+            set: { isPresented in
+                if !isPresented { sessionOpenErrorMessage = nil }
+            }
+        )
     }
 
     private func rememberCreatedSession(_ session: SessionSummary) {
@@ -1306,7 +1477,8 @@ struct SessionListView: View {
     private func restoreLastSelectedSessionIfNeeded() {
         navigationState.restoreIfNeeded(
             from: viewModel.sessions,
-            clearsMissingSelection: viewModel.sessionLoadError == nil
+            clearsMissingSelection: viewModel.sessionLoadError == nil,
+            pendingDeepLinkedSessionID: pendingDeepLinkedSessionID
         )
         persistLastSelectedSession()
     }
@@ -1315,6 +1487,47 @@ struct SessionListView: View {
         SessionNavigationPersistence.save(navigationState.lastSelectedSessionID, for: server)
     }
 
+}
+
+enum SessionListInitialLoad {
+    @MainActor
+    static func run(
+        resolvePendingDeepLink: @escaping @MainActor () async -> Void,
+        refreshSessionsAndActiveProfile: @escaping @MainActor () async -> Void
+    ) async {
+        async let initialRefresh: Void = refreshSessionsAndActiveProfile()
+        await resolvePendingDeepLink()
+        await initialRefresh
+    }
+}
+
+/// Refreshes the session list whenever the user leaves one destination for
+/// another, so a row reflects whatever just happened in the chat it opened
+/// (a rename, a `/clear`, new messages). Driven from the `destination`
+/// `onChange` in `SessionListView`.
+enum SessionListDestinationReturn {
+    static func run(
+        from oldValue: SessionNavigationDestination?,
+        to newValue: SessionNavigationDestination?,
+        suppressEmptyPlaceholders: () -> Void,
+        refreshSessions: () -> Void
+    ) {
+        // Nothing to refresh against before the first destination, and a
+        // destination that re-emits itself has no new server state to adopt.
+        guard let oldValue, oldValue != newValue else { return }
+        // Replacing one pending new-chat route with another stays on the same
+        // screen, so it is not a return.
+        if case .newChat = oldValue, case .newChat = newValue { return }
+
+        if case .newChat = oldValue {
+            // Keep this synchronous so an empty Untitled placeholder cannot
+            // flash during the navigation transition. The refresh then adopts
+            // the server's latest metadata for a new chat that became
+            // contentful.
+            suppressEmptyPlaceholders()
+        }
+        refreshSessions()
+    }
 }
 
 struct HermesHeaderLogo: View {
@@ -1413,6 +1626,7 @@ enum SessionListUtilityDestination: Hashable, Identifiable {
     /// passes `.servers`, a plain avatar tap passes `nil` (#283).
     case settings(SettingsScrollAnchor?)
     case tasks
+    case kanban
     case skills
     case memory
     case insights
@@ -1436,6 +1650,7 @@ private struct ActiveSessionMonitorTaskID: Hashable {
 
 private struct PendingNewChatView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage(AppHaptics.isEnabledKey) private var isHapticsEnabled = true
 
     let server: URL
@@ -1448,10 +1663,12 @@ private struct PendingNewChatView: View {
     let projectID: String?
     let projectName: String?
     let externalComposerFocusRequestID: Int
+    let draftStore: ChatDraftStore
 
     @State private var createdSession: SessionSummary?
     @State private var draftMessage = ""
     @State private var didStartCreation = false
+    @State private var didStartConversation = false
     @State private var didRequestComposerFocus = false
     @State private var creationErrorMessage: String?
     @FocusState private var composerIsFocused: Bool
@@ -1467,7 +1684,8 @@ private struct PendingNewChatView: View {
         server: URL,
         viewModel: SessionListViewModel,
         onAPIError: @escaping (Error) -> Void,
-        onSessionCreated: @escaping (SessionSummary) -> Void = { _ in }
+        onSessionCreated: @escaping (SessionSummary) -> Void = { _ in },
+        draftStore: ChatDraftStore? = nil
     ) {
         self.server = server
         self.viewModel = viewModel
@@ -1479,6 +1697,7 @@ private struct PendingNewChatView: View {
         self.projectID = projectID
         self.projectName = projectName
         self.externalComposerFocusRequestID = externalComposerFocusRequestID
+        self.draftStore = draftStore ?? .shared
         _draftMessage = State(initialValue: initialDraft)
     }
 
@@ -1504,7 +1723,10 @@ private struct PendingNewChatView: View {
                     initialAttachments: initialAttachments,
                     loadsInitialMessages: false,
                     autoStartsVoiceInput: autoStartsVoiceInput,
-                    externalComposerFocusRequestID: externalComposerFocusRequestID
+                    externalComposerFocusRequestID: externalComposerFocusRequestID,
+                    draftStore: draftStore,
+                    restoresDraftSettings: true,
+                    onConversationStarted: markConversationStarted
                 )
             } else {
                 pendingContent
@@ -1516,7 +1738,16 @@ private struct PendingNewChatView: View {
                 .accessibilityHidden(true)
         )
         .task {
-            await createSessionIfNeeded()
+            await prepareNewChat()
+        }
+        .onChange(of: scenePhase) {
+            if scenePhase != .active {
+                flushDraftsBestEffort()
+            }
+        }
+        .onDisappear {
+            restoreAbandonedDraftIfNeeded()
+            flushDraftsBestEffort()
         }
     }
 
@@ -1555,7 +1786,7 @@ private struct PendingNewChatView: View {
 
     private var pendingComposer: some View {
         HStack(alignment: .bottom, spacing: 10) {
-            TextField("Message Hermex", text: $draftMessage, axis: .vertical)
+            TextField("Message Hermex", text: persistedDraftBinding, axis: .vertical)
                 .textFieldStyle(.plain)
                 .lineLimit(1...5)
                 .focused($composerIsFocused)
@@ -1620,6 +1851,9 @@ private struct PendingNewChatView: View {
         }
 
         if let session {
+            let sessionKey = draftKey(for: session)
+            draftStore.setDraft(draftMessage, for: draftKey)
+            draftMessage = draftStore.moveDraft(from: draftKey, to: sessionKey).text
             SessionHaptics.sessionCreated(isEnabled: isHapticsEnabled)
             onSessionCreated(session)
             createdSession = session
@@ -1637,6 +1871,65 @@ private struct PendingNewChatView: View {
         creationErrorMessage = nil
         viewModel.clearActionError()
         await createSessionIfNeeded()
+    }
+
+    private var draftKey: ChatDraftKey {
+        .newChat(server: server)
+    }
+
+    private func draftKey(for session: SessionSummary) -> ChatDraftKey {
+        let normalizedSessionID = session.sessionId?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sessionID = normalizedSessionID.flatMap { $0.isEmpty ? nil : $0 } ?? session.id
+        return .session(server: server, sessionID: sessionID)
+    }
+
+    private var persistedDraftBinding: Binding<String> {
+        Binding(
+            get: { draftMessage },
+            set: { newValue in
+                draftMessage = newValue
+                draftStore.setDraft(newValue, for: draftKey)
+            }
+        )
+    }
+
+    private func prepareNewChat() async {
+        await hydrateDraft()
+        guard !Task.isCancelled else { return }
+        await createSessionIfNeeded()
+    }
+
+    private func hydrateDraft() async {
+        let textBeforeHydration = draftMessage
+        let persistedDraft = await draftStore.draft(for: draftKey)
+        guard !Task.isCancelled, draftMessage == textBeforeHydration else { return }
+
+        if textBeforeHydration.isEmpty {
+            if let persistedDraft, !persistedDraft.text.isEmpty {
+                draftMessage = persistedDraft.text
+            }
+        } else {
+            draftStore.setDraft(textBeforeHydration, for: draftKey)
+        }
+    }
+
+    private func flushDraftsBestEffort() {
+        Task {
+            try? await draftStore.flush()
+        }
+    }
+
+    private func markConversationStarted() {
+        didStartConversation = true
+    }
+
+    private func restoreAbandonedDraftIfNeeded() {
+        guard let createdSession else { return }
+        draftMessage = draftStore.restoreAbandonedNewChatDraft(
+            from: draftKey(for: createdSession),
+            to: draftKey,
+            didStartConversation: didStartConversation
+        )?.text ?? draftMessage
     }
 
     private func requestPendingComposerFocus() {

@@ -42,6 +42,66 @@ final class SessionNavigationStateTests: XCTestCase {
         XCTAssertEqual(state.lastSelectedSessionID, "session-1")
     }
 
+    func testRestoreSkipsWhileDeepLinkIsPendingAndKeepsStoredSelection() {
+        let stored = SessionSummary(sessionId: "stored")
+        var state = SessionNavigationState(lastSelectedSessionID: "stored")
+
+        state.restoreIfNeeded(from: [stored], pendingDeepLinkedSessionID: "deep-linked")
+
+        XCTAssertNil(state.destination)
+        XCTAssertEqual(state.lastSelectedSessionID, "stored")
+    }
+
+    func testRestoreSkipsAfterPendingDeepLinkIsConsumedWhileLoadIsInFlight() {
+        let stored = SessionSummary(sessionId: "stored")
+        var state = SessionNavigationState(lastSelectedSessionID: "stored")
+
+        let deepLinkedSessionID = state.beginDeepLinkedSessionLoad(id: "deep-linked")
+        state.restoreIfNeeded(from: [stored], pendingDeepLinkedSessionID: nil)
+
+        XCTAssertEqual(deepLinkedSessionID, "deep-linked")
+        XCTAssertNil(state.destination)
+        XCTAssertEqual(state.lastSelectedSessionID, "stored")
+
+        state.finishDeepLinkedSessionLoad(id: deepLinkedSessionID)
+        state.restoreIfNeeded(from: [stored], pendingDeepLinkedSessionID: nil)
+
+        XCTAssertEqual(state.destination, .session(stored))
+    }
+
+    func testRestoreProceedsWhenPendingDeepLinkIDIsBlank() {
+        let stored = SessionSummary(sessionId: "stored")
+        var state = SessionNavigationState(lastSelectedSessionID: "stored")
+
+        state.restoreIfNeeded(from: [stored], pendingDeepLinkedSessionID: "   ")
+
+        XCTAssertEqual(state.destination, .session(stored))
+    }
+
+    func testInitialRefreshStartsBeforeDelayedDeepLinkFinishes() async {
+        let recorder = SessionInitialLoadEventRecorder()
+
+        await SessionListInitialLoad.run(
+            resolvePendingDeepLink: {
+                await recorder.record(.deepLinkStarted)
+                try? await Task.sleep(nanoseconds: 50_000_000)
+                await recorder.record(.deepLinkFinished)
+            },
+            refreshSessionsAndActiveProfile: {
+                await recorder.record(.refreshStarted)
+            }
+        )
+
+        let events = await recorder.snapshot()
+        guard let refreshIndex = events.firstIndex(of: .refreshStarted),
+              let deepLinkFinishIndex = events.firstIndex(of: .deepLinkFinished)
+        else {
+            return XCTFail("Expected both refresh and deep-link completion events")
+        }
+
+        XCTAssertLessThan(refreshIndex, deepLinkFinishIndex)
+    }
+
     func testExplicitNewChatRouteOverridesStoredSelection() {
         let route = PendingNewChatRoute(initialDraft: "Shared draft")
         var state = SessionNavigationState(lastSelectedSessionID: "session-1")
@@ -140,6 +200,132 @@ final class SessionNavigationStateTests: XCTestCase {
         XCTAssertTrue(state.isCreatingNewChat)
     }
 
+    func testReturningFromContentfulNewChatSuppressesPlaceholdersThenRefreshesSessions() {
+        let route = PendingNewChatRoute()
+        var state = SessionNavigationState()
+        state.select(route)
+        state.remember(SessionSummary(sessionId: "created-session"))
+        let oldDestination = state.destination
+        state.clearDestination()
+        var events: [DestinationReturnEvent] = []
+
+        SessionListDestinationReturn.run(
+            from: oldDestination,
+            to: state.destination,
+            suppressEmptyPlaceholders: { events.append(.suppressedPlaceholders) },
+            refreshSessions: { events.append(.refreshedSessions) }
+        )
+
+        XCTAssertEqual(events, [.suppressedPlaceholders, .refreshedSessions])
+    }
+
+    func testReturningFromEmptyNewChatSuppressesPlaceholderThenRefreshesSessions() {
+        let route = PendingNewChatRoute()
+        var state = SessionNavigationState()
+        state.select(route)
+        let oldDestination = state.destination
+        state.clearDestination()
+        var events: [DestinationReturnEvent] = []
+
+        SessionListDestinationReturn.run(
+            from: oldDestination,
+            to: state.destination,
+            suppressEmptyPlaceholders: { events.append(.suppressedPlaceholders) },
+            refreshSessions: { events.append(.refreshedSessions) }
+        )
+
+        XCTAssertEqual(events, [.suppressedPlaceholders, .refreshedSessions])
+    }
+
+    func testReplacingNewChatRouteDoesNotRefreshSessions() {
+        let firstRoute = PendingNewChatRoute()
+        let secondRoute = PendingNewChatRoute()
+        var events: [DestinationReturnEvent] = []
+
+        SessionListDestinationReturn.run(
+            from: .newChat(firstRoute),
+            to: .newChat(secondRoute),
+            suppressEmptyPlaceholders: { events.append(.suppressedPlaceholders) },
+            refreshSessions: { events.append(.refreshedSessions) }
+        )
+
+        XCTAssertTrue(events.isEmpty)
+    }
+
+    func testReturningFromSessionRefreshesSessionsWithoutSuppressingPlaceholders() {
+        var state = SessionNavigationState()
+        state.select(SessionSummary(sessionId: "session-1"))
+        let oldDestination = state.destination
+        state.clearDestination()
+        var events: [DestinationReturnEvent] = []
+
+        SessionListDestinationReturn.run(
+            from: oldDestination,
+            to: state.destination,
+            suppressEmptyPlaceholders: { events.append(.suppressedPlaceholders) },
+            refreshSessions: { events.append(.refreshedSessions) }
+        )
+
+        XCTAssertEqual(events, [.refreshedSessions])
+    }
+
+    func testSwitchingBetweenSessionsRefreshesSessions() {
+        var events: [DestinationReturnEvent] = []
+
+        SessionListDestinationReturn.run(
+            from: .session(SessionSummary(sessionId: "session-1")),
+            to: .session(SessionSummary(sessionId: "session-2")),
+            suppressEmptyPlaceholders: { events.append(.suppressedPlaceholders) },
+            refreshSessions: { events.append(.refreshedSessions) }
+        )
+
+        XCTAssertEqual(events, [.refreshedSessions])
+    }
+
+    func testReturningFromUtilityDestinationRefreshesSessions() {
+        var state = SessionNavigationState()
+        state.select(SessionListUtilityDestination.archived)
+        let oldDestination = state.destination
+        state.clearDestination()
+        var events: [DestinationReturnEvent] = []
+
+        SessionListDestinationReturn.run(
+            from: oldDestination,
+            to: state.destination,
+            suppressEmptyPlaceholders: { events.append(.suppressedPlaceholders) },
+            refreshSessions: { events.append(.refreshedSessions) }
+        )
+
+        XCTAssertEqual(events, [.refreshedSessions])
+    }
+
+    func testOpeningTheFirstDestinationRefreshesNothing() {
+        var events: [DestinationReturnEvent] = []
+
+        SessionListDestinationReturn.run(
+            from: nil,
+            to: .session(SessionSummary(sessionId: "session-1")),
+            suppressEmptyPlaceholders: { events.append(.suppressedPlaceholders) },
+            refreshSessions: { events.append(.refreshedSessions) }
+        )
+
+        XCTAssertTrue(events.isEmpty)
+    }
+
+    func testUnchangedDestinationRefreshesNothing() {
+        let destination = SessionNavigationDestination.session(SessionSummary(sessionId: "session-1"))
+        var events: [DestinationReturnEvent] = []
+
+        SessionListDestinationReturn.run(
+            from: destination,
+            to: destination,
+            suppressEmptyPlaceholders: { events.append(.suppressedPlaceholders) },
+            refreshSessions: { events.append(.refreshedSessions) }
+        )
+
+        XCTAssertTrue(events.isEmpty)
+    }
+
     func testRemovingSelectedSessionClearsDestinationAndRestorationID() {
         let session = SessionSummary(sessionId: "session-1")
         var state = SessionNavigationState()
@@ -169,6 +355,15 @@ final class SessionNavigationStateTests: XCTestCase {
 
         XCTAssertEqual(reevaluatedState.destination, .utility(.settings(nil)))
         XCTAssertNil(reevaluatedState.selectedSessionID)
+    }
+
+    func testKanbanIsSelectableAsAUtilityDestination() {
+        var state = SessionNavigationState()
+
+        state.select(SessionListUtilityDestination.kanban)
+
+        XCTAssertEqual(state.destination, .utility(.kanban))
+        XCTAssertNil(state.selectedSessionID)
     }
 
     func testReselectingRootDestinationAdvancesNavigationRevision() {
@@ -281,5 +476,28 @@ final class SessionDraftPersistenceTests: XCTestCase {
             SessionDraftPersistence.load(for: "session-1", server: retainedServer, defaults: defaults),
             "Retain"
         )
+    }
+}
+
+private enum DestinationReturnEvent: Equatable {
+    case suppressedPlaceholders
+    case refreshedSessions
+}
+
+private actor SessionInitialLoadEventRecorder {
+    enum Event: Equatable {
+        case deepLinkStarted
+        case refreshStarted
+        case deepLinkFinished
+    }
+
+    private var events: [Event] = []
+
+    func record(_ event: Event) {
+        events.append(event)
+    }
+
+    func snapshot() -> [Event] {
+        events
     }
 }

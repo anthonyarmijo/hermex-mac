@@ -1,5 +1,58 @@
 import Foundation
 
+enum KanbanBulkAction: Equatable, Sendable {
+    case changeStatus(String)
+    case assignProfile(String?)
+    case setPriority(Int)
+    case archiveCards
+}
+
+struct KanbanBulkActionRequest: Equatable, Sendable {
+    let board: String
+    let cardIDs: [String]
+    let action: KanbanBulkAction
+
+    var queryItems: [URLQueryItem] {
+        [URLQueryItem(name: "board", value: board)]
+    }
+}
+
+struct KanbanBulkActionEnvelope: Decodable, Equatable, Sendable {
+    let results: [KanbanBulkActionResult]?
+    let readOnly: Bool?
+
+    enum CodingKeys: String, CodingKey { case results, readOnly }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        results = try? container.decodeIfPresent([KanbanBulkActionResult].self, forKey: .results)
+        readOnly = container.decodeLossyBoolIfPresent(forKey: .readOnly)
+    }
+}
+
+struct KanbanBulkActionResult: Decodable, Equatable, Sendable {
+    let cardID: String?
+    let ok: Bool?
+    let error: String?
+
+    enum CodingKeys: String, CodingKey {
+        case cardID = "id"
+        case ok, error
+    }
+
+    init(from decoder: Decoder) throws {
+        guard let container = try? decoder.container(keyedBy: CodingKeys.self) else {
+            cardID = nil
+            ok = nil
+            error = nil
+            return
+        }
+        cardID = container.decodeLossyStringIfPresent(forKey: .cardID)
+        ok = container.decodeLossyBoolIfPresent(forKey: .ok)
+        error = container.decodeLossyStringIfPresent(forKey: .error)
+    }
+}
+
 struct KanbanCreateCardRequest: Equatable, Sendable {
     let board: String
     let title: String
@@ -29,6 +82,36 @@ struct KanbanEditCardRequest: Equatable, Sendable {
     let priority: Int
     let assignee: String?
     let status: String?
+
+    var queryItems: [URLQueryItem] {
+        [URLQueryItem(name: "board", value: board)]
+    }
+}
+
+struct KanbanCardStatusRequest: Equatable, Sendable {
+    let cardID: String
+    let board: String
+    let status: String
+
+    var queryItems: [URLQueryItem] {
+        [URLQueryItem(name: "board", value: board)]
+    }
+}
+
+struct KanbanCardActionRequest: Equatable, Sendable {
+    let cardID: String
+    let board: String
+    let reason: String?
+
+    var queryItems: [URLQueryItem] {
+        [URLQueryItem(name: "board", value: board)]
+    }
+}
+
+struct KanbanDependencyMutationRequest: Equatable, Sendable {
+    let board: String
+    let prerequisiteID: String
+    let dependentID: String
 
     var queryItems: [URLQueryItem] {
         [URLQueryItem(name: "board", value: board)]
@@ -185,6 +268,103 @@ struct KanbanBoardRequest: Equatable, Sendable {
     }
 }
 
+struct KanbanCreateBoardRequest: Equatable, Sendable {
+    let slug: String
+    let name: String
+    let description: String
+    let icon: String
+    let color: String
+}
+
+struct KanbanEditBoardRequest: Equatable, Sendable {
+    let slug: String
+    let name: String
+    let description: String
+    let icon: String
+    let color: String
+}
+
+struct KanbanBoardMutationRequest: Equatable, Sendable {
+    let slug: String
+}
+
+struct KanbanDispatchRequest: Equatable, Sendable {
+    static let maximum = 8
+
+    let board: String
+    let dryRun: Bool
+
+    var queryItems: [URLQueryItem] {
+        [
+            URLQueryItem(name: "board", value: board),
+            URLQueryItem(name: "dry_run", value: dryRun ? "true" : "false"),
+            URLQueryItem(name: "max", value: String(Self.maximum))
+        ]
+    }
+}
+
+/// Retains only counts for the operational result categories. Array members
+/// are decoded as arbitrary JSON values and immediately discarded so upstream
+/// can change member shapes without exposing identifiers or raw payloads.
+struct KanbanDispatchResult: Decodable, Equatable, Sendable {
+    let spawned: Int?
+    let promoted: Int?
+    let reclaimed: Int?
+    let skippedUnassigned: Int?
+    let skippedNonspawnable: Int?
+    let autoBlocked: Int?
+    let timedOut: Int?
+    let crashed: Int?
+
+    var hasKnownCategory: Bool {
+        [
+            spawned, promoted, reclaimed, skippedUnassigned,
+            skippedNonspawnable, autoBlocked, timedOut, crashed
+        ].contains { $0 != nil }
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case spawned, promoted, reclaimed, skippedUnassigned, skippedNonspawnable
+        case autoBlocked, timedOut, crashed
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        spawned = Self.count(container, key: .spawned)
+        promoted = Self.count(container, key: .promoted)
+        reclaimed = Self.count(container, key: .reclaimed)
+        skippedUnassigned = Self.count(container, key: .skippedUnassigned)
+        skippedNonspawnable = Self.count(container, key: .skippedNonspawnable)
+        autoBlocked = Self.count(container, key: .autoBlocked)
+        timedOut = Self.count(container, key: .timedOut)
+        crashed = Self.count(container, key: .crashed)
+    }
+
+    private static func count(
+        _ container: KeyedDecodingContainer<CodingKeys>,
+        key: CodingKeys
+    ) -> Int? {
+        guard let value = try? container.decodeIfPresent(JSONValue.self, forKey: key) else {
+            return nil
+        }
+        switch value {
+        case let .array(members):
+            return members.count
+        case let .number(number):
+            guard number.isFinite else { return nil }
+            return Int(exactly: number.rounded(.towardZero))
+        case let .string(string):
+            return Int(string.trimmingCharacters(in: .whitespacesAndNewlines))
+        case .bool, .object, .null:
+            return nil
+        }
+    }
+}
+
+enum KanbanDispatchResponseError: Error, Equatable, Sendable {
+    case missingResultCategories
+}
+
 /// Tolerant read-only boundary for the independently-versioned Kanban bridge.
 /// Every upstream field stays optional so an added or renamed server field never
 /// prevents the rest of the shell from decoding.
@@ -204,12 +384,32 @@ struct KanbanConfiguration: Decodable, Equatable, Sendable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         columns = try? container.decodeIfPresent([String].self, forKey: .columns)
-        assignees = try? container.decodeIfPresent([String].self, forKey: .assignees)
+        assignees = (try? container.decodeIfPresent(
+            [KanbanAssigneeValue].self,
+            forKey: .assignees
+        ))?.compactMap(\.name)
         defaultTenant = container.decodeLossyStringIfPresent(forKey: .defaultTenant)
         laneByProfile = container.decodeLossyBoolIfPresent(forKey: .laneByProfile)
         includeArchivedByDefault = container.decodeLossyBoolIfPresent(forKey: .includeArchivedByDefault)
         renderMarkdown = container.decodeLossyBoolIfPresent(forKey: .renderMarkdown)
         readOnly = container.decodeLossyBoolIfPresent(forKey: .readOnly)
+    }
+}
+
+private struct KanbanAssigneeValue: Decodable {
+    let name: String?
+
+    enum CodingKeys: CodingKey { case name }
+
+    init(from decoder: Decoder) throws {
+        if let container = try? decoder.singleValueContainer(),
+           let value = try? container.decode(String.self) {
+            name = value
+            return
+        }
+
+        let container = try? decoder.container(keyedBy: CodingKeys.self)
+        name = container?.decodeLossyStringIfPresent(forKey: .name)
     }
 }
 
@@ -259,6 +459,23 @@ struct KanbanBoard: Decodable, Equatable, Sendable {
     }
 }
 
+struct KanbanBoardMutationEnvelope: Decodable, Equatable, Sendable {
+    let board: KanbanBoard?
+    let current: String?
+    let readOnly: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case board, current, readOnly
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        board = try? container.decodeIfPresent(KanbanBoard.self, forKey: .board)
+        current = container.decodeLossyStringIfPresent(forKey: .current)
+        readOnly = container.decodeLossyBoolIfPresent(forKey: .readOnly)
+    }
+}
+
 struct KanbanBoardSnapshot: Decodable, Equatable, Sendable {
     let columns: [KanbanColumn]?
     let tenants: [String]?
@@ -271,6 +488,24 @@ struct KanbanBoardSnapshot: Decodable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case columns, tenants, assignees, filters, changed, readOnly
         case latestEventID = "latestEventId"
+    }
+
+    init(
+        columns: [KanbanColumn]?,
+        tenants: [String]?,
+        assignees: [String]?,
+        filters: KanbanAppliedFilters?,
+        changed: Bool?,
+        latestEventID: Int?,
+        readOnly: Bool?
+    ) {
+        self.columns = columns
+        self.tenants = tenants
+        self.assignees = assignees
+        self.filters = filters
+        self.changed = changed
+        self.latestEventID = latestEventID
+        self.readOnly = readOnly
     }
 
     init(from decoder: Decoder) throws {
@@ -292,6 +527,11 @@ struct KanbanColumn: Decodable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case name
         case cards = "tasks"
+    }
+
+    init(name: String?, cards: [KanbanCard]?) {
+        self.name = name
+        self.cards = cards
     }
 
     init(from decoder: Decoder) throws {
@@ -334,6 +574,50 @@ struct KanbanCard: Decodable, Equatable, Sendable {
         case workerID = "workerPid"
     }
 
+    init(
+        cardID: String?,
+        title: String?,
+        status: KanbanStatus?,
+        assignee: String?,
+        body: String?,
+        tenant: String?,
+        priority: Int?,
+        commentCount: Int?,
+        linkCounts: KanbanLinkCounts?,
+        ageSeconds: Double?,
+        createdAt: String?,
+        updatedAt: String?,
+        workspaceKind: String?,
+        workspacePath: String?,
+        skills: [String]?,
+        maxRuntimeSeconds: Int?,
+        currentRunID: String?,
+        claimLock: String?,
+        claimExpires: String?,
+        workerID: String?
+    ) {
+        self.cardID = cardID
+        self.title = title
+        self.status = status
+        self.assignee = assignee
+        self.body = body
+        self.tenant = tenant
+        self.priority = priority
+        self.commentCount = commentCount
+        self.linkCounts = linkCounts
+        self.ageSeconds = ageSeconds
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.workspaceKind = workspaceKind
+        self.workspacePath = workspacePath
+        self.skills = skills
+        self.maxRuntimeSeconds = maxRuntimeSeconds
+        self.currentRunID = currentRunID
+        self.claimLock = claimLock
+        self.claimExpires = claimExpires
+        self.workerID = workerID
+    }
+
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         cardID = container.decodeLossyStringIfPresent(forKey: .cardID)
@@ -370,6 +654,31 @@ struct KanbanCard: Decodable, Equatable, Sendable {
         default:
             return .none
         }
+    }
+
+    func replacingStatus(_ status: String) -> KanbanCard {
+        KanbanCard(
+            cardID: cardID,
+            title: title,
+            status: KanbanStatus(rawValue: status),
+            assignee: assignee,
+            body: body,
+            tenant: tenant,
+            priority: priority,
+            commentCount: commentCount,
+            linkCounts: linkCounts,
+            ageSeconds: ageSeconds,
+            createdAt: createdAt,
+            updatedAt: updatedAt,
+            workspaceKind: workspaceKind,
+            workspacePath: workspacePath,
+            skills: skills,
+            maxRuntimeSeconds: maxRuntimeSeconds,
+            currentRunID: status == "running" ? currentRunID : nil,
+            claimLock: status == "running" ? claimLock : nil,
+            claimExpires: status == "running" ? claimExpires : nil,
+            workerID: status == "running" ? workerID : nil
+        )
     }
 }
 
@@ -410,6 +719,47 @@ struct KanbanCardMutationEnvelope: Decodable, Equatable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         card = try? container.decodeIfPresent(KanbanCard.self, forKey: .card)
         readOnly = container.decodeLossyBoolIfPresent(forKey: .readOnly)
+    }
+}
+
+struct KanbanDependencyMutationEnvelope: Decodable, Equatable, Sendable {
+    let ok: Bool?
+    let changed: Bool?
+    let prerequisiteID: String?
+    let dependentID: String?
+    let readOnly: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case ok, changed, readOnly
+        case prerequisiteID = "parentId"
+        case dependentID = "childId"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        ok = container.decodeLossyBoolIfPresent(forKey: .ok)
+        changed = container.decodeLossyBoolIfPresent(forKey: .changed)
+        prerequisiteID = container.decodeLossyStringIfPresent(forKey: .prerequisiteID)
+        dependentID = container.decodeLossyStringIfPresent(forKey: .dependentID)
+        readOnly = container.decodeLossyBoolIfPresent(forKey: .readOnly)
+    }
+}
+
+enum KanbanDependencyMutationValidator {
+    static func validate(
+        _ envelope: KanbanDependencyMutationEnvelope,
+        request: KanbanDependencyMutationRequest
+    ) throws {
+        guard envelope.ok == true,
+              normalized(envelope.prerequisiteID) == normalized(request.prerequisiteID),
+              normalized(envelope.dependentID) == normalized(request.dependentID) else {
+            throw KanbanContractViolation.missingCardIdentity
+        }
+    }
+
+    private static func normalized(_ value: String?) -> String? {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed?.isEmpty == false ? trimmed : nil
     }
 }
 
@@ -473,7 +823,11 @@ struct KanbanDetailEvent: Decodable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case eventID = "id"
         case cardID = "taskId"
-        case runID, kind, createdAt, payload
+        // `runID` without a raw value spells the key "runID", but the decoder
+        // runs `.convertFromSnakeCase`, which turns the server's `run_id` into
+        // "runId" — so this never matched and `runID` was always nil.
+        case runID = "runId"
+        case kind, createdAt, payload
     }
 
     init(from decoder: Decoder) throws {
@@ -538,8 +892,9 @@ struct KanbanDispatchRun: Decodable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case runID = "id"
         case alternateRunID = "runId"
-        case status, outcome, summary, error, startedAt, finishedAt
+        case status, outcome, summary, error, startedAt, finishedAt, endedAt
         case workerID = "worker"
+        case workerPID = "workerPid"
         case logTail
     }
 
@@ -552,8 +907,10 @@ struct KanbanDispatchRun: Decodable, Equatable, Sendable {
         summary = container.decodeLossyStringIfPresent(forKey: .summary)
         error = container.decodeLossyStringIfPresent(forKey: .error)
         startedAt = container.decodeLossyStringIfPresent(forKey: .startedAt)
-        finishedAt = container.decodeLossyStringIfPresent(forKey: .finishedAt)
-        workerID = container.decodeLossyStringIfPresent(forKey: .workerID)
+        finishedAt = container.decodeLossyStringIfPresent(forKey: .endedAt)
+            ?? container.decodeLossyStringIfPresent(forKey: .finishedAt)
+        workerID = container.decodeLossyStringIfPresent(forKey: .workerPID)
+            ?? container.decodeLossyStringIfPresent(forKey: .workerID)
         logTail = container.decodeLossyStringIfPresent(forKey: .logTail)
     }
 
@@ -674,7 +1031,10 @@ struct KanbanAssigneeHistory: Decodable, Equatable, Sendable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        assignees = try? container.decodeIfPresent([String].self, forKey: .assignees)
+        assignees = (try? container.decodeIfPresent(
+            [KanbanAssigneeValue].self,
+            forKey: .assignees
+        ))?.compactMap(\.name)
     }
 }
 

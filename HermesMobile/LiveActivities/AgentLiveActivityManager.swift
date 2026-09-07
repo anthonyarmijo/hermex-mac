@@ -34,7 +34,11 @@ struct OrphanedLiveActivity: Equatable {
 
 @MainActor
 protocol AgentLiveActivityManaging: AnyObject {
-    func start(sessionID: String, sessionTitle: String, streamID: String?)
+    /// `startedAt` is when the *run* began, not when the widget was created: the
+    /// coordinator passes the server-seeded run start so the widget's system
+    /// elapsed timer counts the same span as the in-app "Working for" label
+    /// (#406). Callers without a seeded start pass `Date()`.
+    func start(sessionID: String, sessionTitle: String, streamID: String?, startedAt: Date)
     func update(_ event: AgentLiveActivityEvent)
     func markStale()
     func end(status: AgentRunActivityStatus, activity: String, errorSummary: String?)
@@ -71,7 +75,7 @@ final class AgentLiveActivityManager: AgentLiveActivityManaging {
         _ = minimumUpdateInterval
     }
 
-    func start(sessionID: String, sessionTitle: String, streamID: String?) {
+    func start(sessionID: String, sessionTitle: String, streamID: String?, startedAt: Date = Date()) {
         _ = sessionID
         _ = sessionTitle
         activeConnectedStreamID = AgentLiveActivityReusePolicy.normalizedStreamID(streamID)
@@ -120,7 +124,7 @@ final class AgentLiveActivityManager: AgentLiveActivityManaging {
         self.minimumUpdateInterval = minimumUpdateInterval
     }
 
-    func start(sessionID: String, sessionTitle: String, streamID: String?) {
+    func start(sessionID: String, sessionTitle: String, streamID: String?, startedAt: Date = Date()) {
         let normalizedSessionID = sessionID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedSessionID.isEmpty else { return }
         let normalizedStreamID = AgentLiveActivityReusePolicy.normalizedStreamID(streamID)
@@ -137,7 +141,11 @@ final class AgentLiveActivityManager: AgentLiveActivityManaging {
                     status: state.status,
                     currentActivity: state.currentActivity,
                     responseExcerpt: state.responseExcerpt,
-                    startedAt: state.startedAt,
+                    // Earliest known start wins: the reused activity may have been
+                    // started from a discovery stamp before the coordinator learned
+                    // the server's earlier `pending_started_at`, and the widget timer
+                    // must not run behind the in-app one.
+                    startedAt: min(state.startedAt, startedAt),
                     updatedAt: Date(),
                     isStale: false,
                     isFinal: false,
@@ -152,7 +160,6 @@ final class AgentLiveActivityManager: AgentLiveActivityManaging {
         rawResponseText = ""
         currentSessionID = normalizedSessionID
         currentStreamID = normalizedStreamID
-        let startedAt = Date()
         let state = AgentRunActivityStateReducer.initialState(
             sessionID: normalizedSessionID,
             sessionTitle: sessionTitle,
@@ -177,6 +184,12 @@ final class AgentLiveActivityManager: AgentLiveActivityManaging {
                 lifecycle: lifecycle
             )
         }
+    }
+
+    /// Test seam: the ActivityKit-backed activity is unreachable in unit tests, so
+    /// the reducer state it mirrors is how tests observe `start`/`update` results.
+    func currentStateForTesting() -> AgentRunActivityAttributes.ContentState? {
+        currentState
     }
 
     func update(_ event: AgentLiveActivityEvent) {

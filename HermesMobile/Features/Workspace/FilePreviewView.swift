@@ -2,11 +2,16 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
+/// One workspace file. Markdown keeps the chat renderer; every other text file
+/// draws on the source surface with a gutter, syntax colour, and an optional
+/// starting line. Images and binaries keep their own previews.
 struct FilePreviewView: View {
     let onAPIError: (Error) -> Void
 
     private let entry: WorkspaceEntry
+    private let initialLine: Int?
     @State private var viewModel: FilePreviewViewModel
+    @State private var selectableText: SelectableTextPresentation?
     @State private var exportDocument = ExportedFileDocument(data: Data())
     @State private var exportContentType = UTType.data
     @State private var exportFilename = String(localized: "Hermes File")
@@ -14,11 +19,28 @@ struct FilePreviewView: View {
     @State private var exportErrorMessage: String?
     @State private var saveConfirmationMessage: String?
     @State private var isSavingToPhotos = false
+    @AppStorage(AppHaptics.isEnabledKey) private var isHapticsEnabled = true
+    @AppStorage(SourceFileSurface.wrapsLinesKey) private var wrapsLines = false
 
-    init(session: SessionSummary, server: URL, entry: WorkspaceEntry, onAPIError: @escaping (Error) -> Void) {
+    /// `initialLine` is one-based; the source surface scrolls to it and highlights it.
+    /// `prefetchedFile` is a text fetch the file tree already started; the first load reuses it.
+    init(
+        session: SessionSummary,
+        server: URL,
+        entry: WorkspaceEntry,
+        initialLine: Int? = nil,
+        prefetchedFile: Task<FileResponse, Error>? = nil,
+        onAPIError: @escaping (Error) -> Void
+    ) {
         self.entry = entry
+        self.initialLine = initialLine
         self.onAPIError = onAPIError
-        _viewModel = State(initialValue: FilePreviewViewModel(session: session, server: server, path: entry.path ?? ""))
+        _viewModel = State(initialValue: FilePreviewViewModel(
+            session: session,
+            server: server,
+            path: entry.path ?? "",
+            prefetchedFile: prefetchedFile
+        ))
     }
 
     var body: some View {
@@ -51,6 +73,10 @@ struct FilePreviewView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
+                if case let .text(file) = viewModel.preview, !isMarkdownFile {
+                    sourceActionsMenu(content: file.content ?? "")
+                }
+
                 if viewModel.canSaveImageToPhotos {
                     Button {
                         Task { await saveImageToPhotos() }
@@ -88,6 +114,9 @@ struct FilePreviewView: View {
                 exportErrorMessage = error.localizedDescription
             }
         }
+        .fullScreenCover(item: $selectableText) { selection in
+            SelectableTextPresentationView(selection: selection)
+        }
         .alert(
             "Export Failed",
             isPresented: Binding(
@@ -124,11 +153,35 @@ struct FilePreviewView: View {
         }
     }
 
+    /// Wrap, Copy, and Select Text for source files. The drawn surface owns long
+    /// press for line selection, so these live in the toolbar instead of a context menu.
+    private func sourceActionsMenu(content: String) -> some View {
+        Menu {
+            Toggle("Wrap Lines", systemImage: "text.justify.leading", isOn: $wrapsLines)
+            Button {
+                UIPasteboard.general.string = content
+                ChatHaptics.copied(isEnabled: isHapticsEnabled)
+            } label: {
+                Label("Copy", systemImage: "doc.on.doc")
+            }
+            Button {
+                selectableText = SelectableTextPresentation(id: "file-preview:\(displayPath)", text: content)
+            } label: {
+                Label("Select Text", systemImage: "text.cursor")
+            }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+        }
+        .accessibilityLabel("File actions")
+    }
+
     @ViewBuilder
     private func previewContent(_ preview: FilePreviewContent) -> some View {
         switch preview {
+        case let .text(file) where isMarkdownFile:
+            markdownContent(file.content ?? "")
         case let .text(file):
-            fileContent(file.content ?? "")
+            sourceContent(file)
         case let .image(file):
             imageContent(file.data)
         case .audio:
@@ -154,19 +207,58 @@ struct FilePreviewView: View {
         }
     }
 
-    private func fileContent(_ content: String) -> some View {
-        ScrollView([.vertical, .horizontal]) {
+    private func sourceContent(_ file: FileResponse) -> some View {
+        VStack(spacing: 0) {
+            fileHeader
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal)
+                .padding(.vertical, 8)
+            Divider()
+            SourceFileSurface(
+                content: file.content ?? "",
+                path: displayPath,
+                serverLanguage: file.language,
+                targetLine: initialLine,
+                isRefreshing: viewModel.isLoading,
+                onRefresh: { Task { await loadFile() } }
+            )
+        }
+        .background(Color(.systemBackground))
+    }
+
+    private func markdownContent(_ content: String) -> some View {
+        ScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 fileHeader
-
-                Text(content)
-                    .font(.system(.body, design: .monospaced))
-                    .textSelection(.enabled)
+                MarkdownRenderer(content: content, isStreaming: false)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .padding()
         }
+        .contentShape(Rectangle())
+        .contextMenu {
+            Button {
+                selectableText = SelectableTextPresentation(
+                    id: "file-preview:\(displayPath)",
+                    text: content
+                )
+            } label: {
+                Label("Select Text", systemImage: "text.cursor")
+            }
+
+            Button {
+                UIPasteboard.general.string = content
+                ChatHaptics.copied(isEnabled: isHapticsEnabled)
+            } label: {
+                Label("Copy", systemImage: "doc.on.doc")
+            }
+        }
         .background(Color(.systemBackground))
+    }
+
+    private var isMarkdownFile: Bool {
+        guard let path = entry.path else { return false }
+        return ["md", "markdown", "mdown", "mkd"].contains((path as NSString).pathExtension.lowercased())
     }
 
     @ViewBuilder

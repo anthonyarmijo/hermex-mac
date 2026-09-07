@@ -232,6 +232,33 @@ final class CacheStoreTests: XCTestCase {
         XCTAssertEqual(cached.filter(hidden.shows).compactMap(\.sessionId), ["ordinary-cli"])
     }
 
+    func testCachedSessionsPreserveExternalSourceLabelAndImportClassification() async throws {
+        let context = try makeContext()
+        let serverURL = URL(string: "https://example.test")!
+        let cachedAt = Date(timeIntervalSince1970: 1_770_000_000)
+        let session = SessionSummary(
+            sessionId: "telegram",
+            title: "Support chat",
+            archived: false,
+            isCliSession: true,
+            rawSource: "telegram",
+            sessionSource: "messaging",
+            sourceLabel: "Telegram"
+        )
+
+        try await TestCacheStore.cacheSession(session, serverURL: serverURL, in: context, cachedAt: cachedAt)
+
+        let cached = try XCTUnwrap(
+            CacheStore.cachedSessions(
+                serverURL: serverURL,
+                in: context,
+                now: cachedAt.addingTimeInterval(60)
+            ).first
+        )
+        XCTAssertTrue(cached.requiresExternalImport)
+        XCTAssertEqual(cached.sourceDisplayLabel, "Telegram")
+    }
+
     func testCacheMessagesWritesLoadedWindowAndRemovesStaleMessages() async throws {
         let context = try makeContext()
         let serverURL = URL(string: "https://example.test")!
@@ -466,6 +493,37 @@ final class CacheStoreTests: XCTestCase {
 
         XCTAssertEqual(cachedMessages.map(\.messageId), ["m2", "m1"])
         XCTAssertEqual(cachedMessages.first?.reasoning, "Cached reasoning.")
+    }
+
+    func testAssistantTurnTpsDecodesAndRoundTripsThroughCache() async throws {
+        let context = try makeContext()
+        let serverURL = URL(string: "https://example.test")!
+        let cachedAt = Date(timeIntervalSince1970: 1_770_000_000)
+        let message = try JSONDecoder().decode(
+            ChatMessage.self,
+            from: Data(#"{"role":"assistant","content":"Done","messageId":"m1","_turnTps":48.75}"#.utf8)
+        )
+
+        XCTAssertEqual(message.turnTps, 48.75)
+
+        try await TestCacheStore.cacheMessages(
+            [message],
+            serverURL: serverURL,
+            sessionID: "abc123",
+            in: context,
+            cachedAt: cachedAt
+        )
+
+        XCTAssertEqual(try fetchCachedMessages(in: context).first?.turnTps, 48.75)
+        XCTAssertEqual(
+            try CacheStore.cachedMessages(
+                serverURL: serverURL,
+                sessionID: "abc123",
+                in: context,
+                now: cachedAt.addingTimeInterval(60)
+            ).first?.turnTps,
+            48.75
+        )
     }
 
     func testCachedMessagesNewestLimitReturnsNewestPageInAscendingOrderWithoutDeletingHistory() async throws {
