@@ -687,7 +687,7 @@ struct ChatView: View {
     }
 
     private var transcriptMediaCacheNamespace: String {
-        "\(server.absoluteString)|\(transcriptMediaSessionID ?? "local:\(session.id)")"
+        ImageCacheIdentity.namespace(server: server, session: transcriptMediaSessionID ?? "local:\(session.id)")
     }
 
     /// Extracted from `body` so the view's single chained expression stays
