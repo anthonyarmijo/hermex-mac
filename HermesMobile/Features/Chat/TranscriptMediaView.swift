@@ -612,76 +612,22 @@ struct ImageCacheDiagnosticSnapshot: Equatable, Sendable {
     let costBytes: Int
     let hits: Int
     let misses: Int
+    var evictions: Int = 0
+    var inFlight: Int = 0
 }
 
 actor TranscriptMediaImageCache {
     static let shared = TranscriptMediaImageCache()
+    private let cache = BoundedImageCache(policy: .media)
 
-    private var cache: [TranscriptMediaImageCacheKey: UIImage] = [:]
-    private var inFlight: [TranscriptMediaImageCacheKey: Task<UIImage?, Never>] = [:]
-    private var hits = 0
-    private var misses = 0
-
-    func image(
-        for reference: TranscriptMediaReference,
-        cacheNamespace: String,
-        loadMediaImage: @escaping (TranscriptMediaReference) async -> Data?
-    ) async -> UIImage? {
-        let key = TranscriptMediaImageCacheKey(namespace: cacheNamespace, reference: reference)
-        if let cached = cache[key] {
-            hits += 1
-            TranscriptPerformanceSignpost.event("Image cache lookup hit")
-            return cached
-        }
-
-        if let task = inFlight[key] {
-            hits += 1
-            TranscriptPerformanceSignpost.event("Image cache lookup hit")
-            return await task.value
-        }
-
-        misses += 1
-        TranscriptPerformanceSignpost.event("Image cache lookup miss")
-
-        let task = Task<UIImage?, Never> {
-            let loadSignpostID = TranscriptPerformanceSignpost.begin("Image load")
-            guard let data = await loadMediaImage(reference) else {
-                TranscriptPerformanceSignpost.end("Image load", signpostID: loadSignpostID)
-                return nil
-            }
-            TranscriptPerformanceSignpost.end("Image load", signpostID: loadSignpostID, count: data.count)
-            return TranscriptPerformanceSignpost.interval("Image decode", count: data.count) {
-                UIImage(data: data)
-            }
-        }
-
-        inFlight[key] = task
-        let image = await task.value
-        inFlight[key] = nil
-
-        if let image {
-            cache[key] = image
-        }
-        return image
+    func image(for reference: TranscriptMediaReference, cacheNamespace: String,
+               loadMediaImage: @escaping (TranscriptMediaReference) async -> Data?) async -> UIImage? {
+        await cache.image(namespace: cacheNamespace, resource: reference.id) { await loadMediaImage(reference) }
     }
 
-    func diagnosticSnapshot() -> ImageCacheDiagnosticSnapshot {
-        ImageCacheDiagnosticSnapshot(
-            entries: cache.count,
-            costBytes: cache.values.reduce(0) { partial, image in
-                partial + (image.cgImage.map { $0.bytesPerRow * $0.height } ?? 0)
-            },
-            hits: hits,
-            misses: misses
-        )
-    }
-
-    func resetForDiagnostics() {
-        cache = [:]
-        inFlight = [:]
-        hits = 0
-        misses = 0
-    }
+    func diagnosticSnapshot() async -> ImageCacheDiagnosticSnapshot { await cache.diagnosticSnapshot() }
+    func resetForDiagnostics() async { await cache.resetForDiagnostics() }
+    func removeAll() async { await cache.removeAll() }
 }
 
 struct TranscriptMediaImageCacheKey: Hashable {
@@ -689,8 +635,8 @@ struct TranscriptMediaImageCacheKey: Hashable {
     let referenceID: String
 
     init(namespace: String, reference: TranscriptMediaReference) {
-        self.namespace = namespace
-        referenceID = reference.id
+        self.namespace = PrivateImageCacheKey.digest(namespace)
+        referenceID = PrivateImageCacheKey.digest(reference.id)
     }
 }
 

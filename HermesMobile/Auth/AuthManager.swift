@@ -54,7 +54,9 @@ final class AuthManager {
         return passkeyOnlyMessage
     }
 
-    private(set) var state: State = .unconfigured
+    private(set) var state: State = .unconfigured {
+        didSet { if oldValue != state { ImageCacheIdentity.invalidate() } }
+    }
     private(set) var lastErrorMessage: String?
 
     /// Observable snapshot of every configured server, mirrored from the
@@ -282,6 +284,7 @@ final class AuthManager {
     /// (`persist: true`), since Keychain writes are slow enough to stutter typing
     /// (#255).
     func updateCustomHeaders(_ headers: [CustomHeader], persist: Bool = true) {
+        if headerStore.snapshot() != headers.sanitizedForStorage() { ImageCacheIdentity.invalidate() }
         headerStore.replace(with: headers.sanitizedForStorage())
         // Persist under the active server's scoped key. The Settings editor is only
         // reachable while signed in, so a server is always present here; if somehow
@@ -316,6 +319,7 @@ final class AuthManager {
     /// headers, and cookies — leaving the active server's auth untouched (#17).
     func removeServer(_ account: ServerAccount) async {
         guard let serverURL = URL(string: account.urlString) else { return }
+        ImageCacheIdentity.invalidate()
         let isActive = state.server?.absoluteString == account.id
 
         if isActive {

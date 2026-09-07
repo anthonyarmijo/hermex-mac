@@ -80,10 +80,11 @@ enum ImagePreviewDownsampler {
             return nil
         }
 
+        let hasAlpha = [.first, .last, .premultipliedFirst, .premultipliedLast].contains(thumbnail.alphaInfo)
         let output = NSMutableData()
         guard let destination = CGImageDestinationCreateWithData(
             output,
-            "public.jpeg" as CFString,
+            (hasAlpha ? "public.png" : "public.jpeg") as CFString,
             1,
             nil
         ) else {

@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		B3BB87838A614B5DAE0B19F2 /* BoundedImageCacheTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48F260B93BBF4A3EBBDC780C /* BoundedImageCacheTests.swift */; };
+		47C3C35380494DD8A2884F87 /* BoundedImageCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54390C8C056B42DBA149B5AB /* BoundedImageCache.swift */; };
 		2D0902D998FD467F8C4843F1 /* ConnectionStatusTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FD75FC0A675467EA3112B25 /* ConnectionStatusTests.swift */; };
 		7BD319C3C0AF4CCE9F11ECBC /* ConnectionStatusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E7922F67CDF442CBDE35208 /* ConnectionStatusView.swift */; };
 		1F9AE73C58C343B8986576F9 /* ConnectionStatusModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F38F05753B94EC7B1474399 /* ConnectionStatusModel.swift */; };
@@ -467,6 +469,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		48F260B93BBF4A3EBBDC780C /* BoundedImageCacheTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoundedImageCacheTests.swift; sourceTree = "<group>"; };
+		54390C8C056B42DBA149B5AB /* BoundedImageCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoundedImageCache.swift; sourceTree = "<group>"; };
 		4FD75FC0A675467EA3112B25 /* ConnectionStatusTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionStatusTests.swift; sourceTree = "<group>"; };
 		3E7922F67CDF442CBDE35208 /* ConnectionStatusView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionStatusView.swift; sourceTree = "<group>"; };
 		9F38F05753B94EC7B1474399 /* ConnectionStatusModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionStatusModel.swift; sourceTree = "<group>"; };
@@ -983,6 +987,7 @@
 		1A2B3C4D5E6F700000000034 /* HermesMobileTests */ = {
 			isa = PBXGroup;
 			children = (
+				48F260B93BBF4A3EBBDC780C /* BoundedImageCacheTests.swift */,
 				4FD75FC0A675467EA3112B25 /* ConnectionStatusTests.swift */,
 				C0BA5E000000000000000002 /* PerformanceBaselineFixtures.swift */,
 				C0CA71000000000000000004 /* PlatformCapabilitiesTests.swift */,
@@ -1163,6 +1168,7 @@
 		1A2B3C4D5E6F7000000000C2 /* Models */ = {
 			isa = PBXGroup;
 			children = (
+				54390C8C056B42DBA149B5AB /* BoundedImageCache.swift */,
 				1A2B3C4D5E6F7000000000B4 /* ServerInfo.swift */,
 				1A2B3C4D5E6F7000000000BB /* Session.swift */,
 				1A2B3C4D5E6F7000000000BA /* ChatMessage.swift */,
@@ -1777,6 +1783,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				47C3C35380494DD8A2884F87 /* BoundedImageCache.swift in Sources */,
 				7BD319C3C0AF4CCE9F11ECBC /* ConnectionStatusView.swift in Sources */,
 				1F9AE73C58C343B8986576F9 /* ConnectionStatusModel.swift in Sources */,
 				1A2B3C4D5E6F700000000001 /* HermesMobileApp.swift in Sources */,
@@ -2044,6 +2051,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B3BB87838A614B5DAE0B19F2 /* BoundedImageCacheTests.swift in Sources */,
 				2D0902D998FD467F8C4843F1 /* ConnectionStatusTests.swift in Sources */,
 				C0BA5E000000000000000001 /* PerformanceBaselineFixtures.swift in Sources */,
 				10CA110C0DE000000000C001 /* LocalizationCatalogTests.swift in Sources */,

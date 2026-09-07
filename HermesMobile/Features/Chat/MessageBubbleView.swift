@@ -339,6 +339,7 @@ struct MessageBubbleView: View {
                         GridAttachmentCell(
                             attachment: item.attachment,
                             localData: item.localData,
+                            cacheNamespace: transcriptMediaCacheNamespace,
                             loadAttachmentImage: loadAttachmentImage,
                             onPreviewAttachment: onPreviewAttachment,
                             size: cellSize
@@ -459,6 +460,7 @@ private extension [TranscriptMediaSegment] {
 private struct GridAttachmentCell: View {
     let attachment: MessageAttachment
     let localData: Data?
+    let cacheNamespace: String
     let loadAttachmentImage: ((String) async -> Data?)?
     let onPreviewAttachment: ((MessageAttachment, Data?) -> Void)?
     let size: CGFloat
@@ -519,8 +521,10 @@ private struct GridAttachmentCell: View {
             } else if let path = resolvedPath, let loadAttachmentImage {
                 RemoteAttachmentImage(
                     path: path,
+                    cacheNamespace: cacheNamespace,
                     loadAttachmentImage: loadAttachmentImage
                 )
+                .id(PrivateImageCacheKey(namespace: cacheNamespace, resource: path))
                 .frame(width: size, height: size)
                 .clipped()
             } else {
@@ -649,6 +653,7 @@ private struct GridAttachmentCell: View {
 /// cookie. Deduplicates concurrent requests and caches in memory.
 private struct RemoteAttachmentImage: View {
     let path: String
+    let cacheNamespace: String
     let loadAttachmentImage: (String) async -> Data?
     @State private var image: UIImage?
     @State private var didAttempt = false
@@ -665,9 +670,12 @@ private struct RemoteAttachmentImage: View {
                 fallbackImage
             }
         }
-        .task(id: path) {
+        .task(id: PrivateImageCacheKey(namespace: cacheNamespace, resource: path)) {
+            image = nil
+            didAttempt = false
             let loaded = await AttachmentImageCache.shared.image(
                 for: path,
+                cacheNamespace: cacheNamespace,
                 loadAttachmentImage: loadAttachmentImage
             )
             guard !Task.isCancelled else { return }
@@ -700,44 +708,17 @@ private struct RemoteAttachmentImage: View {
 
 /// In-memory image cache that delegates loading to the authenticated client.
 /// Deduplicates concurrent requests for the same path.
-private actor AttachmentImageCache {
+actor AttachmentImageCache {
     static let shared = AttachmentImageCache()
+    private let cache = BoundedImageCache(policy: .attachments)
 
-    private var cache: [String: UIImage] = [:]
-    private var inFlight: [String: Task<UIImage?, Never>] = [:]
-
-    func image(
-        for path: String,
-        loadAttachmentImage: @escaping (String) async -> Data?
-    ) async -> UIImage? {
-        if let cached = cache[path] {
-            return cached
-        }
-
-        if let task = inFlight[path] {
-            return await task.value
-        }
-
-        let task = Task<UIImage?, Never> {
-            guard let data = await loadAttachmentImage(path) else {
-                return nil
-            }
-            let previewData = ImagePreviewDownsampler.previewData(
-                from: data,
-                maxPixelSize: ImagePreviewDownsampler.attachmentMaxPixelSize
-            ) ?? data
-            return UIImage(data: previewData)
-        }
-
-        inFlight[path] = task
-        let image = await task.value
-        inFlight[path] = nil
-
-        if let image {
-            cache[path] = image
-        }
-        return image
+    func image(for path: String, cacheNamespace: String,
+               loadAttachmentImage: @escaping (String) async -> Data?) async -> UIImage? {
+        await cache.image(namespace: cacheNamespace, resource: path) { await loadAttachmentImage(path) }
     }
+
+    func removeAll() async { await cache.removeAll() }
+    func diagnosticSnapshot() async -> ImageCacheDiagnosticSnapshot { await cache.diagnosticSnapshot() }
 }
 
 enum ResponseSpeedFormatter {

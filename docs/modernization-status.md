@@ -164,3 +164,18 @@ three commits after v1.6.0, omits the applied gesture correction, and leaves two
 for future triage: provider account limits in Usage and the 1.7 release train.
 These post-stable additions are outside this run's fixed stable target. App
 suites were not repeated for this scripts/workflow-only slice.
+
+## Bounded images (#15)
+
+Attachment and inline-media caches now use deterministic count/decoded-byte
+LRU limits, ImageIO downsampling, private server/session/authentication keys,
+independent cancellation of shared consumers and memory-pressure invalidation.
+Link previews also have an explicit byte limit; large transparent thumbnails
+preserve alpha. Original export remains separate. Ten focused Mac tests and the
+full Mac suite pass (2359 tests, four skips, zero failures). All ten focused
+iPhone tests pass, and the signed Mac app passes strict signature verification.
+
+The 48-unique-4K-image fixture stabilizes at 60 MiB retained decoded pixels,
+five entries and 43 evictions. Detailed measurements and limitations are in
+[the image report](performance/bounded-images-2026-09-07.md). Normal signed UI
+checks still require the locked desktop to be available.
