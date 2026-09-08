@@ -1,5 +1,7 @@
 ## Highlights
 
+- Expand the Mac window to use your available desktop space, including larger displays, and return from full screen without the old size cap.
+
 - Long responses stream more efficiently, reducing repeated text processing as replies grow.
 - Large offline-cache updates run in the background and use fewer database operations, reducing work competing with the interface.
 
