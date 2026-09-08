@@ -9,9 +9,9 @@ The selected scope is [the goal prompt](mac-modernization-goal-prompt.md).
 | --- | --- | --- |
 | Published Mac | mac-v1.1.0, master `aa0e10a` | Published |
 | Recovery candidate | `6ceaa5c`, PR #6 | Green; awaiting promotion approval |
-| Selected upstream client | v1.6.0, `2eeb25651e91635ecd01850aaa50bc70af643876` | Integrated locally; final verification in progress |
+| Selected upstream client | v1.6.0, `2eeb25651e91635ecd01850aaa50bc70af643876` | Integrated in PR #11; full Mac/iPhone suites pass |
 | Existing shared client ancestor | `77e8747c3a15ee6bb3d7b40783d9d7fbd6cb28e3` | July 16 baseline |
-| Running backend checkout | `07118df5` | Authenticated health/auth/settings checked; wider contracts pending |
+| Running backend checkout | `07118df5` | 27 production read responses decoded; mutation/SSE smoke pending |
 | Validated backend pin | `f1d399b437c1ca7fe4b6d2093aebe334c32f34a3` | Unchanged; not the running backend version |
 
 ## Selected work
@@ -207,3 +207,39 @@ pending manual matrix are in [the idiom report](performance/mac-idiom-experiment
 The retained default mode passes the full Mac suite (2366 tests, four skips,
 zero failures) and all three focused iPhone platform tests. Both experimental
 app signatures verify. Git PR #18 CI is green.
+
+## Integrated validation and release preparation (#21)
+
+All required feature implementations are committed in the review stack. The
+final candidate includes stable upstream v1.6.0 plus the explicitly assessed
+composer selection correction. Published Mac 1.1.0 and protected dev/master
+remain unchanged. The weekly client watcher activates only after its workflow
+reaches the default branch.
+
+The final signed Mac suite has 2,367 total tests (2,362 passed, five skipped),
+and the full iPhone suite has 2,365 (2,360 passed, five skipped); neither has a
+failure. Eleven maintenance checks pass. The opt-in live compatibility test
+decoded 27 responses using production models and isolated cookies; the temporary
+credential input was removed. The broader backend tested pin remains unchanged.
+
+Matched before/candidate measurements, five fresh-process streaming repeats and
+synthetic Time Profiler captures are complete. The Git and bounded image gains
+coexist with higher large-cache-write and short-stream timings; those concerns
+are recorded rather than hidden. The allocation trace is retained, but the CLI
+export supplied no usable allocation-size/lifetime table. Normal-app startup,
+image-heavy scrolling, resizing, accessibility and second-display/remote-Mac
+checks remain pending because the desktop is locked or the physical device is
+not available. The goal remains open for those missing validation dependencies.
+
+Review deliverables:
+
+- [Feature and version matrix](modernization-feature-matrix.md).
+- [Integrated before/after performance and profiler evidence](performance/INTEGRATED_MODERNIZATION_2026-09-07.md).
+- [Running-server compatibility and opt-in read harness](server-compatibility-2026-09-07.md).
+- [Mac 1.1.1 patch notes](releases/mac-v1.1.1.md) and [Mac 1.2.0 feature notes](releases/mac-v1.2.0.md).
+- [Exact PR heads, promotion sequence and consolidated manual checklist](mac-modernization-approval-package.md).
+
+Routine engineering did not stop for repeated permission gates. UI-dependent
+PRs remain draft; one reviewed approval can cover the complete protected
+promotion and release sequence once the required checks pass. No release,
+backend upgrade or network/service change has been performed.

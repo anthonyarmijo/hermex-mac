@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		76BBD56670B148BE9114853D /* LiveServerReadCompatibilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8ECBDF927EFB4D99855CAC92 /* LiveServerReadCompatibilityTests.swift */; };
 		B3BB87838A614B5DAE0B19F2 /* BoundedImageCacheTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48F260B93BBF4A3EBBDC780C /* BoundedImageCacheTests.swift */; };
 		47C3C35380494DD8A2884F87 /* BoundedImageCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54390C8C056B42DBA149B5AB /* BoundedImageCache.swift */; };
 		2D0902D998FD467F8C4843F1 /* ConnectionStatusTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FD75FC0A675467EA3112B25 /* ConnectionStatusTests.swift */; };
@@ -469,6 +470,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		8ECBDF927EFB4D99855CAC92 /* LiveServerReadCompatibilityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveServerReadCompatibilityTests.swift; sourceTree = "<group>"; };
 		48F260B93BBF4A3EBBDC780C /* BoundedImageCacheTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoundedImageCacheTests.swift; sourceTree = "<group>"; };
 		54390C8C056B42DBA149B5AB /* BoundedImageCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BoundedImageCache.swift; sourceTree = "<group>"; };
 		4FD75FC0A675467EA3112B25 /* ConnectionStatusTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionStatusTests.swift; sourceTree = "<group>"; };
@@ -987,6 +989,7 @@
 		1A2B3C4D5E6F700000000034 /* HermesMobileTests */ = {
 			isa = PBXGroup;
 			children = (
+				8ECBDF927EFB4D99855CAC92 /* LiveServerReadCompatibilityTests.swift */,
 				48F260B93BBF4A3EBBDC780C /* BoundedImageCacheTests.swift */,
 				4FD75FC0A675467EA3112B25 /* ConnectionStatusTests.swift */,
 				C0BA5E000000000000000002 /* PerformanceBaselineFixtures.swift */,
@@ -2051,6 +2054,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				76BBD56670B148BE9114853D /* LiveServerReadCompatibilityTests.swift in Sources */,
 				B3BB87838A614B5DAE0B19F2 /* BoundedImageCacheTests.swift in Sources */,
 				2D0902D998FD467F8C4843F1 /* ConnectionStatusTests.swift in Sources */,
 				C0BA5E000000000000000001 /* PerformanceBaselineFixtures.swift in Sources */,

@@ -83,3 +83,8 @@ bundles and corresponding logs. The desktop remains locked, so signed normal
 UI review, image-heavy scrolling hitches, visual preview/export checks and
 real display-scale comparisons remain pending. No unsupported smoothness or
 energy improvement is claimed.
+
+A later paired pre-modernization/candidate run found higher eager cold-load time
+and roughly0.1 ms warm lookups in the candidate; the old initializer could defer
+decoding. See INTEGRATED_MODERNIZATION_2026-09-07.md. The early four-image timings
+above are retained as evidence, not a general latency-improvement claim.
