@@ -31,8 +31,9 @@ The current machine has one connected display. A physical second-display move or
 disconnect and a signed release installation on another Mac require owner checks.
 The owner signed in and normal authenticated checks now have direct evidence in
 [normal app validation](performance/NORMAL_APP_VALIDATION_2026-09-07.md).
-A temporary fixture was stopped and the original server selected again; it required
-a fresh sign-in afterward. Live backend and network settings were not changed.
+After the earlier validation required another sign-in, the owner restored it.
+The September 8 Git selection check passed and the original server was restored
+and verified Reachable/Signed in. Live backend and network settings were not changed.
 
 Merges into dev/master and release publication remain separately authorized
 operations. Engineering continues on feature branches before that final approval.
@@ -227,10 +228,11 @@ Matched before/candidate measurements, five fresh-process streaming repeats and
 synthetic Time Profiler captures are complete. The Git and bounded image gains
 coexist with higher large-cache-write and short-stream timings; those concerns
 are recorded rather than hidden. The allocation trace is retained, but the CLI
-export supplied no usable allocation-size/lifetime table. Normal-app startup,
-image-heavy scrolling, resizing, accessibility and second-display/remote-Mac
-checks remain pending because the desktop is locked or the physical device is
-not available. The goal remains open for those missing validation dependencies.
+export supplied no usable allocation-size/lifetime table. Normal UI scroll/resize and accessibility-label checks subsequently passed, as
+recorded below. Matched normal-app startup and controlled scroll/resize timings
+remain outstanding; earlier single traces do not establish those comparisons.
+Physical second-display/remote-Mac checks still require owner equipment. The
+goal remains open for the missing performance measurements.
 
 Review deliverables:
 
@@ -250,8 +252,8 @@ backend upgrade or network/service change has been performed.
 The unlocked normal app passed authenticated expansion/Fill/tiling/full-screen,
 large-window and draft restoration, response selection, connection diagnostics
 and controlled error states. Separate transcript/image Time Profiler traces are
-preserved. Synthetic Git diff scroll/collapse/dismiss/reopen and original image
-export passed. Physical display/second-Mac and spoken VoiceOver checks remain.
+preserved. Synthetic Git diff scroll/collapse/dismiss/reopen, selected line insertion into
+the composer and original image export passed. Physical display/second-Mac and spoken VoiceOver checks remain.
 
 Normal image testing exposed MarkdownUI loaders outside the bounded cache and an
 extensionless image decode bypass. Both now use the app cache; 13 cache/provider

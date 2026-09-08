@@ -1,7 +1,8 @@
 # Mac modernization review and release package
 
-Prepared September 7, 2026. Engineering changes are committed in the PR stack
-below; publication and the remaining owner-equipment checks are pending. This document
+Updated September 8, 2026. Engineering changes are committed in the PR stack
+below; matched normal-app performance measurements, publication and the remaining
+owner-equipment checks are pending. This document
 does not authorize a protected merge, release or live-server change.
 
 Read the curated [Mac 1.1.1 notes](releases/mac-v1.1.1.md) and
@@ -78,7 +79,9 @@ The owner unlocked the desktop and signed in. Authenticated main-window drag,
 Fill, tiling, full-screen, large-window/draft restoration, response text selection,
 connection display/copy/refresh/edit, keyboard navigation and light/dark checks
 passed. Controlled fixture error states, 24-image scrolling, original export and
-Git collapse/dismiss/reopen also passed; see the normal-app report for limits.
+Git collapse/dismiss/reopen and selected line insertion into the composer also
+passed. Original server reachability and restored sign-in were verified again
+on September 8; see the normal-app report for limits.
 
 The remaining owner checklist is:
 
@@ -87,8 +90,6 @@ The remaining owner checklist is:
   point telemetry is not established by rescaled automation captures.
 - Check spoken VoiceOver output. Labels and keyboard actions were inspected,
   but a spoken readout was not verified.
-- Confirm Git line selection into the composer; pointer collapse/scroll/reopen
-  passed, while selection remains covered by automated tests only.
 - Install the signed/notarized candidate on a second Mac, connect using the
   reachable server address and authenticate while the server Mac is awake.
   Localhost refers to the machine running the client.

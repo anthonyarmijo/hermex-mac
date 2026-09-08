@@ -1,4 +1,4 @@
-# Normal Mac app validation — September 7, 2026
+# Normal Mac app validation — September 7–8, 2026
 
 This follow-up uses the signed, normal Mac 1.2.0 candidate at app code `5ae5492`
 (final validation commit `2a0bb38`), after the owner unlocked the desktop and
@@ -113,16 +113,30 @@ Logs and derived products remain in the ignored validation directory.
 The normal Git menu opened two synthetic files with 500 added and 500 removed
 lines each. Diff rows rendered, pointer scrolling advanced line numbers, file
 collapse exposed the next file, and dismiss/reopen worked. The staging-selection
-sheet was also inspected without submitting an action. Line selection was not
-established by these mouse attempts; deterministic selection tests remain the
-evidence for that behavior. No stage/discard/commit/push or live mutation ran.
+sheet was also inspected without submitting an action.
 
-The original server was selected again and the temporary loopback service was
-stopped. The generated, inactive Local validation fixture registry entry remains
-available for reproducibility. The original server required another sign-in after
-validation; the owner was asked to restore that session without sharing a password.
-System appearance and the original server identity were preserved. No further
-local app suite is planned after that sign-in.
+On September 8, after the owner brought the signed candidate forward, clicking
+the gutter selected added line 2 in `Fixture0.swift`. The visible blue row and
+“1 line selected” bar confirmed selection. Add to prompt dismissed the review
+and inserted `Fixture0.swift L2` with a diff block containing `+let new1 = 2`.
+The composer value was confirmed through both the screenshot and accessibility
+text. The selection bar itself was not exposed in the accessibility tree, so
+an unchanged tree alone had not established whether selection worked earlier.
+The unsent synthetic draft was cleared through normal keyboard editing; empty
+composer and disabled Send were verified. No message, stage, discard, commit,
+push or live mutation was submitted.
+
+The owner restored sign-in after the earlier validation. The original server
+was selected again after this Git check and Connection Status reported Reachable
+and Signed in, with a 5 ms health response. No password was read or entered by
+the agent. System appearance and the original server identity were preserved.
+No further local app suite was run against the owner's restored session.
+The hosted auth-test cookie isolation hazard is tracked separately in issue #27;
+the runtime cause of the earlier expiration was not instrumented.
+
+The inactive Local validation fixture registry entry remains available for
+reproduction. Further performance work uses separately identified profiling
+copies and synthetic data to avoid the owner's live storage and credentials.
 
 ## Remaining boundaries
 
