@@ -10,14 +10,14 @@ separate client drift report.
 
 | Area | Candidate behavior | Verification / boundary |
 | --- | --- | --- |
-| Mac window | Explicitly removes the old maximum; retains useful minimum sizes and full-screen support | Signed normal onboarding drag/Fill/full-screen checks passed on the window slice; exact frame/restoration/multiple-display and authenticated final checks pending |
-| Connection status | Sidebar and Settings entry; sanitized URL/copy, reachability, auth, versions, latency, refresh, editing/sign-in | Eight focused tests; live health/auth/settings decode; keyboard/VoiceOver/themes/sizing still pending |
-| Transcript | Compact thinking/tool rows, finished-turn folding, elapsed-time labels, copy/timestamps, improved scroll preservation | Upstream parser/state/layout suite integrated; normal Mac interaction needs final smoke |
+| Mac window | Explicitly removes the old maximum; retains useful minimum sizes and full-screen support | Signed authenticated drag/Fill/tiling/full-screen and large-window restoration passed; exact native frame and physical multiple-display checks pending |
+| Connection status | Sidebar and Settings entry; sanitized URL/copy, reachability, auth, versions, latency, refresh, editing/sign-in | Eight focused tests; live and fixture states, copy/edit/refresh, keyboard and light/dark passed; spoken VoiceOver pending |
+| Transcript | Compact thinking/tool rows, finished-turn folding, elapsed-time labels, copy/timestamps, improved scroll preservation | Upstream parser/state/layout suite integrated; normal turn folding, text selection and long-transcript scroll/resize passed |
 | Composer/drafts | Caret skill completion, skill/file chips, attachment-only sends, durable text/attachment/settings drafts | Gesture correction added; Mac Return/Shift-Return preserved; legacy draft migration/no-resurrection tested |
 | Streaming/recovery | Partial-run recovery, late-event guards, session-aware replay; bounded July buffer retained | Full shared suites and repeated byte-identical synthetic replay; no live generated chat in this run |
 | Offline cache | Background actor writes and bounded newest-page reads retained; new turn metadata persists | Repeated 50/500/5000 fixtures, two warm-write fetches, main-thread snapshot timing; old text defaults retained for recovery |
-| Images | Count/byte caps, ImageIO thumbnails, alpha/orientation, authenticated namespace isolation and cancellation | Ten focused tests, unique-4K retention stress; full original export path remains; normal visual/export smoke pending |
-| Workspace/Git | Lazy file tree, source highlighting, unified multi-file review, prepared rows once per response | Actual directory/Git metadata reads; parser/selection/layout/canvas tests; physical mouse/keyboard review pending |
+| Images | Count/byte caps, ImageIO thumbnails, alpha/orientation, authenticated namespace isolation and cancellation | 13 cache/provider tests and unique-4K stress; remote Markdown and extensionless MEDIA bounded in #25; normal 24-image scroll and byte-identical original export passed |
+| Workspace/Git | Lazy file tree, source highlighting, unified multi-file review, prepared rows once per response | Actual directory/Git metadata reads; parser/selection/layout/canvas tests; normal diff scrolling/collapse/dismiss/reopen passed; composer line selection still needs manual confirmation |
 | Tasks/Usage | Agenda, filters/recent/history, model/provider/profile selection, time-window charts | Read responses decode; deterministic mutation/chart tests; no live task execution |
 | Kanban | Normal navigation, board/card workflows, bulk actions, dispatcher and per-server restoration | Configuration/board reads decode; full deterministic coverage; no live mutations or worker dispatch |
 | Sessions | Attention states, match previews, external-source continuation/import, session-scoped reasoning | Deterministic request/state tests; list/detail/status live reads; live import/history mutation not performed |
@@ -39,7 +39,7 @@ The release notes were curated from the actual `mac-v1.1.0..candidate` first-par
 history and the included upstream commit list, rather than copied from an
 automatically generated PR list. Reviewed sources include the fork's cache and
 streaming commits/PR5; recovery PR6; window PR9; integration PR11; connection PR13;
-watcher PR14; image PR16; Git PR18; idiom PR20; and patch-note PR23.
+watcher PR14; image PR16 and follow-up issue25; Git PR18; idiom PR20; and patch-note PR23.
 
 For upstream user-facing changes, the audit examined PR bodies 344/345 (log rows
 and turn folding), 360/405/404 (composer/file references/media), 399 (Git review),

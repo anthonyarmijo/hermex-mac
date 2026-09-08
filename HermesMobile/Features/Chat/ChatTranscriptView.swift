@@ -118,6 +118,10 @@ struct ChatTranscriptView: View {
             }
         } else {
             transcriptScrollView
+                .boundedTranscriptMarkdownImages(
+                    namespace: transcriptMediaCacheNamespace,
+                    loadData: loadTranscriptMediaImage
+                )
         }
     }
 

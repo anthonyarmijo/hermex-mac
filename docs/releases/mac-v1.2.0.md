@@ -14,7 +14,7 @@
 - Session rows show when approval, input or work is pending; search explains matches. External CLI and messaging sessions use the server's import flow and respect read-only results.
 - Partial-response recovery, late-event handling, scroll-position preservation and session-scoped reasoning settings include upstream fixes.
 - Settings can hide unused sections and show optional response-speed metrics. Model choices retain their provider identity.
-- Large transparent thumbnails preserve transparency. Image caches distinguish servers and sessions, handle cancellation safely and release retained images under memory pressure.
+- Remote Markdown images and extensionless image previews share the bounded media cache. Large transparent thumbnails preserve transparency. Image caches distinguish servers and sessions, handle cancellation safely and release retained images under memory pressure.
 - Existing Mac commands, dedicated Settings, file export, signing identity and offline-cache improvements remain in place. Older Mac text drafts migrate into the newer durable draft store.
 - Includes the Mac 1.1.1 window-expansion, background cache-write and streaming improvements.
 

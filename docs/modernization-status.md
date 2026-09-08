@@ -29,9 +29,10 @@ maintenance workflows and contractual documentation must survive the integration
 
 The current machine has one connected display. A physical second-display move or
 disconnect and a signed release installation on another Mac require owner checks.
-The normal app currently presents an expired session; authenticated interaction
-checks must not be claimed from onboarding or the Streaming Lab. No credentials,
-live backend configuration or network settings have been changed.
+The owner signed in and normal authenticated checks now have direct evidence in
+[normal app validation](performance/NORMAL_APP_VALIDATION_2026-09-07.md).
+A temporary fixture was stopped and the original server selected again; it required
+a fresh sign-in afterward. Live backend and network settings were not changed.
 
 Merges into dev/master and release publication remain separately authorized
 operations. Engineering continues on feature branches before that final approval.
@@ -243,3 +244,18 @@ Routine engineering did not stop for repeated permission gates. UI-dependent
 PRs remain draft; one reviewed approval can cover the complete protected
 promotion and release sequence once the required checks pass. No release,
 backend upgrade or network/service change has been performed.
+
+## Normal-app follow-up and Markdown image gap (#25)
+
+The unlocked normal app passed authenticated expansion/Fill/tiling/full-screen,
+large-window and draft restoration, response selection, connection diagnostics
+and controlled error states. Separate transcript/image Time Profiler traces are
+preserved. Synthetic Git diff scroll/collapse/dismiss/reopen and original image
+export passed. Physical display/second-Mac and spoken VoiceOver checks remain.
+
+Normal image testing exposed MarkdownUI loaders outside the bounded cache and an
+extensionless image decode bypass. Both now use the app cache; 13 cache/provider
+tests pass, full Mac is 2,370 total/five skips/zero failures, and 26 focused iPhone
+tests pass. The signed candidate was launched and 24 large images scrolled and
+resized. Original export remains byte-identical at full dimensions. See the
+normal-app report for measured evidence, limitations and retained artifacts.

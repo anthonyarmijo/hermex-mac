@@ -1,13 +1,14 @@
 # Mac modernization review and release package
 
 Prepared September 7, 2026. Engineering changes are committed in the PR stack
-below; publication and the remaining normal-app checks are pending. This document
+below; publication and the remaining owner-equipment checks are pending. This document
 does not authorize a protected merge, release or live-server change.
 
 Read the curated [Mac 1.1.1 notes](releases/mac-v1.1.1.md) and
 [Mac 1.2.0 notes](releases/mac-v1.2.0.md) before approving publication. The
 [feature matrix](modernization-feature-matrix.md),
 [integrated performance report](performance/INTEGRATED_MODERNIZATION_2026-09-07.md)
+[normal app validation](performance/NORMAL_APP_VALIDATION_2026-09-07.md)
 and [server compatibility report](server-compatibility-2026-09-07.md) describe
 what was verified and what remains uncertain.
 
@@ -28,7 +29,8 @@ Protected branches remain unchanged: master is
 | Feature 4 | [#16 bounded images](https://github.com/anthonyarmijo/hermex-mac/pull/16) | `847b6922b30e2c8a72c79fbd778d0b8402d83049` |
 | Feature 5 | [#18 Git diff preparation](https://github.com/anthonyarmijo/hermex-mac/pull/18) | `3316a0caeff294cf31af4bd80f6c6d1693325433` |
 | Feature 6 | [#20 Catalyst experiment evidence](https://github.com/anthonyarmijo/hermex-mac/pull/20) | `5ae54927afefa9ad6b14f185b2d6f4bac4bee7c5` |
-| Feature 7 | Final validation, contracts and release package | `issue/21-integrated-validation`; exact final head is recorded in its PR body |
+| Feature 7 | [#24 integrated validation and release package](https://github.com/anthonyarmijo/hermex-mac/pull/24) | `2a0bb38504c01278937d48b3c76e972fcfc444b4` |
+| Feature 8 | Markdown image correction and normal-app validation (#25) | `issue/25-bounded-markdown-images`; exact final head is recorded in its PR body |
 
 The final row avoids putting a commit's own hash inside its content. Verify the
 PR's current head against the recorded SHA before executing this sequence.
@@ -72,29 +74,28 @@ backend or changes the user's network, LaunchAgents or server configuration.
 
 ## Consolidated final manual check
 
-The desktop remained locked when final validation was attempted. Existing
-signed normal-window evidence confirms expansion, Fill and full-screen entry
-and exit on onboarding; it does not prove authenticated or multi-display flows.
-Use the signed candidate in the normal app for this remaining checklist:
+The owner unlocked the desktop and signed in. Authenticated main-window drag,
+Fill, tiling, full-screen, large-window/draft restoration, response text selection,
+connection display/copy/refresh/edit, keyboard navigation and light/dark checks
+passed. Controlled fixture error states, 24-image scrolling, original export and
+Git collapse/dismiss/reopen also passed; see the normal-app report for limits.
 
-- Window: drag to the usable desktop bounds; shrink, maximize, tile where the
-  minimum permits, enter/exit full screen and relaunch with a large window.
-  Check main and Settings windows, sidebar, composer and text selection.
-  On a second display, move between different sizes/scales and disconnect it;
-  confirm there is no stale cap or off-screen restored window.
-- Connection: verify the sanitized URL, copy, WebUI/agent versions, separate
-  reachability/authentication, latency, refresh and stale-result behavior.
-  Check keyboard access, VoiceOver labels and light/dark appearance. Exercise
-  offline, authentication-required and missing-version states using fixtures
-  or a disposable configuration, without changing the live server.
-- Integrated client: verify draft restoration, composer chips and selection,
-  Return/Shift-Return behavior without sending a real message, long transcript
-  scrolling, image loading and original export, and Git collapse/dismiss/reopen.
-  Capture normal-app startup, image-heavy scroll and resize responsiveness;
-  these remain missing real-interface measurements in the performance report.
-- Second Mac: install the signed/notarized release candidate, connect using the
-  reachable server address and confirm authentication while the server Mac is
-  awake. Localhost refers to the machine running the client.
+The remaining owner checklist is:
+
+- Move between physical displays with different sizes/scales, disconnect one,
+  and confirm no stale cap or stranded restored window. Exact native frame/desktop
+  point telemetry is not established by rescaled automation captures.
+- Check spoken VoiceOver output. Labels and keyboard actions were inspected,
+  but a spoken readout was not verified.
+- Confirm Git line selection into the composer; pointer collapse/scroll/reopen
+  passed, while selection remains covered by automated tests only.
+- Install the signed/notarized candidate on a second Mac, connect using the
+  reachable server address and authenticate while the server Mac is awake.
+  Localhost refers to the machine running the client.
+
+Normal transcript and image-scroll Time Profiler captures now exist. A fresh
+launch observation includes automation overhead, so matched startup/FPS claims
+remain unavailable. These measurement limits must not be presented as wins.
 
 Actual generation or session/task/Kanban mutations need a specifically approved
 disposable-data smoke as described in the compatibility report. They have not
@@ -103,8 +104,9 @@ unchanged until its complete contract gate is satisfied.
 
 ## Evidence and remaining decisions
 
-Full signed local suites: Mac 2,367 total and iPhone 2,365 total, each with five
-expected skips and zero failures. The explicit live test decoded 27 production
+Latest full signed Mac suite: 2,370 total, five expected skips, zero failures.
+The integrated full iPhone suite had 2,365 total with five expected skips and zero
+failures; the subsequent shared image correction passed 26 focused iPhone tests. The explicit live test decoded 27 production
 read responses. Eleven maintenance checks pass. Release notes validate and the
 signed Mac candidate passes strict signature verification.
 
