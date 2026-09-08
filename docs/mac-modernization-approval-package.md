@@ -1,7 +1,7 @@
 # Mac modernization review and release package
 
 Updated September 8, 2026. Engineering changes are committed in the PR stack
-below; matched normal-app performance measurements, publication and the remaining
+below; remaining normal-app performance measurements, publication and the remaining
 owner-equipment checks are pending. This document
 does not authorize a protected merge, release or live-server change.
 
@@ -9,7 +9,8 @@ Read the curated [Mac 1.1.1 notes](releases/mac-v1.1.1.md) and
 [Mac 1.2.0 notes](releases/mac-v1.2.0.md) before approving publication. The
 [feature matrix](modernization-feature-matrix.md),
 [integrated performance report](performance/INTEGRATED_MODERNIZATION_2026-09-07.md)
-[normal app validation](performance/NORMAL_APP_VALIDATION_2026-09-07.md)
+[normal app validation](performance/NORMAL_APP_VALIDATION_2026-09-07.md),
+[matched normal-app comparison](performance/NORMAL_APP_COMPARISON_2026-09-08.md)
 and [server compatibility report](server-compatibility-2026-09-07.md) describe
 what was verified and what remains uncertain.
 
@@ -94,9 +95,13 @@ The remaining owner checklist is:
   reachable server address and authenticate while the server Mac is awake.
   Localhost refers to the machine running the client.
 
-Normal transcript and image-scroll Time Profiler captures now exist. A fresh
-launch observation includes automation overhead, so matched startup/FPS claims
-remain unavailable. These measurement limits must not be presented as wins.
+Normal transcript and image-scroll Time Profiler captures exist. Four matched
+fresh-process samples per version now measure process exec through initial frame:
+339.99 ms median before, 352.58 ms after, with warm disk caches. Warm activation
+and controlled scroll/resize timing remain unfinished because native control is
+timing out. These gaps must not be presented as wins or engineering completion.
+The production image-input correction passed full Mac tests in a separate test
+identity, iPhone compilation and normal image-width verification.
 
 Actual generation or session/task/Kanban mutations need a specifically approved
 disposable-data smoke as described in the compatibility report. They have not

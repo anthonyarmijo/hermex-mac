@@ -146,3 +146,22 @@ exact native frame/display point measurements are not asserted. A single fresh
 process relaunch reached the initial populated accessibility observation in
 2,092 ms including tool launch/IPC/observation overhead; this is not a startup
 benchmark or a before/after performance claim.
+
+## Production image input follow-up — September 8
+
+The matched normal-app comparison found another production binding gap: ChatView
+fed a 512-pixel attachment preview into the bounded image cache. This limited the
+normal Markdown image width and re-encoded the input before the cache decoded it.
+The binding now supplies original compressed media bytes so the bounded cache
+owns the one downsampling step. Existing provider tests injected original bytes
+directly, so the earlier test result did not cover this production binding.
+
+The full Mac suite passed again in a separately provisioned test host whose
+bundle ID, Keychain service/access group and app group were verified to differ
+from the owner's app: 2,370 tests, five expected skips, zero failures. The iPhone
+simulator build passed. The signed normal profiling copy then showed the large
+Markdown image at the baseline width in matching 1,024 × 768 captures. No hosted
+tests were run against the owner's restored cookie store.
+
+See [the matched comparison](NORMAL_APP_COMPARISON_2026-09-08.md) for four
+fresh-process startup samples per version, exact method and remaining timing gaps.

@@ -229,8 +229,9 @@ synthetic Time Profiler captures are complete. The Git and bounded image gains
 coexist with higher large-cache-write and short-stream timings; those concerns
 are recorded rather than hidden. The allocation trace is retained, but the CLI
 export supplied no usable allocation-size/lifetime table. Normal UI scroll/resize and accessibility-label checks subsequently passed, as
-recorded below. Matched normal-app startup and controlled scroll/resize timings
-remain outstanding; earlier single traces do not establish those comparisons.
+recorded below. Four matched fresh-process startup samples per version are now recorded in the
+[normal-app comparison](performance/NORMAL_APP_COMPARISON_2026-09-08.md). Warm
+activation and controlled scroll/resize timings remain outstanding.
 Physical second-display/remote-Mac checks still require owner equipment. The
 goal remains open for the missing performance measurements.
 
@@ -261,3 +262,12 @@ tests pass, full Mac is 2,370 total/five skips/zero failures, and 26 focused iPh
 tests pass. The signed candidate was launched and 24 large images scrolled and
 resized. Original export remains byte-identical at full dimensions. See the
 normal-app report for measured evidence, limitations and retained artifacts.
+
+The September 8 matched UI comparison also exposed a 512-pixel preview feeding
+the bounded cache in the actual ChatView binding. It now receives original bytes.
+Full Mac tests (2,370/five skips/zero failures), the iPhone compile check and signed
+normal image-width verification passed; the test host used a separate verified
+identity to avoid the owner's cookie store. Startup first-frame median was
+339.99 ms before and 352.58 ms after for four fresh-process/warm-disk-cache
+samples; no startup speedup is claimed. Native control timeouts leave warm
+activation and repeated scroll/resize timing unfinished.
