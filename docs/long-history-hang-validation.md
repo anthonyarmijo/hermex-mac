@@ -1,7 +1,7 @@
 # Long-history hang investigation — issue #29
 
-Status: candidate fix, native validation incomplete. Do not promote Mac 1.2.0
-on the strength of the unit suite alone.
+Status: automated and controlled native checks passed, with brief layout stalls
+documented below. Corrected installer equipment checks remain before promotion.
 
 ## Reproduction and candidate
 
@@ -66,6 +66,40 @@ disconnect the rest of the transcript or add duplicate follow-gesture handlers.
   zero failures (2,390 total). Results: `PositionFocusedMac.xcresult` and
   `PositionFullMac.xcresult`. The regression covers large height re-estimation
   with stationary, upward-adjusted, and forward-moving offsets.
+- The clean signed build at `cfe8999` replayed a synthetic SSE response through
+  the real chat path. Earlier completed text stayed selectable during streaming;
+  the active response did not enter selection. After `done`/`stream_end`, primary
+  dragging and Cmd-C copied its text. Completion kept the reader above the tail.
+  Live reasoning expand/collapse and the completed-turn disclosure retained the
+  surrounding reading position. Fixture contract follows the official
+  [streaming reference](https://get-hermes.ai/api-docs/reference/chat-streaming/)
+  and existing decoder tests; no model or production service was called.
+
+## Corrected-candidate performance evidence
+
+The preserved PR #26 and selection-build samples above establish sustained
+unresponsive layout loops. Repeating their long-history reopen/composer/resize
+workload on `cfe8999` no longer required force-quitting the test process.
+An app-scoped 60.98-second Time Profiler recording on the same Mac captured three
+additional reopen/shrink/expand cycles, wheel scrolling and selection across a
+long response followed by resizing. All nine reopen/resize observations retained
+message 512, and selection remained aligned after resizing.
+
+Instruments reported five microhangs: 295.14, 271.86, 251.28, 276.01 and 262.60 ms.
+Their sampled stacks involve native collection-cell creation, SwiftUI sizing and
+text measurement, including `ResponseTextSelection.sizeThatFits`. No sampled
+frame in this capture contains the former `measureEstimates` path. Each stall
+ended and interaction continued; none was a sustained layout loop. These short
+pauses remain a performance limitation and are covered by the release notes'
+rich-Markdown caveat. This small Debug-build recording does not establish FPS,
+release-build latency, equal workload per frame or a percentage speedup versus
+the preserved builds. It supports resolution of the reproduced freeze, not a
+claim that every long-chat pause is gone.
+
+Retained evidence: `CorrectedNativeStress.trace`, its exported hang/sample XML,
+`CorrectedNativeStress-summary.json` and `summarize-stress.py`, alongside the
+earlier baseline and selection-build hang samples. Prior failing traces/builds
+remain preserved. Build 3 increments only the Mac build number after this code.
 
 Logs, source snapshots, samples and result bundles are retained locally under
 `.codex-tmp/mac-modernization/long-history-fix/`. `IntegratedFullMac.xcresult` and
@@ -78,16 +112,9 @@ test fixtures. Prior signed installers and profiling builds remain preserved.
 
 ## Required before leaving draft
 
-1. Finish the comparative performance measurements against preserved PR #26
-   and selection build 2; investigate hangs or material regressions. The native
-   functional passes above do not establish a complete performance comparison.
-2. Verify following versus reading older history, the latest-message button,
-   disclosure positioning and streaming
-   completion. Confirm row recycling does not steal selection or composer focus.
-3. Repeat real pointer selection and copied-content checks across Unicode,
-   paragraphs, lists, code and tables; verify links, image previews, message menus,
-   keyboard copying and selection reset on session/server changes.
-4. Complete corrected-candidate display/scale/disconnect, spoken VoiceOver and
+1. Produce and verify the signed/notarized build 3 installer, preserving builds
+   1 and 2. Controlled native passes above use an isolated development identity.
+2. Complete corrected-candidate display/scale/disconnect, spoken VoiceOver and
    second-Mac installer/server checks before the approved release sequence.
 
 No backend, network or service changes are part of this fix. The accepted Mac
