@@ -1,8 +1,8 @@
 # Contributor CI: run the full Mac Catalyst XCTest suite for app-code pull
-# requests. The shared iPhone target gets a compile check by default and runs
-# its full suite only when the PR has the `full-iphone-tests` label or comes from
-# an upstream-sync branch. Docs, workflow-only, and version-only PRs skip the
-# macOS runners and pass via the cheap gate job.
+# requests. The shared iPhone target compiles for upstream integrations only
+# (`upstream-integration` label or upstream/* / sync/upstream-* branch). Its full
+# suite requires the explicit `full-iphone-tests` label, including on docs-only
+# PRs. Other docs, workflow-only, and version-only PRs skip the macOS runners.
 #
 # The required branch-protection check is "CI Gate", not "Build and Test":
 # a skipped required check would block merges forever, so the gate always
@@ -34,6 +34,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       run_tests: ${{ steps.filter.outputs.run_tests }}
+      run_iphone_compile: ${{ steps.filter.outputs.run_iphone_compile }}
       run_iphone_tests: ${{ steps.filter.outputs.run_iphone_tests }}
     steps:
       - name: Classify changed files
@@ -70,24 +71,33 @@ jobs:
           fi
 
           if [[ -n "${app_changes}" ]]; then
-            echo "Application changes detected — running Mac tests and an iPhone compile check:"
+            echo "Application changes detected — running Mac tests:"
             echo "${app_changes}"
             echo "run_tests=true" >> "$GITHUB_OUTPUT"
           else
-            echo "No application behavior changed — skipping macOS runners."
+            echo "No application behavior changed — skipping Mac app tests."
             echo "run_tests=false" >> "$GITHUB_OUTPUT"
           fi
 
           labels=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}" \
             --jq '.labels[].name')
           head_ref="${HEAD_REF}"
-          if grep -Fxq "full-iphone-tests" <<< "${labels}" \
-            || [[ "${head_ref}" == upstream/* ]] \
-            || [[ "${head_ref}" == sync/upstream-* ]]; then
+          if grep -Fxq "full-iphone-tests" <<< "${labels}"; then
             echo "Full iPhone compatibility validation requested."
+            echo "run_iphone_compile=true" >> "$GITHUB_OUTPUT"
             echo "run_iphone_tests=true" >> "$GITHUB_OUTPUT"
           else
             echo "run_iphone_tests=false" >> "$GITHUB_OUTPUT"
+            if [[ -n "${app_changes}" ]] && { \
+              grep -Fxq "upstream-integration" <<< "${labels}" \
+              || [[ "${head_ref}" == upstream/* ]] \
+              || [[ "${head_ref}" == sync/upstream-* ]]; }; then
+              echo "Upstream integration — compiling the shared iPhone target."
+              echo "run_iphone_compile=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "No iPhone compatibility validation required."
+              echo "run_iphone_compile=false" >> "$GITHUB_OUTPUT"
+            fi
           fi
 
   maintenance:
@@ -97,7 +107,7 @@ jobs:
     steps:
       - name: Check out
         uses: actions/checkout@v7
-      - name: Test digest and release-note guards
+      - name: Test CI policy, digest and release-note guards
         run: python3 scripts/test-repo-maintenance.py
       - name: Validate curated release notes
         run: |
@@ -110,7 +120,7 @@ jobs:
   test_ios:
     name: iPhone Compatibility
     needs: changes
-    if: needs.changes.outputs.run_tests == 'true'
+    if: needs.changes.outputs.run_iphone_compile == 'true'
     runs-on: macos-26
     timeout-minutes: 90
 
