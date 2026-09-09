@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 import UserNotifications
 @testable import HermesMobile
 
@@ -63,24 +64,32 @@ final class PlatformCapabilitiesTests: XCTestCase {
     }
 
     #if targetEnvironment(macCatalyst)
-    func testMacWindowSizingPolicyUsesTheCurrentScreenAsItsMaximum() {
-        XCTAssertEqual(
-            MacWindowSizingPolicy.maximumSize(
-                for: CGSize(width: 3_440, height: 1_440),
-                minimumSize: MacWindowSizingPolicy.mainMinimumSize
-            ),
-            CGSize(width: 3_440, height: 1_440)
-        )
-    }
+    @MainActor
+    func testMacWindowSizingRemovesStaleMaximumAcrossRepeatedLayouts() throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let restrictions = try XCTUnwrap(scene.sizeRestrictions)
+        let originalMinimum = restrictions.minimumSize
+        let originalMaximum = restrictions.maximumSize
+        let originalFullScreen = restrictions.allowsFullScreen
+        defer {
+            restrictions.minimumSize = originalMinimum
+            restrictions.maximumSize = originalMaximum
+            restrictions.allowsFullScreen = originalFullScreen
+        }
 
-    func testMacWindowSizingPolicyNeverProducesAMaximumBelowTheMinimum() {
-        XCTAssertEqual(
-            MacWindowSizingPolicy.maximumSize(
-                for: CGSize(width: 640, height: 480),
-                minimumSize: MacWindowSizingPolicy.mainMinimumSize
-            ),
-            MacWindowSizingPolicy.mainMinimumSize
-        )
+        // Simulate an old/default cap, including one inherited from a smaller
+        // display. Both scenes must clear it every time layout is reconciled.
+        for maximum in [CGSize(width: 2_560, height: 1_440), CGSize(width: 5_120, height: 2_880)] {
+            restrictions.maximumSize = maximum
+            restrictions.allowsFullScreen = false
+            for minimum in [MacWindowSizingPolicy.mainMinimumSize, MacWindowSizingPolicy.settingsMinimumSize] {
+                MacWindowSizingPolicy.apply(to: restrictions, minimumSize: minimum)
+                MacWindowSizingPolicy.apply(to: restrictions, minimumSize: minimum)
+                XCTAssertEqual(restrictions.maximumSize, MacWindowSizingPolicy.unconstrainedMaximumSize)
+                XCTAssertEqual(restrictions.minimumSize, minimum)
+                XCTAssertTrue(restrictions.allowsFullScreen)
+            }
+        }
     }
     #endif
 }
