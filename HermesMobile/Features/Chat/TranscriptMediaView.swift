@@ -1,5 +1,6 @@
 import AVFoundation
 import AVKit
+import MarkdownUI
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
@@ -96,6 +97,7 @@ private struct TranscriptMediaThumbnailView: View {
             if let loadMediaData {
                 TranscriptMediaResolvedRemoteView(
                     reference: reference,
+                    cacheNamespace: cacheNamespace,
                     loadMediaData: loadMediaData,
                     onPreviewMedia: onPreviewMedia
                 )
@@ -209,6 +211,7 @@ private struct TranscriptMediaThumbnailView: View {
 
 private struct TranscriptMediaResolvedRemoteView: View {
     let reference: TranscriptMediaReference
+    let cacheNamespace: String
     let loadMediaData: (TranscriptMediaReference) async -> Data?
     let onPreviewMedia: ((TranscriptMediaReference) -> Void)?
 
@@ -255,7 +258,7 @@ private struct TranscriptMediaResolvedRemoteView: View {
                     }
             }
         }
-        .task(id: reference.id) {
+        .task(id: TranscriptMediaImageCacheKey(namespace: cacheNamespace, reference: reference)) {
             resolvedMedia = nil
             guard let data = await loadMediaData(reference) else {
                 guard !Task.isCancelled else { return }
@@ -264,7 +267,9 @@ private struct TranscriptMediaResolvedRemoteView: View {
             }
 
             guard !Task.isCancelled else { return }
-            resolvedMedia = Self.resolve(data)
+            let resolved = await resolve(data)
+            guard !Task.isCancelled else { return }
+            resolvedMedia = resolved
         }
     }
 
@@ -281,8 +286,10 @@ private struct TranscriptMediaResolvedRemoteView: View {
             )
     }
 
-    private static func resolve(_ data: Data) -> ResolvedMedia {
-        if let image = UIImage(data: data) {
+    private func resolve(_ data: Data) async -> ResolvedMedia {
+        if let image = await TranscriptMediaImageCache.shared.image(
+            for: reference, cacheNamespace: cacheNamespace, loadMediaImage: { _ in data }
+        ) {
             return .image(image)
         }
 
@@ -958,5 +965,85 @@ private struct TranscriptVideoPreviewPlayerView: View {
         .onDisappear {
             player?.pause()
         }
+    }
+}
+
+/// MarkdownUI has separate block/inline network loaders. Keep both on the same
+/// bounded cache and authenticated/public-media routing as transcript thumbnails.
+struct TranscriptMarkdownImageLoader {
+    let namespace: String
+    let loadData: (TranscriptMediaReference) async -> Data?
+    var cache: TranscriptMediaImageCache = .shared
+
+    func image(at url: URL) async -> UIImage? {
+        guard !Task.isCancelled,
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else { return nil }
+        return await cache.image(
+            for: TranscriptMediaReference(rawReference: url.absoluteString),
+            cacheNamespace: namespace,
+            loadMediaImage: loadData
+        )
+    }
+}
+
+private struct TranscriptMarkdownBlockImageProvider: ImageProvider {
+    let loader: TranscriptMarkdownImageLoader
+    func makeImage(url: URL?) -> some View {
+        TranscriptMarkdownBlockImage(url: url, loader: loader)
+    }
+}
+
+private struct TranscriptMarkdownInlineImageProvider: InlineImageProvider {
+    let loader: TranscriptMarkdownImageLoader
+    func image(with url: URL, label: String) async throws -> Image {
+        guard let image = await loader.image(at: url) else {
+            if Task.isCancelled { throw CancellationError() }
+            throw URLError(.cannotDecodeContentData)
+        }
+        try Task.checkCancellation()
+        guard let cgImage = image.cgImage else { throw URLError(.cannotDecodeContentData) }
+        return Image(cgImage, scale: image.scale, label: Text(label))
+    }
+}
+
+private struct TranscriptMarkdownBlockImage: View {
+    let url: URL?
+    let loader: TranscriptMarkdownImageLoader
+    @State private var image: UIImage?
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: image.size.width)
+            } else {
+                Color.clear.frame(width: 0, height: 0)
+            }
+        }
+        .task(id: url) {
+            image = nil
+            guard let url else { return }
+            let result = await loader.image(at: url)
+            guard !Task.isCancelled else { return }
+            image = result
+        }
+    }
+}
+
+extension View {
+    func boundedTranscriptMarkdownImages(
+        namespace: String,
+        loadData: @escaping (TranscriptMediaReference) async -> Data?
+    ) -> some View {
+        let loader = TranscriptMarkdownImageLoader(namespace: namespace, loadData: loadData)
+        return self
+            .markdownImageProvider(TranscriptMarkdownBlockImageProvider(loader: loader))
+            .markdownInlineImageProvider(TranscriptMarkdownInlineImageProvider(loader: loader))
+            // Inline MarkdownUI image tasks do not key on provider identity.
+            // Rebuild them at server/session/auth boundaries to discard old pixels.
+            .id(namespace)
     }
 }

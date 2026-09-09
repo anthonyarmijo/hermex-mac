@@ -29,9 +29,11 @@ maintenance workflows and contractual documentation must survive the integration
 
 The current machine has one connected display. A physical second-display move or
 disconnect and a signed release installation on another Mac require owner checks.
-The normal app currently presents an expired session; authenticated interaction
-checks must not be claimed from onboarding or the Streaming Lab. No credentials,
-live backend configuration or network settings have been changed.
+The owner signed in and normal authenticated checks now have direct evidence in
+[normal app validation](performance/NORMAL_APP_VALIDATION_2026-09-07.md).
+After the earlier validation required another sign-in, the owner restored it.
+The September 8 Git selection check passed and the original server was restored
+and verified Reachable/Signed in. Live backend and network settings were not changed.
 
 Merges into dev/master and release publication remain separately authorized
 operations. Engineering continues on feature branches before that final approval.
@@ -226,10 +228,14 @@ Matched before/candidate measurements, five fresh-process streaming repeats and
 synthetic Time Profiler captures are complete. The Git and bounded image gains
 coexist with higher large-cache-write and short-stream timings; those concerns
 are recorded rather than hidden. The allocation trace is retained, but the CLI
-export supplied no usable allocation-size/lifetime table. Normal-app startup,
-image-heavy scrolling, resizing, accessibility and second-display/remote-Mac
-checks remain pending because the desktop is locked or the physical device is
-not available. The goal remains open for those missing validation dependencies.
+export supplied no usable allocation-size/lifetime table. Normal UI scroll/resize and accessibility-label checks subsequently passed, as
+recorded below. Four matched fresh-process startup samples per version are now recorded in the
+[normal-app comparison](performance/NORMAL_APP_COMPARISON_2026-09-08.md). Warm reopen and controlled resize workflows subsequently completed four matched
+trials per version. Their durations include automation overhead. The baseline
+image workload hung twice; the corrected candidate completed four cycles. No
+paired FPS or peak-memory result is available from the failed frame capture.
+Physical second-display/remote-Mac checks still require owner equipment. The
+remaining owner checks and publication are listed in the approval package.
 
 Review deliverables:
 
@@ -243,3 +249,33 @@ Routine engineering did not stop for repeated permission gates. UI-dependent
 PRs remain draft; one reviewed approval can cover the complete protected
 promotion and release sequence once the required checks pass. No release,
 backend upgrade or network/service change has been performed.
+
+## Normal-app follow-up and Markdown image gap (#25)
+
+The unlocked normal app passed authenticated expansion/Fill/tiling/full-screen,
+large-window and draft restoration, response selection, connection diagnostics
+and controlled error states. Separate transcript/image Time Profiler traces are
+preserved. Synthetic Git diff scroll/collapse/dismiss/reopen, selected line insertion into
+the composer and original image export passed. Physical display/second-Mac and spoken VoiceOver checks remain.
+
+Normal image testing exposed MarkdownUI loaders outside the bounded cache and an
+extensionless image decode bypass. Both now use the app cache; 13 cache/provider
+tests pass, full Mac is 2,370 total/five skips/zero failures, and 26 focused iPhone
+tests pass. The signed candidate was launched and 24 large images scrolled and
+resized. Original export remains byte-identical at full dimensions. See the
+normal-app report for measured evidence, limitations and retained artifacts.
+
+The September 8 matched UI comparison also exposed a 512-pixel preview feeding
+the bounded cache in the actual ChatView binding. It now receives original bytes.
+Full Mac tests (2,370/five skips/zero failures), the iPhone compile check and signed
+normal image-width verification passed; the test host used a separate verified
+identity to avoid the owner's cookie store. Startup first-frame median was
+339.99 ms before and 352.58 ms after for four fresh-process/warm-disk-cache
+samples; no startup speedup is claimed. Warm reopen and resize checks subsequently
+passed in four matched trials per version. Process sampling and macOS status
+confirmed that the baseline image-scroll timeout was an app hang; it reproduced
+after relaunch. The candidate stayed responsive through four image cycles. The
+candidate frame-timing capture failed on disk exhaustion and is excluded; no FPS
+comparison is claimed. Signed apps, results and traces were preserved while
+verified compiler caches/intermediates were removed and closed profiler temporary
+recordings were compressed with complete checksum verification.

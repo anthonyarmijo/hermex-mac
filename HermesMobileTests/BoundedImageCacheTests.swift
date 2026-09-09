@@ -1,11 +1,75 @@
 import XCTest
 import UIKit
+import SwiftUI
+import MarkdownUI
 @testable import HermesMobile
 
 @MainActor
 final class BoundedImageCacheTests: XCTestCase {
     private func fixture(_ size: Int = 64, alpha: Bool = false) throws -> Data {
         try PerformanceBaselineFixtures.imageData(width: size, height: size, transparent: alpha)
+    }
+
+    func testMarkdownLoaderDownsamplesAndSharesMediaCache() async throws {
+        let data = try fixture(4_096, alpha: true)
+        let cache = TranscriptMediaImageCache()
+        let url = URL(string: "https://fixture.invalid/image")!
+        let loader = TranscriptMarkdownImageLoader(namespace: "one", loadData: { reference in
+            XCTAssertEqual(reference.id, url.absoluteString)
+            return data
+        }, cache: cache)
+        let image = await loader.image(at: url)
+        let cg = try XCTUnwrap(image?.cgImage)
+        XCTAssertEqual(max(cg.width, cg.height), 2_048)
+        XCTAssertTrue([CGImageAlphaInfo.first, .last, .premultipliedFirst, .premultipliedLast].contains(cg.alphaInfo))
+        let mediaHit = await cache.image(for: .init(rawReference: url.absoluteString), cacheNamespace: "one") { _ in
+            XCTFail("Markdown and MEDIA must share their cached pixels"); return nil
+        }
+        XCTAssertTrue(image === mediaHit)
+        let other = TranscriptMarkdownImageLoader(namespace: "two", loadData: { _ in nil }, cache: cache)
+        let isolated = await other.image(at: url)
+        XCTAssertNil(isolated)
+        let snapshot = await cache.diagnosticSnapshot()
+        XCTAssertEqual(snapshot.hits, 1)
+        XCTAssertLessThanOrEqual(snapshot.costBytes, ImageCachePolicy.media.maximumCostBytes)
+    }
+
+    func testMarkdownLoaderRejectsNonHTTPAndCancelledRequests() async {
+        let loader = TranscriptMarkdownImageLoader(namespace: "reject", loadData: { _ in
+            XCTFail("Rejected request reached transport"); return nil
+        }, cache: TranscriptMediaImageCache())
+        for value in ["file:///private/image.png", "javascript:alert(1)", "data:image/png;base64,abc"] {
+            let image = await loader.image(at: URL(string: value)!)
+            XCTAssertNil(image)
+        }
+        let cancelled = Task { @MainActor in
+            withUnsafeCurrentTask { $0?.cancel() }
+            return await loader.image(at: URL(string: "https://fixture.invalid/cancelled")!)
+        }
+        let image = await cancelled.value
+        XCTAssertNil(image)
+    }
+
+    func testHostedMarkdownBlockAndInlineUseInjectedTransport() async throws {
+        let block = expectation(description: "Block provider loads through app transport")
+        let inline = expectation(description: "Inline provider loads through app transport")
+        let data = try fixture()
+        let content = VStack {
+            Markdown("![Block](https://fixture.invalid/block.png)")
+            Markdown("Before ![Inline](https://fixture.invalid/inline.png) after")
+        }.boundedTranscriptMarkdownImages(namespace: UUID().uuidString) { reference in
+            if reference.id.hasSuffix("/block.png") { block.fulfill() }
+            else if reference.id.hasSuffix("/inline.png") { inline.fulfill() }
+            else { XCTFail("Unexpected image reference") }
+            return data
+        }
+        let controller = UIHostingController(rootView: content)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 800, height: 600))
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil }
+        controller.view.layoutIfNeeded()
+        await fulfillment(of: [block, inline], timeout: 5)
     }
 
     func testCountAndByteLimitsEvictLeastRecentlyUsed() async throws {

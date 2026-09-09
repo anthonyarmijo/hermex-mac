@@ -1418,7 +1418,9 @@ struct ChatView: View {
                 await viewModel.attachmentRawData(path: path)
             },
             loadTranscriptMediaImage: { reference in
-                await viewModel.transcriptMediaThumbnailData(for: reference)
+                // The bounded image cache owns decoding and downsampling. Feeding
+                // it the 512px attachment preview also shrinks Markdown layout.
+                await viewModel.transcriptMediaData(for: reference)
             },
             loadTranscriptMediaData: { reference in
                 await viewModel.transcriptMediaData(for: reference)
