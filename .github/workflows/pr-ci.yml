@@ -17,19 +17,22 @@ name: PR CI
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, labeled, unlabeled]
+    types: [opened, synchronize, reopened, labeled, unlabeled, edited]
 
 permissions:
   contents: read
   pull-requests: read
 
 concurrency:
-  group: pr-ci-${{ github.event.pull_request.number }}
+  # Title/body edits must neither cancel validation nor publish a skipped CI
+  # Gate (GitHub accepts skipped required jobs). Base edits validate normally.
+  group: pr-ci-${{ github.event.pull_request.number }}-${{ (github.event.action != 'edited' || github.event.changes.base != null) && 'validation' || 'metadata' }}
   cancel-in-progress: true
 
 jobs:
   changes:
     name: Detect changed paths
+    if: github.event.action != 'edited' || github.event.changes.base != null
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -102,6 +105,7 @@ jobs:
 
   maintenance:
     name: Repository maintenance checks
+    if: github.event.action != 'edited' || github.event.changes.base != null
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -299,13 +303,14 @@ jobs:
           if-no-files-found: ignore
 
   gate:
-    name: CI Gate
+    name: ${{ (github.event.action != 'edited' || github.event.changes.base != null) && 'CI Gate' || 'PR metadata update' }}
     needs: [changes, maintenance, test_ios, test_mac]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Check results
+        if: github.event.action != 'edited' || github.event.changes.base != null
         run: |
           set -euo pipefail
           echo "changes: ${{ needs.changes.result }}"

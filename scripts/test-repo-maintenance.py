@@ -113,6 +113,41 @@ class CIValidationPolicyTests(unittest.TestCase):
         triggers = manual.split("\non:\n", 1)[1].split("\npermissions:", 1)[0]
         self.assertEqual(triggers.strip(), "workflow_dispatch:")
 
+    def test_base_edits_validate_without_metadata_edits_replacing_the_gate(self):
+        triggers = self.workflow.split("\non:\n", 1)[1].split("\npermissions:", 1)[0]
+        self.assertIn("edited", triggers)
+        changes = self.workflow.split("  changes:\n", 1)[1].split("    steps:", 1)[0]
+        maintenance = self.workflow.split("  maintenance:\n", 1)[1].split("    steps:", 1)[0]
+        gate = self.workflow.split("  gate:\n", 1)[1]
+        group = next(line for line in self.workflow.splitlines() if line.startswith("  group:"))
+        name = next(line for line in gate.splitlines() if line.startswith("    name:"))
+        # Execute the boolean/string subset used by these actual workflow
+        # expressions. Payload fields are substituted as Python literals; no
+        # API data or workflow shell is evaluated by this test.
+        def evaluate(expression, action, base):
+            expression = expression.replace("github.event.action", repr(action))
+            expression = expression.replace("github.event.changes.base", repr(base))
+            expression = expression.replace("null", "None").replace("&&", "and").replace("||", "or")
+            return eval(expression, {"__builtins__": {}}, {})
+
+        cases = [("opened", None, True), ("synchronize", None, True),
+                 ("labeled", None, True), ("unlabeled", None, True),
+                 ("reopened", None, True), ("edited", None, False),
+                 ("edited", {"ref": {"from": "issue/previous-base"}}, True)]
+        for action, base, validates in cases:
+            with self.subTest(action=action, base=base):
+                for job in (changes, maintenance):
+                    condition = next(line.split("if: ", 1)[1] for line in job.splitlines() if "if: " in line)
+                    self.assertEqual(evaluate(condition, action, base), validates)
+                gate_condition = next(line.split("if: ", 1)[1] for line in gate.splitlines()
+                                      if line.startswith("        if:"))
+                self.assertEqual(evaluate(gate_condition, action, base), validates)
+                gate_name = evaluate(name.split("${{", 1)[1].split("}}", 1)[0], action, base)
+                self.assertEqual(gate_name, "CI Gate" if validates else "PR metadata update")
+                group_suffix = evaluate(group.rsplit("${{", 1)[1].split("}}", 1)[0], action, base)
+                self.assertEqual(group_suffix, "validation" if validates else "metadata")
+        self.assertIn("    if: always()", gate)
+
 
 class DigestTests(unittest.TestCase):
     def compose(self, report):

@@ -129,6 +129,25 @@ suite is explicitly requested, or manually dispatch **iPhone Compatibility**.
 There is no scheduled iPhone suite. Explicit full-suite labels run even on
 documentation-only PRs; otherwise non-app changes skip both app jobs.
 
+Merge dependent PRs one at a time, from the bottom of their stack. Retarget the
+next PR to `dev`, update it with the current base, and wait for its new **CI Gate**
+before merging. Base-branch edits trigger fresh PR CI against the new merge
+candidate. Title/body edits use a separate **PR metadata update** check and
+concurrency group, so they cannot cancel validation or replace the required gate
+with a skipped success. They do not rerun app suites.
+
+Both `dev` and `master` require an up-to-date **CI Gate**, including for admins;
+neither requires a human review approval. This protects integration without an
+extra reviewer gate. Maintainer authorization to merge/publish still applies as
+described in `AGENTS.md`; one approval can cover a described release sequence.
+Approval or merging a PR does not publish an installer. **Mac Release** remains
+a separately dispatched workflow with the existing `mac-release` environment.
+
+After merging, retire feature branches only after verifying the current remote
+tip is included in the integration branch. Preserve uncommitted/unique work and
+benchmark, profiling, final test and installer evidence before removing a local
+worktree or rebuildable output. Do not delete an active checkout.
+
 Agent/MCP flow:
 
 - Call `session_show_defaults` before the first local build/run/test.
