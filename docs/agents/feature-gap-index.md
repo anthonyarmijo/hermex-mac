@@ -159,9 +159,10 @@ implementation**, not pre-cached in this index. When you pick up a `roadmap` row
 6. Add focused tests for endpoint path/query/body construction and tolerant model
    decoding.
 7. Run focused Mac Catalyst tests for the touched area, then the full Mac
-   Catalyst suite before review. Add focused iPhone validation for shared or
-   platform-sensitive changes; reserve the full iPhone suite for upstream
-   Hermex syncs and explicit compatibility work.
+   Catalyst suite before review. Ordinary Mac work needs no iPhone validation.
+   Compile the iPhone target during upstream Hermex integrations; run its full
+   suite only when explicitly requested for compatibility work or an upstream
+   contribution.
 8. For `write`/`exec`/`secret`/`admin`/`privacy` surfaces, add explicit
    confirmation copy and avoid default-on dangerous behavior.
 9. At wrap-up or completed-slice handoff, update `CURRENT.md`,

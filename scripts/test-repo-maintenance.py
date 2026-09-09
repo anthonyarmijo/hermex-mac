@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""Regression checks for release gates and GitHub digest size limits."""
+"""Regression checks for CI policy, release gates and GitHub digest limits."""
 
 import importlib.machinery
 import importlib.util
+import json
+import os
 from pathlib import Path
 import tempfile
 import subprocess
+import textwrap
 import unittest
 
 
@@ -19,6 +22,96 @@ def load(name):
 digest = load("compose-upstream-watch-issue")
 notes = load("verify-release-notes")
 client_watch = load("upstream-client-watch")
+
+
+class CIValidationPolicyTests(unittest.TestCase):
+    """Execute the actual workflow classifier with deterministic GitHub responses."""
+
+    root = Path(__file__).resolve().parent.parent
+    workflow = (root / ".github/workflows/pr-ci.yml").read_text()
+
+    def classify(self, files, labels="", branch="issue/42-mac-fix", patch="", fail_api=False):
+        script = textwrap.dedent(self.workflow.split("        run: |\n", 1)[1]
+                                 .split("\n  maintenance:", 1)[0])
+        script = script.replace("${{ github.repository }}", "fixture/repo")
+        script = script.replace("${{ github.event.pull_request.number }}", "42")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            gh = root / "gh"
+            gh.write_text("#!/usr/bin/env python3\n" + textwrap.dedent('''\
+                import json, os, sys
+                fixture = json.loads(os.environ["CI_POLICY_FIXTURE"])
+                if fixture["fail_api"]:
+                    sys.exit(1)
+                query = sys.argv[-1]
+                key = "patch" if "select(.filename" in query else "files" if "filename" in query else "labels"
+                print(fixture[key])
+                '''))
+            gh.chmod(0o755)
+            output = root / "outputs"
+            result = subprocess.run(["bash", "-c", script], text=True, capture_output=True,
+                env={**os.environ, "PATH": f"{root}{os.pathsep}{os.environ['PATH']}",
+                     "HEAD_REF": branch, "GITHUB_OUTPUT": str(output),
+                     "CI_POLICY_FIXTURE": json.dumps(dict(files=files, labels=labels,
+                                                          patch=patch, fail_api=fail_api))})
+            if fail_api:
+                self.assertNotEqual(result.returncode, 0)
+                return
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return dict(line.split("=", 1) for line in output.read_text().splitlines())
+
+    def expected(self, mac=False, compile=False, full=False):
+        return {"run_tests": str(mac).lower(), "run_iphone_compile": str(compile).lower(),
+                "run_iphone_tests": str(full).lower()}
+
+    def test_ordinary_shared_changes_run_mac_only(self):
+        self.assertEqual(self.classify("HermesMobile/Features/Chat/ChatView.swift"),
+                         self.expected(mac=True))
+
+    def test_upstream_integrations_compile_without_full_suite(self):
+        for labels, branch in [("upstream-integration", "issue/42-upstream"),
+                               ("", "upstream/v1.7"), ("", "sync/upstream-20260909")]:
+            with self.subTest(labels=labels, branch=branch):
+                self.assertEqual(self.classify("HermesMobile/Models/Message.swift", labels, branch),
+                                 self.expected(mac=True, compile=True))
+
+    def test_full_suite_is_explicit_even_without_app_changes(self):
+        for files, mac in [("HermesMobile/Models/Message.swift", True), ("README.md", False)]:
+            with self.subTest(files=files):
+                self.assertEqual(self.classify(files, "bug\nfull-iphone-tests"),
+                                 self.expected(mac=mac, compile=True, full=True))
+
+    def test_documentation_and_workflow_changes_skip_app_jobs(self):
+        files = "AGENTS.md\n.github/workflows/pr-ci.yml\nscripts/test-repo-maintenance.py"
+        self.assertEqual(self.classify(files), self.expected())
+        self.assertEqual(self.classify(files, "upstream-integration", "upstream/docs"), self.expected())
+
+    def test_version_only_exception_preserves_other_project_checks(self):
+        project = "HermesMobile.xcodeproj/project.pbxproj"
+        version = "- CURRENT_PROJECT_VERSION = 1;\n+ CURRENT_PROJECT_VERSION = 2;"
+        self.assertEqual(self.classify(project, patch=version), self.expected())
+        for patch in ("", version + "\n+ SWIFT_VERSION = 6.0;"):
+            with self.subTest(patch=patch):
+                self.assertEqual(self.classify(project, patch=patch), self.expected(mac=True))
+
+    def test_unknown_paths_and_similar_labels_do_not_skip_mac_or_opt_in_iphone(self):
+        self.assertEqual(self.classify("Config/Unrecognized.xcconfig",
+                                       "not-full-iphone-tests\nnot-upstream-integration"),
+                         self.expected(mac=True))
+
+    def test_api_failure_fails_classification(self):
+        self.classify("README.md", fail_api=True)
+
+    def test_job_wiring_and_manual_only_compatibility_workflow(self):
+        iphone = self.workflow.split("  test_ios:\n", 1)[1].split("  test_mac:\n", 1)[0]
+        mac = self.workflow.split("  test_mac:\n", 1)[1].split("  gate:\n", 1)[0]
+        self.assertIn("if: needs.changes.outputs.run_iphone_compile == 'true'", iphone)
+        self.assertIn("if: needs.changes.outputs.run_iphone_tests == 'true'", iphone)
+        self.assertIn("if: needs.changes.outputs.run_tests == 'true'", mac)
+        self.assertIn("needs: [changes, maintenance, test_ios, test_mac]", self.workflow)
+        manual = (self.root / ".github/workflows/iphone-compatibility.yml").read_text()
+        triggers = manual.split("\non:\n", 1)[1].split("\npermissions:", 1)[0]
+        self.assertEqual(triggers.strip(), "workflow_dispatch:")
 
 
 class DigestTests(unittest.TestCase):
