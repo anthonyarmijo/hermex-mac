@@ -1,0 +1,32 @@
+#!/usr/bin/env python3
+"""Validate curated Mac release notes before testing, signing, or publishing."""
+
+import argparse
+from pathlib import Path
+
+
+def validate(path: Path) -> None:
+    notes = path.read_text(encoding="utf-8")
+    if not notes.strip():
+        raise ValueError("release notes are empty")
+    if "REPLACE" in notes:
+        raise ValueError("release notes still contain a REPLACE marker")
+    lines = notes.splitlines()
+    for heading in ("## Highlights", "## Known issues"):
+        if heading not in lines:
+            raise ValueError(f"release notes are missing {heading}")
+        start = lines.index(heading) + 1
+        end = next((i for i in range(start, len(lines)) if lines[i].startswith("## ")), len(lines))
+        if not any(line.strip() for line in lines[start:end]):
+            raise ValueError(f"release notes have an empty {heading} section")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("path", type=Path)
+    args = parser.parse_args()
+    try:
+        validate(args.path)
+    except (OSError, ValueError) as error:
+        parser.exit(1, f"Invalid release notes {args.path}: {error}\n")
+    print(f"Release notes valid: {args.path}")

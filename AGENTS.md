@@ -24,8 +24,18 @@ truth — if a request conflicts with it, stop and ask. Read by every agent
   `chore/` or `fix/`). Issue/triage/domain conventions live in `docs/agents/`.
 - `master` is the protected Mac release-candidate branch: keep it buildable and
   never do feature work directly on it.
-- Pushing a branch, opening/updating a PR, or merging needs explicit human approval.
-  Triage bot/review comments before accepting them.
+- A human-selected implementation or cleanup task authorizes the routine work
+  needed to finish it: local edits, validation, commits, feature-branch pushes,
+  and opening/updating a PR in this fork. Do not ask again at each step. An
+  explicit local-only/draft-only request overrides this default. Triage review
+  comments, address relevant findings, and follow CI through completion.
+- Merging into `dev` or `master` and publishing a release still need explicit
+  approval. One approval may cover a clearly described sequence of merges,
+  tagging, signing/notarization, and publication; do not request it again for
+  each step already included. Ask again only if scope or material risk changes.
+- For `needs-manual-validation`, prepare and push a draft PR while automated
+  work continues. Keep it draft and do not merge until the requested manual
+  checks pass; use one final manual check instead of a gate at every stage.
 
 ## Hard rules
 1. **Never invent API endpoints or JSON shapes.** Verify in this precedence order:
@@ -39,8 +49,16 @@ truth — if a request conflicts with it, stop and ask. Read by every agent
 2. **No new third-party dependencies** beyond the spec's locked list without approval.
 3. **Tolerant decoding:** every `Codable` model uses optionals for fields upstream
    might add/rename. Never crash on unknown fields.
-4. **No destructive commands** (`rm -rf`, `git push --force`, anything touching
-   `~/Library/LaunchAgents/` or restarting Mac services). Suggest them; let the human run them.
+4. **Preserve unique work and live state.** Within an approved cleanup task,
+   remove explicitly identified rebuildable outputs and retire merged local or
+   remote feature branches/worktrees without another prompt. First verify paths,
+   merged ancestry and current remote tips, and preserve any unique or uncommitted
+   files in a verified backup. Keep benchmark reports, traces, final test results,
+   and signed profiling builds. Never remove an active checkout or use broad
+   cleanup commands such as `git clean -fdx` or an unchecked recursive wildcard.
+   Deleting unmerged work or user data, force-pushing, changing LaunchAgents,
+   restarting services, and changing server/network settings require explicit
+   authorization for that operation; routine cleanup authorization does not cover them.
 5. **Don't commit broken builds.** If a build or test fails, fix it before writing more code.
 
 ## Tooling
@@ -75,8 +93,19 @@ bundle ID `com.anthonyarmijo.hermex` · Team `8UV3BJB6XS` · Mac releases use th
 The `Mac Release` GitHub Actions workflow accepts an existing tag from current
 `master`, validates the Mac suite, signs and notarizes the universal app and DMG,
 and creates a draft GitHub Release. Dispatching that workflow, pushing its tag,
-or publishing its draft always requires explicit human approval. Full local and
-CI instructions live in `DEVELOPMENT.md`.
+or publishing its draft requires explicit human approval, which may authorize
+that complete release sequence once the candidate and notes are reviewable.
+Existing GitHub environment gates remain in place. Full local and CI instructions
+live in `DEVELOPMENT.md`.
+
+Every Mac release must include reviewed, user-facing notes at
+`docs/releases/mac-vX.Y.Z.md` before its tag is created. When preparing those
+notes, Codex must compare the release candidate with the previous Mac release
+tag and inspect the included PR bodies, issues, and commits. Summarize observable
+benefits and fixes in plain language, account for every notable user-facing
+change, and call out known issues. GitHub's generated PR list is supplemental;
+never treat it as the changelog. Show the draft notes to the maintainer for
+review before asking permission to tag or dispatch the release workflow.
 
 ## Working with the human
 - Surface tradeoffs in plain English before non-obvious choices; when in doubt, ask.

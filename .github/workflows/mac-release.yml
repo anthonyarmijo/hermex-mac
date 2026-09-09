@@ -88,6 +88,8 @@ jobs:
             echo "Tag version ${expected_version} does not match Mac MARKETING_VERSION ${resolved_version}." >&2
             exit 1
           fi
+
+          scripts/verify-release-notes "docs/releases/${RELEASE_TAG}.md"
           echo "RELEASE_VERSION=${resolved_version}" >> "${GITHUB_ENV}"
 
       - name: Show Xcode version
@@ -136,6 +138,7 @@ jobs:
       APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
       APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
       GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
 
     steps:
       - name: Check out the release tag
@@ -184,6 +187,7 @@ jobs:
           fi
           {
             echo "RELEASE_VERSION=${release_version}"
+            echo "RELEASE_NOTES_PATH=docs/releases/${RELEASE_TAG}.md"
             echo "BUILD_NUMBER=${build_number}"
             echo "RELEASE_ROOT=${RUNNER_TEMP}/mac-release"
             echo "DIST_DIR=${RUNNER_TEMP}/mac-release/dist"
@@ -286,10 +290,15 @@ jobs:
             exit 1
           fi
 
-          release_notes="$(printf '%s\n\n%s\n\n%s\n' \
-            'Hermex for Mac is a macOS-focused fork of the original Hermex iPhone client.' \
-            'Download the DMG, drag Hermex to Applications, and connect it to your self-hosted hermes-webui server. Requires macOS 15 or later; includes Apple silicon and Intel slices.' \
-            'Updates are manual in this release. Verify the download with the attached SHA-256 file.')"
+          scripts/verify-release-notes "${RELEASE_NOTES_PATH}"
+
+          release_body="${RUNNER_TEMP}/Hermex-${RELEASE_VERSION}-release-notes.md"
+          {
+            printf '%s\n\n' 'Hermex for Mac is a macOS-focused fork of the original Hermex iPhone client.'
+            printf '%s\n\n' 'Download the DMG, drag Hermex to Applications, and connect it to your self-hosted hermes-webui server. Requires macOS 15 or later; includes Apple silicon and Intel slices.'
+            printf '%s\n\n' 'Updates are manual in this release. Verify the download with the attached SHA-256 file.'
+            cat "${RELEASE_NOTES_PATH}"
+          } > "${release_body}"
 
           gh release create "${RELEASE_TAG}" \
             "${DIST_DIR}/${DMG_NAME}" \
@@ -297,7 +306,7 @@ jobs:
             --draft \
             --verify-tag \
             --title "Hermex for Mac ${RELEASE_VERSION}" \
-            --notes "${release_notes}" \
+            --notes-file "${release_body}" \
             --generate-notes
 
       - name: Clean temporary signing material

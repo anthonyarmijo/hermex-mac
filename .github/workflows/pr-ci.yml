@@ -49,7 +49,7 @@ jobs:
           echo "${files}"
           # Fail closed for application/config changes. Documentation and
           # workflow-only changes do not validate application behavior.
-          app_changes=$(echo "${files}" | grep -vE '^(docs/.*|LICENSE|\.gitignore|\.github/.*|.*\.md)$' || true)
+          app_changes=$(echo "${files}" | grep -vE '^(docs/.*|LICENSE|\.gitignore|\.github/.*|.*\.md|scripts/(compose-upstream-watch-issue|verify-release-notes|test-repo-maintenance\.py))$' || true)
 
           # A project-file-only marketing/build version bump cannot affect
           # compilation or runtime behavior, so avoid spending two macOS
@@ -89,6 +89,23 @@ jobs:
           else
             echo "run_iphone_tests=false" >> "$GITHUB_OUTPUT"
           fi
+
+  maintenance:
+    name: Repository maintenance checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+      - name: Test digest and release-note guards
+        run: python3 scripts/test-repo-maintenance.py
+      - name: Validate curated release notes
+        run: |
+          set -euo pipefail
+          for notes in docs/releases/mac-v*.md; do
+            [[ -f "${notes}" ]] || continue
+            scripts/verify-release-notes "${notes}"
+          done
 
   test_ios:
     name: iPhone Compatibility
@@ -273,7 +290,7 @@ jobs:
 
   gate:
     name: CI Gate
-    needs: [changes, test_ios, test_mac]
+    needs: [changes, maintenance, test_ios, test_mac]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -286,6 +303,10 @@ jobs:
           echo "test-mac: ${{ needs.test_mac.result }}"
           if [[ "${{ needs.changes.result }}" != "success" ]]; then
             echo "Path detection failed — failing the gate." >&2
+            exit 1
+          fi
+          if [[ "${{ needs.maintenance.result }}" != "success" ]]; then
+            echo "Repository maintenance checks failed — failing the gate." >&2
             exit 1
           fi
           for result in "${{ needs.test_ios.result }}" "${{ needs.test_mac.result }}"; do
