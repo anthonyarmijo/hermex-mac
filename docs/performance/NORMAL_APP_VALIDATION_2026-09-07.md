@@ -165,3 +165,15 @@ tests were run against the owner's restored cookie store.
 
 See [the matched comparison](NORMAL_APP_COMPARISON_2026-09-08.md) for four
 fresh-process startup samples per version, exact method and remaining timing gaps.
+
+## Final corrected normal app — September 8
+
+The production image-input correction at `1eaa41c` was built again with the
+ordinary Mac identity, without running hosted tests against that identity.
+Strict signature verification passed. The previous app quit normally, and the
+corrected signed build restored the selected existing chat and empty composer.
+Connection Status freshly reported Reachable and Signed in, with a 4 ms health
+response. The status sheet was closed afterward. Both disposable benchmark apps
+were quit and the verified agent-owned loopback fixture process was stopped.
+No password, server setting or existing chat was changed. The old signed build
+remains preserved; only the corrected normal build was left running.

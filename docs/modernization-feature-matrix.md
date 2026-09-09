@@ -1,10 +1,10 @@
 # Mac modernization feature and parity matrix
 
-Snapshot: September 7, 2026. Published Mac 1.1.0 remains unchanged. The reviewed
+Snapshot: September 8, 2026. Published Mac 1.1.0 remains unchanged. The reviewed
 feature candidate integrates stable upstream Hermex v1.6.0 at
 `2eeb25651e91635ecd01850aaa50bc70af643876` plus composer-selection correction
-`9c618bd5d88e8af3495ffd2a652fee77f288903c`. A fresh release lookup still identifies
-v1.6.0 as upstream's latest published stable release. Post-stable account-limit
+`9c618bd5d88e8af3495ffd2a652fee77f288903c`. The selection-time release lookup identified
+v1.6.0 as upstream's latest published stable release; that target stays fixed for this run. Post-stable account-limit
 Usage work and the 1.7 release-train change are excluded and appear in the
 separate client drift report.
 
@@ -16,7 +16,7 @@ separate client drift report.
 | Composer/drafts | Caret skill completion, skill/file chips, attachment-only sends, durable text/attachment/settings drafts | Gesture correction added; Mac Return/Shift-Return preserved; legacy draft migration/no-resurrection tested |
 | Streaming/recovery | Partial-run recovery, late-event guards, session-aware replay; bounded July buffer retained | Full shared suites and repeated byte-identical synthetic replay; no live generated chat in this run |
 | Offline cache | Background actor writes and bounded newest-page reads retained; new turn metadata persists | Repeated 50/500/5000 fixtures, two warm-write fetches, main-thread snapshot timing; old text defaults retained for recovery |
-| Images | Count/byte caps, ImageIO thumbnails, alpha/orientation, authenticated namespace isolation and cancellation | 13 cache/provider tests and unique-4K stress; remote Markdown and extensionless MEDIA bounded in #25; normal 24-image scroll and byte-identical original export passed; production input corrected to original bytes and normal image width reverified |
+| Images | Count/byte caps, ImageIO thumbnails, alpha/orientation, authenticated namespace isolation and cancellation | 13 cache/provider tests and unique-4K stress; remote Markdown and extensionless MEDIA bounded in #25; normal 24-image scroll and byte-identical original export passed; production input corrected to original bytes and normal image width reverified; old baseline hung twice in image scrolling, corrected candidate completed four cycles; no paired FPS claim |
 | Workspace/Git | Lazy file tree, source highlighting, unified multi-file review, prepared rows once per response | Actual directory/Git metadata reads; parser/selection/layout/canvas tests; normal diff scrolling/collapse/dismiss/reopen and selected line insertion into the composer passed |
 | Tasks/Usage | Agenda, filters/recent/history, model/provider/profile selection, time-window charts | Read responses decode; deterministic mutation/chart tests; no live task execution |
 | Kanban | Normal navigation, board/card workflows, bulk actions, dispatcher and per-server restoration | Configuration/board reads decode; full deterministic coverage; no live mutations or worker dispatch |
@@ -29,7 +29,9 @@ separate client drift report.
 | Mac idiom experiment | Existing scaled mode retained | Alternate runtime proved but Git/source surface raises unsupported-control exception; experiment rejected for this release |
 
 The full Mac and iPhone suites validate shared code and deterministic contracts;
-they do not substitute for the explicitly pending normal-app/manual scenarios.
+they do not substitute for the remaining physical-display, second-Mac and spoken
+VoiceOver checks. Repeated normal-process startup, warm reopen and resize results
+and the image-scroll failure comparison are in the September 8 performance report.
 See modernization-status.md, server-compatibility-2026-09-07.md and the individual
 performance reports for counts and limitations.
 

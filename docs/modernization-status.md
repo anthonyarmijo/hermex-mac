@@ -230,10 +230,12 @@ coexist with higher large-cache-write and short-stream timings; those concerns
 are recorded rather than hidden. The allocation trace is retained, but the CLI
 export supplied no usable allocation-size/lifetime table. Normal UI scroll/resize and accessibility-label checks subsequently passed, as
 recorded below. Four matched fresh-process startup samples per version are now recorded in the
-[normal-app comparison](performance/NORMAL_APP_COMPARISON_2026-09-08.md). Warm
-activation and controlled scroll/resize timings remain outstanding.
+[normal-app comparison](performance/NORMAL_APP_COMPARISON_2026-09-08.md). Warm reopen and controlled resize workflows subsequently completed four matched
+trials per version. Their durations include automation overhead. The baseline
+image workload hung twice; the corrected candidate completed four cycles. No
+paired FPS or peak-memory result is available from the failed frame capture.
 Physical second-display/remote-Mac checks still require owner equipment. The
-goal remains open for the missing performance measurements.
+remaining owner checks and publication are listed in the approval package.
 
 Review deliverables:
 
@@ -269,5 +271,11 @@ Full Mac tests (2,370/five skips/zero failures), the iPhone compile check and si
 normal image-width verification passed; the test host used a separate verified
 identity to avoid the owner's cookie store. Startup first-frame median was
 339.99 ms before and 352.58 ms after for four fresh-process/warm-disk-cache
-samples; no startup speedup is claimed. Native control timeouts leave warm
-activation and repeated scroll/resize timing unfinished.
+samples; no startup speedup is claimed. Warm reopen and resize checks subsequently
+passed in four matched trials per version. Process sampling and macOS status
+confirmed that the baseline image-scroll timeout was an app hang; it reproduced
+after relaunch. The candidate stayed responsive through four image cycles. The
+candidate frame-timing capture failed on disk exhaustion and is excluded; no FPS
+comparison is claimed. Signed apps, results and traces were preserved while
+verified compiler caches/intermediates were removed and closed profiler temporary
+recordings were compressed with complete checksum verification.

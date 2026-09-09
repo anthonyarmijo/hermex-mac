@@ -1,8 +1,8 @@
 # Mac modernization review and release package
 
 Updated September 8, 2026. Engineering changes are committed in the PR stack
-below; remaining normal-app performance measurements, publication and the remaining
-owner-equipment checks are pending. This document
+below. Repeated normal-app comparisons are recorded with their limitations;
+publication and the remaining owner-equipment checks are pending. This document
 does not authorize a protected merge, release or live-server change.
 
 Read the curated [Mac 1.1.1 notes](releases/mac-v1.1.1.md) and
@@ -38,6 +38,22 @@ The final row avoids putting a commit's own hash inside its content. Verify the
 PR's current head against the recorded SHA before executing this sequence.
 All earlier PR checks are green at these heads. The final PR records its own
 CI outcome. Draft UI PRs remain draft until the applicable checks below pass.
+
+## Release choice after the baseline hang
+
+Prefer the complete 1.2.0 feature candidate for the next release. The separate
+1.1.1 patch remains available for review, but its ancestor reproduced an
+image-scroll hang and the exact patch binary has not passed that reproduction.
+Do not assume the window correction resolves that separate behavior. Publishing
+the patch first should wait for that check or an explicit acceptance of this
+known risk. Keeping the small patch reviewable does not require publishing it.
+
+For a single 1.2.0 release, merge the reviewed #6, #9 and #23 changes into dev,
+then the feature rows in order, following checks at each changed base. Skip the
+intermediate dev-to-master promotion, 1.1.1 tag and publication. Proceed directly
+to the validated 1.2.0 promotion and release described in step 5 below. The two
+release sequence is retained as an optional alternative, subject to the patch
+check and owner choice. Neither sequence is authorized by this document.
 
 ## One promotion and publication sequence
 
@@ -97,11 +113,17 @@ The remaining owner checklist is:
 
 Normal transcript and image-scroll Time Profiler captures exist. Four matched
 fresh-process samples per version now measure process exec through initial frame:
-339.99 ms median before, 352.58 ms after, with warm disk caches. Warm activation
-and controlled scroll/resize timing remain unfinished because native control is
-timing out. These gaps must not be presented as wins or engineering completion.
+339.99 ms median before, 352.58 ms after, with warm disk caches. Warm reopen
+and controlled resize workflows have now completed four trials per version;
+their durations include automation overhead. The baseline image workload hung
+twice, while the corrected candidate completed four cycles. A failed candidate
+frame capture leaves no paired FPS or peak-memory result. Do not present these
+limits as a universal speedup.
 The production image-input correction passed full Mac tests in a separate test
-identity, iPhone compilation and normal image-width verification.
+identity, iPhone compilation and normal image-width verification. The corrected
+normal app was then built with the ordinary Mac identity, signed and launched;
+it restored the existing chat and freshly verified Reachable/Signed in. The
+resize trace recorded no detected stalls over 250 ms for either benchmark app.
 
 Actual generation or session/task/Kanban mutations need a specifically approved
 disposable-data smoke as described in the compatibility report. They have not

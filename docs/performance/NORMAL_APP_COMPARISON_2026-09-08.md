@@ -2,12 +2,15 @@
 
 This continues the [integrated measurements](INTEGRATED_MODERNIZATION_2026-09-07.md)
 and [normal UI validation](NORMAL_APP_VALIDATION_2026-09-07.md). The investigation
-is still in progress. Fresh-process startup has repeated measurements; warm
-activation and controlled image-scroll/resize comparisons are not yet complete.
+includes repeated fresh-process launches, warm reopen and window-resize checks,
+and an image-scroll comparison with a reproducible baseline failure. The limits
+below distinguish app lifecycle measurements from automation timings.
 
 ## Isolation and method
 
-The baseline is `6ceaa5c`; the candidate app code is `60a356a`. Both were built
+The baseline is `6ceaa5c`. Startup used candidate `60a356a`; subsequent warm
+reopen, resizing and image scrolling used `1eaa41c`, which corrects the production
+image input described below. The text-startup code is unchanged. Both were built
 with Xcode 26.6, arm64 Debug Mac Catalyst, coverage disabled, on the same M4 Mac
 with 24 GB RAM and macOS 26.6.2. They use separate development-signed bundle IDs,
 containers, Keychain services and app-group identifiers. Xcode automatic
@@ -68,20 +71,85 @@ re-encoding step. The full signed Mac suite passed with 2,370 tests, five expect
 failures in a verified separate test identity; the iPhone simulator build passed.
 The corrected signed normal app then displayed the same large image at the
 baseline width in matching 1,024 × 768 captures. The existing raw-data/export
-path is unchanged. The matched scroll/resize timing comparison remains pending;
-earlier captures with the smaller image footprint are not evidence of
-equivalent-layout performance.
+path is unchanged. Earlier captures with the smaller image footprint are not
+evidence of equivalent-layout performance.
 
-Native automation subsequently timed out while reading the benchmark window.
-The attempted scroll/resize setup is excluded from quantitative results. Warm
-activation and repeated controlled scroll/resize timing still need a working
-native control path; this is a validation gap, not evidence of an app hang.
+## Image scrolling: baseline hangs, candidate stays responsive
+
+The first apparent native-control failure was subsequently confirmed as a real
+baseline app hang. Outside the recorded reproduction, macOS marked Hermex Before
+“not responding”; it consumed about 100% of one CPU, and all 781 main-thread
+samples were in SwiftUI/AttributeGraph layout and transaction work. Its sampled
+physical footprint was 1.2 GB, with a 1.3 GB peak. These are process measurements,
+not the bounded cache's retained-byte count or a matched memory comparison.
+
+After relaunching, the same 24-image fixture reproduced the failure under an
+app-scoped Animation Hitches/Time Profiler capture. Starting at image 24 in a
+1,024 × 768 capture, each cycle scrolled up six pages, down six pages, then used
+Scroll to latest when available. The baseline completed one cycle and hung on
+the second. Another process sample showed roughly one CPU busy and a 1.0 GB
+physical footprint, with a 1.2 GB peak. Only the disposable benchmark process was
+force-quit; the ordinary user app and its data were untouched.
+
+The corrected candidate completed four cycles without a timeout and remained
+responsive afterward. Three immediate end-of-cycle observations included image
+24; the third was taken during a transient layout state, and the next cycle and
+final observation showed image 24. Native scroll inertia produced different
+visible row ranges between cycles and versions. This supports the responsiveness
+finding, not a claim of identical per-frame workloads or a measured FPS gain.
+The versions differ in multiple upstream and cache changes, so this does not
+isolate the cause of the baseline hang or prove one cache change fixed it.
+
+The baseline reproduction trace saved successfully. The candidate's Animation
+Hitches capture failed during saving after profiler temporary files exhausted
+disk space; it is excluded from quantitative comparison. Its successful native
+interactions remain recorded separately. There is no valid paired hitch/FPS or
+peak-memory result from that attempt. The older patch candidate was not tested
+with this reproduction and must not be assumed to resolve the baseline failure.
+
+## Warm reopen and controlled resizing
+
+Both processes remained running with the same cached 512-message text transcript.
+Finder brought each app back to the foreground four times. Every first subsequent
+accessibility observation contained message 512. Four paired resize cycles per
+version changed the captured window from 1,024 × 768 to 864 × 648 and back.
+All 16 small/large observations retained message 512, and every captured size
+matched the requested comparison geometry. These are screenshot pixels, not
+independently measured native desktop points. The normal available-display
+expansion/full-screen checks are recorded separately in the UI validation report.
+
+The following values measure the complete automation workflow. Warm reopen runs
+from Finder's Open action through the accessibility observation. A resize cycle
+includes both drags, two screenshot encodings and two accessibility observations.
+They include tool dispatch/waits and therefore cannot establish intrinsic app
+latency, animation smoothness or a percentage performance improvement.
+
+| Workflow, four samples each | Baseline median | Candidate median | Baseline range | Candidate range |
+| --- | ---: | ---: | ---: | ---: |
+| Already-running app reopen → cached content observed | 1,357 ms | 1,462 ms | 1,063–1,496 ms | 1,375–1,618 ms |
+| Shrink + expand + content/geometry observations | 3,182.5 ms | 2,091 ms | 3,064–3,513 ms | 1,616–3,087 ms |
+
+A matched 90-second Time Profiler trace was saved for these actions. Its
+`potential-hangs` table, configured to include stalls longer than 250 ms,
+contained zero entries for either benchmark app. This does not establish FPS
+or exclude shorter stalls. Process-cold
+startup is represented by the earlier fresh-process launches, and the warm case
+here means reopening an already-running app. Neither represents reboot-cold disk
+caches. Range is reported instead of a statistically unsupported percentile tail.
+The workflows completed; their overhead prevents a universal responsiveness claim.
 
 ## Retained local evidence
 
 The ignored `normal-benchmark` directory contains signed profiling copies and
 their manifests, build/signing logs, `MatchedForegroundLaunches.trace`, lifecycle
-XML, per-process results, summary statistics and automation observations. The
+XML, per-process results, summary statistics, `MatchedWarmResize.trace`, resize
+and warm-reopen observations, image-scroll actions and both baseline hang samples. The
 fixture source and request log are preserved separately. Failed initial signing
 attempts and background-launch pilots are recorded and excluded from the results.
 No private server address, credential or user transcript is included here.
+
+Seven compiler module-cache directories and seven compiler-intermediate
+directories were removed after verifying no build was active; signed products
+and final results were preserved. Two closed profiler temporary recordings were
+compressed and their complete decompressed SHA-256 checksums verified before
+removing the redundant originals. Cleanup manifests and the archives are retained.
