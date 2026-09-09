@@ -9,6 +9,69 @@ import UniformTypeIdentifiers
 @testable import HermesMobile
 
 final class TranscriptMessageTests: XCTestCase {
+    #if targetEnvironment(macCatalyst)
+    @MainActor
+    func testLongMacTranscriptVirtualizesRowsAndDeliversScrollMetrics() async throws {
+        let messages = (1...512).map { index in
+            ChatMessage(
+                role: index.isMultiple(of: 2) ? "assistant" : "user",
+                content: "Cached message \(index)\n\n"
+                    + String(repeating: "A variable-height paragraph with emoji 👩🏽‍💻 and cafe\u{301}. ", count: 30)
+                    + "\n\n```swift\nlet message = \(index)\n```",
+                timestamp: Double(index), messageId: "long-\(index)"
+            )
+        }
+        let transcript = ChatViewModel.transcriptMessages(from: messages)
+        var evaluatedIDs = Set<String>()
+        var metrics: [ChatScrollMetrics] = []
+        let committed = expectation(description: "Long transcript frame committed")
+        let latestRendered = expectation(description: "Latest message rendered")
+        let metricsReceived = expectation(description: "Initial list metrics delivered")
+        let scrolled = expectation(description: "Scrolled list metrics delivered")
+        var requestedScroll = false
+        var reportedScroll = false
+        let view = makeDiagnosticTranscriptView(
+            messages: messages, transcriptMessages: transcript,
+            marker: CacheFirstRenderMarker(sessionID: "long-list", generation: 1),
+            onMessageRowEvaluation: {
+                if evaluatedIDs.insert($0.id).inserted && $0.id == "long-512" { latestRendered.fulfill() }
+            },
+            onMetrics: {
+                if metrics.isEmpty { metricsReceived.fulfill() }
+                metrics.append($0)
+                if requestedScroll && !reportedScroll && $0.distanceFromBottom > 100 {
+                    reportedScroll = true
+                    scrolled.fulfill()
+                }
+            },
+            onCommitted: { _ in committed.fulfill() }
+        )
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 900, height: 700)
+        window.rootViewController = UIHostingController(rootView: view)
+        defer { window.isHidden = true; window.rootViewController = nil }
+        window.makeKeyAndVisible()
+        window.layoutIfNeeded()
+        await fulfillment(of: [committed, latestRendered, metricsReceived], timeout: 5)
+        XCTAssertFalse(metrics.isEmpty, "The real List must connect its row probes")
+        XCTAssertTrue(evaluatedIDs.contains("long-512"), "Opening a transcript must reach its latest row")
+        XCTAssertLessThan(evaluatedIDs.count, 128, "Do not eagerly render the full 512-message history")
+
+        func collection(in view: UIView) -> UICollectionView? {
+            if let found = view as? UICollectionView { return found }
+            return view.subviews.lazy.compactMap { collection(in: $0) }.first
+        }
+        let list = try XCTUnwrap(collection(in: window))
+        let previousReports = metrics.count
+        requestedScroll = true
+        list.contentOffset.y = max(-list.adjustedContentInset.top, list.contentOffset.y - 1_000)
+        await fulfillment(of: [scrolled], timeout: 5)
+        XCTAssertGreaterThan(metrics.count, previousReports, "Scrolling recycled rows must still report geometry")
+        XCTAssertGreaterThan(metrics.last?.distanceFromBottom ?? 0, 100)
+    }
+    #endif
+
     @MainActor
     func testCacheFirstTranscriptFrameCommitPerformanceDiagnostic() async throws {
         let messages = PerformanceBaselineFixtures.transcriptMessages()
@@ -355,6 +418,7 @@ final class TranscriptMessageTests: XCTestCase {
         transcriptMessages: [TranscriptMessage],
         marker: CacheFirstRenderMarker,
         onMessageRowEvaluation: @escaping (ChatMessage) -> Void = { _ in },
+        onMetrics: @escaping (ChatScrollMetrics) -> Void = { _ in },
         onCommitted: @escaping (CacheFirstRenderMarker) -> Void
     ) -> ChatTranscriptView {
         ChatTranscriptView(
@@ -410,7 +474,7 @@ final class TranscriptMessageTests: XCTestCase {
             },
             onLoadMessages: {},
             onLoadOlderMessages: { false },
-            onUpdateScrollMetrics: { _ in },
+            onUpdateScrollMetrics: onMetrics,
             onCacheFirstFrameCommitted: onCommitted,
             onFollowEvent: { _ in },
             onDisclosureToggle: {},

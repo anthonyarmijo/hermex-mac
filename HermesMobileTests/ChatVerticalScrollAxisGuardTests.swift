@@ -3,6 +3,82 @@ import XCTest
 @testable import HermesMobile
 
 @MainActor
+final class ChatScrollObserverLifecycleTests: XCTestCase {
+    func testRecyclingOneListRowKeepsRemainingRowConnected() async {
+        let scope = ChatScrollObserver.SharedScope()
+        let position = ChatScrollPositionController()
+        var metrics: [ChatScrollMetrics] = []
+        let delivered = expectation(description: "Recycled list still delivers scroll metrics")
+        let observer = ChatScrollObserver(isStreaming: false, sharedScope: scope,
+                                          scrollPositionController: position) {
+            metrics.append($0)
+            if abs($0.distanceFromBottom - 420) < 0.001 { delivered.fulfill() }
+        }
+        let coordinator = observer.makeCoordinator()
+        XCTAssertTrue(observer.makeCoordinator() === coordinator)
+        let scrollView = makeScrollView()
+        let first = ChatScrollObserver.ObserverView(coordinator: coordinator)
+        let second = ChatScrollObserver.ObserverView(coordinator: coordinator)
+        scrollView.addSubview(first)
+        scrollView.addSubview(second)
+        ChatScrollObserver.dismantleUIView(first, coordinator: coordinator)
+        first.removeFromSuperview()
+
+        XCTAssertTrue(position.capture(), "Recycling one cell must not detach the list")
+        scrollView.contentOffset.y = 300
+        await fulfillment(of: [delivered], timeout: 2)
+        XCTAssertEqual(metrics.last?.distanceFromBottom ?? -1, 420, accuracy: 0.001)
+
+        ChatScrollObserver.dismantleUIView(second, coordinator: coordinator)
+        XCTAssertFalse(position.capture(), "The last cell must release the scroll view")
+    }
+
+    func testNewListCanAttachAfterAllOldRowsAreDismantled() {
+        let position = ChatScrollPositionController()
+        let coordinator = ChatScrollObserver(isStreaming: false, scrollPositionController: position) { _ in }
+            .makeCoordinator()
+        let oldScroll = makeScrollView()
+        let oldProbe = ChatScrollObserver.ObserverView(coordinator: coordinator)
+        oldScroll.addSubview(oldProbe)
+        ChatScrollObserver.dismantleUIView(oldProbe, coordinator: coordinator)
+        oldProbe.removeFromSuperview()
+        let newScroll = makeScrollView()
+        newScroll.contentOffset.y = 100
+        let newProbe = ChatScrollObserver.ObserverView(coordinator: coordinator)
+        newScroll.addSubview(newProbe)
+        XCTAssertTrue(position.capture())
+        XCTAssertTrue(position.restoreAfterPrepend())
+        newScroll.contentSize.height += 200
+        XCTAssertEqual(newScroll.contentOffset.y, 300, accuracy: 0.001)
+        XCTAssertEqual(oldScroll.contentOffset.y, 0, accuracy: 0.001)
+        ChatScrollObserver.dismantleUIView(newProbe, coordinator: coordinator)
+    }
+
+    func testScopeDoesNotRetainCoordinatorAfterTranscriptIsRemoved() {
+        let scope = ChatScrollObserver.SharedScope()
+        var coordinator: ChatScrollObserver.Coordinator? = ChatScrollObserver(
+            isStreaming: false, sharedScope: scope
+        ) { _ in }.makeCoordinator()
+        XCTAssertNotNil(coordinator)
+        XCTAssertNotNil(scope.coordinator)
+        coordinator = nil
+        XCTAssertNil(scope.coordinator)
+    }
+
+    func testSeparateTranscriptsDoNotShareObservers() {
+        let first = ChatScrollObserver(isStreaming: false, sharedScope: .init()) { _ in }.makeCoordinator()
+        let second = ChatScrollObserver(isStreaming: false, sharedScope: .init()) { _ in }.makeCoordinator()
+        XCTAssertFalse(first === second)
+    }
+
+    private func makeScrollView() -> UIScrollView {
+        let scrollView = UIScrollView(frame: CGRect(x: 0, y: 0, width: 320, height: 480))
+        scrollView.contentSize = CGSize(width: 320, height: 1_200)
+        return scrollView
+    }
+}
+
+@MainActor
 final class ChatVerticalScrollAxisGuardTests: XCTestCase {
     func testGuardConfiguresEnclosingScrollViewForVerticalAxis() {
         let scrollView = makeOversizedScrollView()

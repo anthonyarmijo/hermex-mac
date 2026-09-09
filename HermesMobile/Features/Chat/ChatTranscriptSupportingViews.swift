@@ -74,17 +74,20 @@ struct ChatScrollMetrics: Equatable {
 /// the gesture, including any momentum, has settled.
 struct ChatScrollObserver: UIViewRepresentable {
     let isStreaming: Bool
+    var sharedScope: SharedScope? = nil
     let scrollPositionController: ChatScrollPositionController?
     let onFollowEvent: @MainActor (ChatScrollPolicy.FollowEvent) -> Void
     let onMetrics: @MainActor (ChatScrollMetrics) -> Void
 
     init(
         isStreaming: Bool,
+        sharedScope: SharedScope? = nil,
         scrollPositionController: ChatScrollPositionController? = nil,
         onFollowEvent: @escaping @MainActor (ChatScrollPolicy.FollowEvent) -> Void = { _ in },
         onMetrics: @escaping @MainActor (ChatScrollMetrics) -> Void
     ) {
         self.isStreaming = isStreaming
+        self.sharedScope = sharedScope
         self.scrollPositionController = scrollPositionController
         self.onFollowEvent = onFollowEvent
         self.onMetrics = onMetrics
@@ -95,12 +98,15 @@ struct ChatScrollObserver: UIViewRepresentable {
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(
+        if let coordinator = sharedScope?.coordinator { return coordinator }
+        let coordinator = Coordinator(
             metricContext: metricContext,
             scrollPositionController: scrollPositionController,
             onFollowEvent: onFollowEvent,
             onMetrics: onMetrics
         )
+        sharedScope?.coordinator = coordinator
+        return coordinator
     }
 
     func makeUIView(context: Context) -> ObserverView {
@@ -119,7 +125,16 @@ struct ChatScrollObserver: UIViewRepresentable {
 
     static func dismantleUIView(_ uiView: ObserverView, coordinator: Coordinator) {
         uiView.coordinator = nil
-        coordinator.detach()
+        coordinator.removeProbe(uiView)
+    }
+
+    /// A virtualized list has no persistent content view inside its scroll view.
+    /// Visible rows share one observer; recycling a row must not disconnect the
+    /// remaining rows or duplicate gesture handlers. Weak ownership also avoids
+    /// retaining a transcript through its callbacks after navigation.
+    @MainActor
+    final class SharedScope {
+        weak var coordinator: Coordinator?
     }
 
     struct MetricContext: Equatable {
@@ -133,6 +148,7 @@ struct ChatScrollObserver: UIViewRepresentable {
         init(coordinator: Coordinator) {
             self.coordinator = coordinator
             super.init(frame: .zero)
+            coordinator.addProbe(self)
             isUserInteractionEnabled = false
             backgroundColor = .clear
         }
@@ -171,6 +187,7 @@ struct ChatScrollObserver: UIViewRepresentable {
         private weak var scrollView: UIScrollView?
         private weak var observedPanGesture: UIPanGestureRecognizer?
         private var observations: [NSKeyValueObservation] = []
+        private let probes = NSHashTable<ObserverView>.weakObjects()
         private var metricContext: MetricContext
         private var lastMetrics: ChatScrollMetrics?
         private var pendingMetrics: ChatScrollMetrics?
@@ -212,6 +229,15 @@ struct ChatScrollObserver: UIViewRepresentable {
 
             metricContext = newContext
             lastMetrics = nil
+        }
+
+        func addProbe(_ view: ObserverView) {
+            probes.add(view)
+        }
+
+        func removeProbe(_ view: ObserverView) {
+            probes.remove(view)
+            if probes.allObjects.isEmpty { detach() }
         }
 
         func attachIfNeeded(from view: UIView, delivery: MetricDelivery) {

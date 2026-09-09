@@ -154,9 +154,8 @@ final class ChatScrollPolicyTests: XCTestCase {
 
     func testDistanceGrowingPastStreamingThresholdIsAScrollAway() {
         let atBottom = Geometry(offsetY: 4300, contentHeight: 5000, visibleHeight: 700)
-        // Status-bar scroll: the lazy stack may re-measure on the way, so the
-        // content height is allowed to move as long as the distance grows.
-        let carriedAway = Geometry(offsetY: 3200, contentHeight: 5200, visibleHeight: 700)
+        // A non-gesture scroll can be inferred only in stable geometry.
+        let carriedAway = Geometry(offsetY: 3200, contentHeight: 5000, visibleHeight: 700)
         XCTAssertTrue(ChatScrollPolicy.isScrollingAwayFromBottom(previous: atBottom, current: carriedAway))
         XCTAssertFalse(ChatScrollPolicy.isScrollingAwayFromBottom(previous: nil, current: carriedAway))
     }
@@ -184,6 +183,18 @@ final class ChatScrollPolicyTests: XCTestCase {
             previous: atBottom,
             current: Geometry(offsetY: 4700, contentHeight: 5400, visibleHeight: 700)
         ))
+    }
+
+    func testEstimatedRowGrowthDoesNotDisarmFollowWithoutAnUpwardScroll() {
+        let atBottom = Geometry(offsetY: 4300, contentHeight: 5000, visibleHeight: 700)
+        for offset in [CGFloat(3200), CGFloat(4300), CGFloat(4500)] {
+            let remeasured = Geometry(offsetY: offset, contentHeight: 8000, visibleHeight: 700)
+            let movedAway = ChatScrollPolicy.isScrollingAwayFromBottom(previous: atBottom, current: remeasured)
+            XCTAssertFalse(movedAway)
+            XCTAssertTrue(ChatScrollPolicy.resolveFollow(current: .init(), event: .contentScrolled(
+                isAtBottom: false, isUserScrolling: false, movedAwayFromBottom: movedAway
+            )).isFollowing)
+        }
     }
 
     func testLiveGestureWinsEvenAtBottom() {

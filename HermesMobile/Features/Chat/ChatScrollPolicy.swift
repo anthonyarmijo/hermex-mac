@@ -107,16 +107,23 @@ enum ChatScrollPolicy {
     }
 
     /// True when a report without a gesture shows the reader farther from the
-    /// bottom than the last one, past the streaming threshold, in the same
-    /// viewport. While follow is on the bottom anchor snaps every size change
-    /// back to zero distance, so only an actual scroll (status-bar tap,
-    /// VoiceOver, hardware keyboard) can move the reader out that far. Keyboard
-    /// insets change the viewport and are excluded; the scroll observer
+    /// bottom than the last one, past the streaming threshold, with unchanged
+    /// content and viewport dimensions. List's row-height estimation can move
+    /// both its offset and content height while cached content is replaced.
+    /// Infer non-gesture scrolling (VoiceOver or hardware keyboard) only from
+    /// an upward offset change in stable geometry. The scroll observer
     /// suppresses the check while a disclosure pin holds the offset.
     static func isScrollingAwayFromBottom(previous: ScrollGeometry?, current: ScrollGeometry) -> Bool {
-        guard let previous, previous.visibleHeight == current.visibleHeight else { return false }
+        guard let previous,
+              previous.visibleHeight == current.visibleHeight,
+              previous.contentHeight == current.contentHeight
+        else { return false }
         let distance = current.distanceFromBottom
-        return distance > previous.distanceFromBottom + 0.5
+        // Native List refines estimated row heights during layout. A larger
+        // distance alone is not a reader scrolling: the offset must actually
+        // move toward older content, too.
+        return current.offsetY < previous.offsetY - 0.5
+            && distance > previous.distanceFromBottom + 0.5
             && distance > streamingBottomDetectionThreshold
     }
 

@@ -5,6 +5,7 @@ struct ChatTranscriptView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var scrollPositionController = ChatScrollPositionController()
+    @State private var listScrollScope = ChatScrollObserver.SharedScope()
 
     let isLoading: Bool
     let errorMessage: String?
@@ -131,13 +132,7 @@ struct ChatTranscriptView: View {
                 let contentWidth = transcriptContentWidth(for: viewportWidth)
 
                 ZStack(alignment: .bottom) {
-                    ScrollView {
-                        transcriptScrollContent(
-                            proxy: proxy,
-                            viewportWidth: viewportWidth,
-                            contentWidth: contentWidth
-                        )
-                    }
+                    scrollingTranscript(proxy: proxy, viewportWidth: viewportWidth, contentWidth: contentWidth)
                     .defaultScrollAnchor(
                         ChatScrollPolicy.initialTranscriptAnchor,
                         for: .initialOffset
@@ -184,6 +179,12 @@ struct ChatTranscriptView: View {
                 }
                 .animation(ChatMotion.quickState(reduceMotion: reduceMotion), value: showsScrollToBottomButton)
                 .background(Color(.systemBackground))
+                .onChange(of: viewport.size) {
+                    followAfterMacListResize(proxy: proxy)
+                }
+                .onChange(of: transcriptBottomInsetHeight) {
+                    followAfterMacListResize(proxy: proxy)
+                }
                 .onChange(of: messages.count) {
                     guard isFollowingLatestContent else { return }
 
@@ -253,15 +254,73 @@ struct ChatTranscriptView: View {
         scroll()
     }
 
-    private func transcriptScrollContent(
-        proxy: ScrollViewProxy,
-        viewportWidth: CGFloat,
-        contentWidth: CGFloat
-    ) -> some View {
-        // One clock read per body pass; each row compares its timestamp to it.
-        let now = Date()
+    private func followAfterMacListResize(proxy: ScrollViewProxy) {
+        #if targetEnvironment(macCatalyst)
+        guard isFollowingLatestContent else { return }
+        releasingHold { onScrollToLatestContent(proxy, false) }
+        #endif
+    }
 
-        return LazyVStack(spacing: transcriptSpacing) {
+    @ViewBuilder
+    private func scrollingTranscript(proxy: ScrollViewProxy, viewportWidth: CGFloat, contentWidth: CGFloat) -> some View {
+        #if targetEnvironment(macCatalyst)
+        // Catalyst's LazyVStack can loop in measureEstimates when hundreds of
+        // variable-height rows relayout. List uses native cell virtualization.
+        List {
+            Color.clear
+                .frame(height: 1)
+                .id(transcriptContentID)
+                .listRowInsets(EdgeInsets())
+                .listRowSeparator(.hidden)
+                .accessibilityHidden(true)
+            transcriptRows(proxy: proxy)
+                .listRowInsets(EdgeInsets(top: 0, leading: transcriptHorizontalPadding, bottom: transcriptSpacing, trailing: transcriptHorizontalPadding))
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.clear)
+                .background { macListRowProbe }
+        }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .environment(\.defaultMinListRowHeight, 0)
+        .environment(\.chatDisclosureToggled) {
+            pinReader(proxy: proxy)
+            onDisclosureToggle()
+        }
+        .background {
+            CacheFirstTranscriptFrameProbe(
+                marker: cacheFirstRenderMarker,
+                onFrameCommitted: onCacheFirstFrameCommitted
+            )
+            .accessibilityHidden(true)
+        }
+        .task {
+            await Task.yield()
+            proxy.scrollTo(bottomAnchorID, anchor: .bottom)
+        }
+        #else
+        ScrollView {
+            transcriptScrollContent(proxy: proxy, viewportWidth: viewportWidth, contentWidth: contentWidth)
+        }
+        #endif
+    }
+
+    private var macListRowProbe: some View {
+        ZStack {
+            ChatScrollObserver(
+                isStreaming: activeStreamID != nil,
+                sharedScope: listScrollScope,
+                scrollPositionController: scrollPositionController,
+                onFollowEvent: onFollowEvent,
+                onMetrics: onUpdateScrollMetrics
+            )
+            ChatVerticalScrollAxisGuard()
+        }
+        .accessibilityHidden(true)
+    }
+
+    private func transcriptRows(proxy: ScrollViewProxy) -> some View {
+        let now = Date()
+        return Group {
             olderMessagesButton(proxy: proxy)
 
             if let compressionReferenceCard, compressionReferenceCard.afterRenderID == nil {
@@ -345,6 +404,16 @@ struct ChatTranscriptView: View {
                 .frame(height: 1)
                 .id(bottomAnchorID)
                 .allowsHitTesting(false)
+        }
+    }
+
+    private func transcriptScrollContent(
+        proxy: ScrollViewProxy,
+        viewportWidth: CGFloat,
+        contentWidth: CGFloat
+    ) -> some View {
+        LazyVStack(spacing: transcriptSpacing) {
+            transcriptRows(proxy: proxy)
         }
         .padding(.top, 16)
         .frame(width: contentWidth, alignment: .leading)

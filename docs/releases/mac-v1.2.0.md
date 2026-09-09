@@ -1,6 +1,7 @@
 ## Highlights
 
 - Click and drag to select text directly inside a user message or a finished response. Copy just the selected paragraphs, lists, table cells or code; Select All stays within that message. Response actions are available beside Copy in the More menu.
+- Fixes a freeze when reopening or resizing very long conversations. Cached chats keep the latest response visible as the full history loads, and loading older messages preserves your reading position.
 
 - Check your server connection from the Mac sidebar or Settings. See the configured address, reachability, sign-in status, WebUI and agent versions, and the time and latency of the last check. Copy the address or jump to the existing server settings and sign-in flows.
 - A redesigned chat makes long agent runs easier to follow: compact tool and thinking rows, expandable finished turns, timestamps and copy actions, and clearer working-time indicators.
@@ -33,8 +34,6 @@ agent v2026.8.27-432-g4209d371aa. Optional features depend on the APIs and
 capabilities your server provides; this client update does not upgrade them.
 
 ## Known issues
-
-- **Release blocker under investigation:** reopening, jumping within or collapsing the composer in a very long conversation can freeze the Mac app. Reproduced in both the preserved candidate and the selection candidate. This draft must not be published until the blocker is resolved and revalidated.
 
 - Rich Markdown can still be the main cost in long-chat rendering. Bounded image retention and fewer diff parses do not eliminate every interface pause.
 - Passkey-only and browser-based SSO sign-in are not supported. A trusted-header deployment works only when its proxy authenticates the app's request.
