@@ -1,12 +1,10 @@
-# Periodic compatibility coverage for the shared iPhone target. Pull requests
-# compile this target, but the full suite runs here to keep routine Mac-focused
-# development fast. Run this workflow manually after an upstream Hermex sync.
+# Explicit compatibility coverage for the shared iPhone target. Dispatch only
+# for requested iPhone compatibility work or preparation of an upstream
+# contribution. Ordinary Mac work and upstream syncs do not require this suite.
 
 name: iPhone Compatibility
 
 on:
-  schedule:
-    - cron: "0 15 * * 1"
   workflow_dispatch:
 
 permissions:

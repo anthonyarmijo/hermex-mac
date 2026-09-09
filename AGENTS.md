@@ -75,11 +75,15 @@ truth — if a request conflicts with it, stop and ask. Read by every agent
   `build_run_sim` or a plain signed Debug build (no signing-disabling flags), then install/launch.
 - Keep validation proportional to the change. During implementation, run focused
   Mac Catalyst tests for the touched behavior. Before asking for review or
-  committing a code slice, run the full Mac Catalyst XCTest suite. For shared
-  source, target/build-setting, or platform-conditional changes, add focused
-  iPhone tests or an iPhone compile check. Reserve the full iPhone XCTest suite
-  for upstream Hermex syncs, explicit compatibility work, and periodic CI; do
-  not rerun an unchanged green suite in the same slice. Documentation,
+  committing a code slice, run the full Mac Catalyst XCTest suite. Ordinary Mac
+  work, including shared-source and build-setting changes, does not require
+  iPhone validation. During upstream Hermex integrations, compile the shared
+  iPhone target to keep it buildable. Run full iPhone tests only when explicitly
+  requested for iPhone compatibility work or an upstream contribution; a sync
+  alone does not require them. CI recognizes the `upstream-integration` label
+  (or `upstream/*` / `sync/upstream-*` branches) for compile checks and the
+  `full-iphone-tests` label for explicit full-suite checks. Do not rerun an
+  unchanged green suite in the same slice. Documentation,
   workflow-only, and version-only changes do not require app suites. Keep full
   build logs in files and report summaries or relevant failures so they do not
   consume agent context. Build + launch the signed Mac app when UI changed.

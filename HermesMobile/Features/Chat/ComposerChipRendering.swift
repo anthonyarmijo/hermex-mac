@@ -226,6 +226,22 @@ struct ComposerChipTextStyle {
 /// but every chip is the same picture, so one reference cannot look like two
 /// different things on either side of the send.
 enum ComposerChipTextLine {
+    /// SwiftUI represents each chip as one attachment character. Keep those
+    /// offsets for geometry, while excluding the pictures from copied text.
+    static func selectionSource(_ text: String, tokens: [ComposerChipToken]) -> (text: String, excludedOffsets: Set<Int>) {
+        let string = text as NSString
+        var result = ""
+        var excluded: Set<Int> = []
+        var cursor = 0
+        for token in validTokens(tokens, in: text) where token.range.location >= cursor {
+            result += string.substring(with: NSRange(location: cursor, length: token.range.location - cursor))
+            excluded.insert(result.utf16.count)
+            result += "\u{fffc}"
+            cursor = token.range.upperBound
+        }
+        return (result + string.substring(from: cursor), excluded)
+    }
+
     /// The tokens that still describe `text`. A caller whose chips were
     /// computed a beat earlier can hand over a set the text has since outgrown;
     /// drawing none is better than drawing one in the wrong place.

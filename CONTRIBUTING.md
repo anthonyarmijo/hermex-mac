@@ -11,8 +11,8 @@ read the [Code of Conduct](CODE_OF_CONDUCT.md).
 - Clone the repo and open `HermesMobile.xcodeproj`. Dependencies resolve
   automatically via Swift Package Manager — the dependency list is locked in
   `PROJECT_SPEC.md`; do not add new ones without maintainer approval.
-- Build and run the **`HermesMobile`** scheme as a Mac Catalyst app. When a
-  change affects shared code, also validate the `iPhone 17` simulator.
+- Build and run the **`HermesMobile`** scheme as a Mac Catalyst app. The iPhone
+  target is retained for upstream integration and explicit compatibility work.
 - To actually use the app you need your own
   [hermes-webui](https://github.com/nesquena/hermes-webui) server — the app is
   a client only. See the [README](README.md#you-need-your-own-server) for
@@ -31,13 +31,18 @@ xcodebuild test -project HermesMobile.xcodeproj -scheme HermesMobile \
   -enableCodeCoverage NO
 ```
 
-When a change affects shared source, target/build settings, or platform-specific
-behavior, also run focused iPhone tests or an iPhone compile check. Full iPhone
-tests are reserved for upstream Hermex syncs, explicit compatibility work, and
-periodic CI. Add the `full-iphone-tests` label to a PR when that compatibility
-gate is needed immediately. If `iPhone 17` is not installed, pick a nearby iPhone from
-`xcrun simctl list devices available`. Documentation, workflow-only, and
-version-only PRs do not require app suites.
+Ordinary Mac work, including shared-source and build-setting changes, does not
+require iPhone validation. Upstream Hermex integrations require an iPhone compile
+check: apply `upstream-integration` on an issue branch, or use an `upstream/*` or
+`sync/upstream-*` branch. Run full iPhone tests only when explicitly requested for
+iPhone compatibility work or an upstream contribution. The `full-iphone-tests`
+label enables that PR check; the **iPhone Compatibility** workflow also supports
+manual dispatch. There is no scheduled full iPhone run. If an iPhone check is
+needed and `iPhone 17` is unavailable, choose a nearby available simulator.
+
+Build and launch the signed Mac app when interactions or layout change.
+Documentation, workflow-only, and version-only PRs do not require app suites,
+unless the full iPhone suite is explicitly requested by label.
 
 ## Code signing for contributors
 

@@ -111,15 +111,42 @@ For each implementation slice:
 1. Run focused Mac Catalyst tests for the changed behavior while iterating.
 2. Run the full Mac Catalyst XCTest suite before asking for review or committing
    a code slice.
-3. For shared source, target/build-setting, or platform-conditional changes, run
-   focused iPhone tests or an iPhone compile check. Run the full iPhone suite only
-   for upstream Hermex syncs or explicit compatibility work; periodic CI supplies
-   the broader compatibility signal.
+3. Ordinary Mac work, including shared-source and build-setting changes, requires
+   no iPhone validation. Compile the shared iPhone target during upstream Hermex
+   integrations. Run full iPhone tests only when explicitly requested for iPhone
+   compatibility work or preparation of an upstream contribution.
 4. Do not run app suites for documentation, workflow-only, or version-only changes.
 5. Build and launch the signed Mac app when UI or runtime behavior changed.
 6. Keep full build logs and result bundles out of agent context; report the
    summary and only the relevant failure output.
 7. Capture a screenshot or logs if the slice needs visual/runtime evidence.
+
+PR CI runs Mac tests for app changes. Apply `upstream-integration` to an upstream
+integration PR on an ordinary issue branch to request the iPhone compile check;
+`upstream/*` and `sync/upstream-*` branches receive that check automatically.
+None of these enables the full iPhone suite. Use `full-iphone-tests` when that
+suite is explicitly requested, or manually dispatch **iPhone Compatibility**.
+There is no scheduled iPhone suite. Explicit full-suite labels run even on
+documentation-only PRs; otherwise non-app changes skip both app jobs.
+
+Merge dependent PRs one at a time, from the bottom of their stack. Retarget the
+next PR to `dev`, update it with the current base, and wait for its new **CI Gate**
+before merging. Base-branch edits trigger fresh PR CI against the new merge
+candidate. Title/body edits use a separate **PR metadata update** check and
+concurrency group, so they cannot cancel validation or replace the required gate
+with a skipped success. They do not rerun app suites.
+
+Both `dev` and `master` require an up-to-date **CI Gate**, including for admins;
+neither requires a human review approval. This protects integration without an
+extra reviewer gate. Maintainer authorization to merge/publish still applies as
+described in `AGENTS.md`; one approval can cover a described release sequence.
+Approval or merging a PR does not publish an installer. **Mac Release** remains
+a separately dispatched workflow with the existing `mac-release` environment.
+
+After merging, retire feature branches only after verifying the current remote
+tip is included in the integration branch. Preserve uncommitted/unique work and
+benchmark, profiling, final test and installer evidence before removing a local
+worktree or rebuildable output. Do not delete an active checkout.
 
 Agent/MCP flow:
 

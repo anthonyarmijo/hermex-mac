@@ -108,7 +108,7 @@ Hermex is tested against the `hermes-webui` commit pinned in [`UPSTREAM_TESTED_S
 
 Models decode tolerantly and ignore unknown fields. Endpoint paths and payloads are verified against a running server, official documentation, or pinned upstream source rather than invented; [`CONTRACT_TESTS.md`](CONTRACT_TESTS.md) describes the policy.
 
-The Mac client follows upstream Hermex where shared behavior remains useful, but it can trail new server endpoints or upstream UI work while those changes are integrated and tested on both platforms. Check the changelog and open issues before reporting behavior that differs from the iPhone client.
+The Mac client follows upstream Hermex where shared behavior remains useful, but it can trail new server endpoints or upstream UI work while those changes are integrated and validated on Mac. Upstream integrations also compile the retained iPhone target. Check the changelog and open issues before reporting behavior that differs from the iPhone client.
 
 ## Documentation
 
@@ -126,7 +126,7 @@ Contributions are welcome. Start with [`CONTRIBUTING.md`](CONTRIBUTING.md), foll
 - Verify server contracts instead of guessing endpoints or JSON.
 - Keep every upstream-controlled `Codable` field tolerant of missing or renamed data.
 - Add no third-party dependency without explicit approval.
-- Validate shared changes on both Mac Catalyst and the reference iPhone simulator.
+- Validate app changes on Mac Catalyst. Compile the iPhone target during upstream integrations; run full iPhone tests only for explicitly requested compatibility work or upstream contributions.
 
 ## Credits
 

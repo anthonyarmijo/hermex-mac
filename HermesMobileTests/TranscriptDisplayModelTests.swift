@@ -425,7 +425,6 @@ final class TranscriptMessageTests: XCTestCase {
             onPreviewAttachment: { _, _ in },
             onPreviewTranscriptMedia: { _ in },
             onToggleListening: { _ in },
-            onSelectText: { _ in },
             onRegenerate: { _ in },
             onEdit: { _ in },
             onFork: { _ in },

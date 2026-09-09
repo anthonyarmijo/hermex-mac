@@ -20,11 +20,15 @@ release notes, write: None — internal change.
 
 ## How it was tested
 
-<!-- e.g. full XCTest suite (command + result), manual simulator steps, screenshots for UI changes. -->
+<!-- e.g. full Mac Catalyst XCTest suite (command + result), signed Mac UI checks.
+Docs/workflow/version-only changes need no app suites. Upstream integrations
+need an iPhone compile check; full iPhone tests are explicit opt-in only. -->
 
 ## Checklist
 
-- [ ] The full test suite passes locally (`xcodebuild test -project HermesMobile.xcodeproj -scheme HermesMobile -destination 'platform=iOS Simulator,name=iPhone 17'`)
+- [ ] Full Mac Catalyst tests pass for app changes; otherwise explain why app tests are not needed
+- [ ] Signed Mac UI checks pass when interactions or layout changed (or not applicable)
+- [ ] Upstream integration has an iPhone compile check (`upstream-integration` label); full iPhone tests only if explicitly requested (`full-iphone-tests` label), or not applicable
 - [ ] New/changed `Codable` models decode tolerantly (optionals for fields the server might add or rename)
 - [ ] No new third-party dependencies (the list in `AGENTS.md` is locked)
 - [ ] No invented API endpoints or JSON shapes (verified against upstream source or a running server)
