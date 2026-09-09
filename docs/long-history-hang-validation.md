@@ -29,13 +29,21 @@ disconnect the rest of the transcript or add duplicate follow-gesture handlers.
 - Focused scroll, observer-lifecycle and text-selection tests pass. One initial
   assertion ran before deferred metric delivery; the test now awaits the actual
   callback and verifies continued delivery after a cell is recycled.
-- Full Mac suite: 2,382 passed, 5 skipped, zero failures (2,387 total).
+- A hosted test of the actual 512-message transcript reaches the latest row,
+  evaluates fewer than 128 distinct message rows, and continues delivering
+  metrics after scrolling. It waits for rendering/metric callbacks rather than
+  assuming a fixed delay. This checks container wiring and bounded rendering,
+  not real pointer interaction or comparative performance.
+- The combined candidate includes merged auth isolation PR #35. Full Mac suite:
+  2,384 passed, 5 skipped, zero failures (2,389 total).
 - Native validation of that exact build is waiting for the Mac to be unlocked.
   No claim of a completed performance comparison or fixed release blocker yet.
 
 Logs, source snapshots, samples and result bundles are retained locally under
-`.codex-tmp/mac-modernization/long-history-fix/`. `FullMac.xcresult` and
-`FocusedMac2.xcresult` contain the successful test runs. The signed UI identity is
+`.codex-tmp/mac-modernization/long-history-fix/`. `IntegratedFullMac.xcresult` and
+`IntegratedFocusedMac.xcresult` contain the final local test runs; the earlier
+`FullMac.xcresult`, `FocusedMac2.xcresult` and `HostedListMac.xcresult` remain
+preserved. The signed UI identity is
 `com.anthonyarmijo.hermex.benchmark.candidate`; the test identity is
 `com.anthonyarmijo.hermex.benchmark.validation`. Owner login and chats are not
 test fixtures. Prior signed installers and profiling builds remain preserved.
