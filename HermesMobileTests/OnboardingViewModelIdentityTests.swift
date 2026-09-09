@@ -443,6 +443,7 @@ extension OnboardingViewModelIdentityTests {
     @MainActor
     func makeGatedManager(_ client: GatedAuthAPIClient, keychain: InMemoryKeychainStore = InMemoryKeychainStore()) -> AuthManager {
         AuthManager(
+            cookieStorage: URLSessionConfiguration.ephemeral.httpCookieStorage!,
             keychain: keychain,
             clientFactory: { _ in client },
             serverRegistry: ServerRegistry.inMemory()
