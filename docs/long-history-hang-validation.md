@@ -36,8 +36,36 @@ disconnect the rest of the transcript or add duplicate follow-gesture handlers.
   not real pointer interaction or comparative performance.
 - The combined candidate includes merged auth isolation PR #35. Full Mac suite:
   2,384 passed, 5 skipped, zero failures (2,389 total).
-- Native validation of that exact build is waiting for the Mac to be unlocked.
-  No claim of a completed performance comparison or fixed release blocker yet.
+- After unlock, the signed candidate exposed a cache-first positioning bug:
+  the initial 50-message render reached its tail, but replacing it with all 512
+  messages moved the reader back around message 50. Temporary geometry logging
+  showed List refining both height and offset and falsely disabling follow.
+  Non-gesture scroll-away detection now requires stable content/viewport sizes
+  and an actual upward offset change. Temporary logging was removed.
+- The corrected candidate automatically reached message 512 on four controlled
+  openings, including three repeated reopen/composer-collapse trials. Wheel
+  scrolling back to messages 506–508, narrowing from 1,024 to 864 points and
+  widening again retained those messages; the latest button returned to 512.
+  No hang occurred. CUA round-trip times are not app performance measurements.
+- Real primary-button dragging selected text inside both user and assistant
+  messages. Assistant copying preserved Unicode (emoji, combining characters,
+  Hebrew and Arabic), paragraphs, lists, code, and tab/newline table structure.
+  Selected-text context Copy/Select All and keyboard Cmd-C/Cmd-A worked after
+  focus/menu transitions settled. Select All stayed within one message and
+  excluded language labels and the link-preview chip. Synthetic pasted drafts
+  were cleared without sending.
+- Session switching cleared the visible selection. The assistant More menu
+  showed Listen/Regenerate/Fork; the inline link opened example.com in Chrome.
+  The 24-image transcript rendered and a media preview opened and closed.
+  Native zoom filled the connected display, then restored the window.
+- A separate loopback pagination server verified two real 50-message prepends
+  (`msg_before=462` and `412`). Messages 463 and 413 respectively remained at
+  the same vertical position, while their preceding responses became available.
+  Switching to this server replaced the previous session list as expected.
+- Updated focused Mac tests and full Mac suite pass: 2,385 passed, 5 skipped,
+  zero failures (2,390 total). Results: `PositionFocusedMac.xcresult` and
+  `PositionFullMac.xcresult`. The regression covers large height re-estimation
+  with stationary, upward-adjusted, and forward-moving offsets.
 
 Logs, source snapshots, samples and result bundles are retained locally under
 `.codex-tmp/mac-modernization/long-history-fix/`. `IntegratedFullMac.xcresult` and
@@ -50,11 +78,11 @@ test fixtures. Prior signed installers and profiling builds remain preserved.
 
 ## Required before leaving draft
 
-1. Repeat long-history reopening, composer collapse, resizing, scrolling and
-   selection with the restored observer hooks. Compare against preserved PR #26
-   and selection build 2; investigate hangs or material regressions.
+1. Finish the comparative performance measurements against preserved PR #26
+   and selection build 2; investigate hangs or material regressions. The native
+   functional passes above do not establish a complete performance comparison.
 2. Verify following versus reading older history, the latest-message button,
-   prepend position, disclosure positioning, cache-first display and streaming
+   disclosure positioning and streaming
    completion. Confirm row recycling does not steal selection or composer focus.
 3. Repeat real pointer selection and copied-content checks across Unicode,
    paragraphs, lists, code and tables; verify links, image previews, message menus,
