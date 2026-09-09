@@ -332,13 +332,10 @@ final class CustomHeaderSSEInjectionTests: XCTestCase {
         client.stop()
     }
 
-    /// SSE streams against `HTTPCookieStorage.shared`, the same jar as `APIClient`.
-    /// Verify that jar only surfaces a server's own cookie for its stream URL, so
-    /// domain isolation covers the SSE stream too (#16).
-    func testSSESharedCookieJarIsDomainIsolatedPerStreamURL() throws {
-        let storage = HTTPCookieStorage.shared
-        storage.cookies?.forEach { storage.deleteCookie($0) }
-        defer { storage.cookies?.forEach { storage.deleteCookie($0) } }
+    /// Foundation's cookie matching must isolate different stream hosts. Use an
+    /// ephemeral jar so this assertion never clears the hosted app's login.
+    func testSSECookieJarIsDomainIsolatedPerStreamURL() throws {
+        let storage = try XCTUnwrap(URLSessionConfiguration.ephemeral.httpCookieStorage)
 
         func sessionCookie(host: String, value: String) throws -> HTTPCookie {
             try XCTUnwrap(HTTPCookie(properties: [
@@ -362,7 +359,7 @@ final class CustomHeaderAuthManagerTests: XCTestCase {
         store: CustomHeaderStore,
         client: MockAuthAPIClient
     ) -> AuthManager {
-        AuthManager(keychain: keychain, clientFactory: { _ in client }, headerStore: store, serverRegistry: ServerRegistry.inMemory())
+        AuthManager(cookieStorage: URLSessionConfiguration.ephemeral.httpCookieStorage!, keychain: keychain, clientFactory: { _ in client }, headerStore: store, serverRegistry: ServerRegistry.inMemory())
     }
 
     func testConfigurePersistsHeadersOnSuccess() async throws {
@@ -471,6 +468,7 @@ final class CustomHeaderAuthManagerTests: XCTestCase {
             trustedAuthEnabled: true
         ))
         let manager = AuthManager(
+            cookieStorage: URLSessionConfiguration.ephemeral.httpCookieStorage!,
             keychain: InMemoryKeychainStore(),
             probeClientFactory: { _, _ in client },
             serverRegistry: ServerRegistry.inMemory()

@@ -347,6 +347,7 @@ final class ServerRegistryTests: XCTestCase {
 
         // Constructing AuthManager runs restoreSavedServer() → the one-time migration.
         _ = AuthManager(
+            cookieStorage: URLSessionConfiguration.ephemeral.httpCookieStorage!,
             keychain: keychain,
             clientFactory: { _ in MockAuthAPIClient(authStatus: AuthStatusResponse(authEnabled: false, loggedIn: false)) },
             serverRegistry: registry
@@ -362,6 +363,7 @@ final class ServerRegistryTests: XCTestCase {
         let registry = ServerRegistry(keychain: keychain, identityDefaults: .ephemeral())
 
         _ = AuthManager(
+            cookieStorage: URLSessionConfiguration.ephemeral.httpCookieStorage!,
             keychain: keychain,
             clientFactory: { _ in MockAuthAPIClient(authStatus: AuthStatusResponse(authEnabled: false, loggedIn: false)) },
             serverRegistry: registry
@@ -375,6 +377,7 @@ final class ServerRegistryTests: XCTestCase {
         let keychain = InMemoryKeychainStore()
         let registry = ServerRegistry(keychain: keychain, identityDefaults: .ephemeral())
         let manager = AuthManager(
+            cookieStorage: URLSessionConfiguration.ephemeral.httpCookieStorage!,
             keychain: keychain,
             clientFactory: { _ in MockAuthAPIClient(authStatus: AuthStatusResponse(authEnabled: false, loggedIn: false)) },
             serverRegistry: registry
@@ -389,6 +392,7 @@ final class ServerRegistryTests: XCTestCase {
         let keychain = InMemoryKeychainStore()
         let registry = ServerRegistry(keychain: keychain, identityDefaults: .ephemeral())
         let manager = AuthManager(
+            cookieStorage: URLSessionConfiguration.ephemeral.httpCookieStorage!,
             keychain: keychain,
             clientFactory: { _ in MockAuthAPIClient(authStatus: AuthStatusResponse(authEnabled: false, loggedIn: false)) },
             serverRegistry: registry
@@ -405,6 +409,7 @@ final class ServerRegistryTests: XCTestCase {
         let keychain = InMemoryKeychainStore()
         let registry = ServerRegistry(keychain: keychain, identityDefaults: .ephemeral())
         let manager = AuthManager(
+            cookieStorage: URLSessionConfiguration.ephemeral.httpCookieStorage!,
             keychain: keychain,
             clientFactory: { _ in MockAuthAPIClient(authStatus: AuthStatusResponse(authEnabled: false, loggedIn: false)) },
             serverRegistry: registry

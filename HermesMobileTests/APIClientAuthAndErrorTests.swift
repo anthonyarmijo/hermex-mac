@@ -36,6 +36,7 @@ final class APIClientAuthAndErrorTests: APIClientTestCase {
         let client = MockAuthAPIClient(authStatus: AuthStatusResponse(authEnabled: false, loggedIn: false))
         var requestedURLs: [URL] = []
         let manager = AuthManager(
+            cookieStorage: URLSessionConfiguration.ephemeral.httpCookieStorage!,
             keychain: keychain,
             clientFactory: { url in
                 requestedURLs.append(url)
@@ -74,6 +75,7 @@ final class APIClientAuthAndErrorTests: APIClientTestCase {
         let keychain = InMemoryKeychainStore()
         let client = MockAuthAPIClient(authStatus: AuthStatusResponse(authEnabled: true, loggedIn: false))
         let manager = AuthManager(
+            cookieStorage: URLSessionConfiguration.ephemeral.httpCookieStorage!,
             keychain: keychain,
             clientFactory: { _ in client },
             serverRegistry: ServerRegistry.inMemory()
@@ -92,6 +94,7 @@ final class APIClientAuthAndErrorTests: APIClientTestCase {
         let keychain = InMemoryKeychainStore()
         let client = MockAuthAPIClient(authStatus: AuthStatusResponse(authEnabled: true, loggedIn: false))
         let manager = AuthManager(
+            cookieStorage: URLSessionConfiguration.ephemeral.httpCookieStorage!,
             keychain: keychain,
             clientFactory: { _ in client },
             serverRegistry: ServerRegistry.inMemory()

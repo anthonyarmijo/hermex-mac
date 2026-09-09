@@ -65,6 +65,7 @@ final class AuthManager {
     /// one whose `id` matches `state.server?.absoluteString`.
     private(set) var servers: [ServerAccount] = []
 
+    private let cookieStorage: HTTPCookieStorage
     private let keychain: any KeychainStoring
     private let clientFactory: (URL) -> any AuthAPIClient
     /// Builds a client bound to explicit headers (not the shared `CustomHeaderStore`)
@@ -76,6 +77,7 @@ final class AuthManager {
     private let serverRegistry: ServerRegistry
 
     init(
+        cookieStorage: HTTPCookieStorage = .shared,
         keychain: any KeychainStoring = KeychainStore(),
         clientFactory: @escaping (URL) -> any AuthAPIClient = { APIClient(baseURL: $0) },
         probeClientFactory: @escaping (URL, [CustomHeader]) -> any AuthAPIClient = { url, headers in
@@ -85,6 +87,7 @@ final class AuthManager {
         logoutTimeout: Duration = .seconds(5),
         serverRegistry: ServerRegistry = .shared
     ) {
+        self.cookieStorage = cookieStorage
         self.keychain = keychain
         self.clientFactory = clientFactory
         self.probeClientFactory = probeClientFactory
@@ -527,15 +530,15 @@ final class AuthManager {
     /// port-scoped) — a documented limitation; closing it would need the per-server
     /// cookie snapshot/restore deferred to the #17 switcher.
     private func clearSessionCookies(for server: URL) {
-        let storage = HTTPCookieStorage.shared
+        let storage = cookieStorage
         storage.cookies(for: server)?.forEach { storage.deleteCookie($0) }
     }
 
-    /// Clears the entire shared cookie jar. Used only as a fallback when there's no
+    /// Clears the configured cookie jar (shared in production). Used only as a fallback when there's no
     /// active server to scope to (a 401 while unconfigured).
     private func clearAllSessionCookies() {
-        HTTPCookieStorage.shared.cookies?.forEach {
-            HTTPCookieStorage.shared.deleteCookie($0)
+        cookieStorage.cookies?.forEach {
+            cookieStorage.deleteCookie($0)
         }
     }
 
