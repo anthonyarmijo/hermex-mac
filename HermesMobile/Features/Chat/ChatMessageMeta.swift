@@ -1,11 +1,12 @@
 import SwiftUI
 
-/// Which transcript rows draw the `time · copy` row under their bubble. Every
-/// user message gets one. An assistant row gets one only as the reply that
-/// closes a settled turn: mid-turn replies, the turn a stream is still
-/// answering, and the message that is streaming show nothing, so the row only
-/// ever sits under text the user can act on.
+/// Timestamps belong to user messages and settled terminal replies. Actions
+/// remain reachable on every actionable message, including a turn still streaming.
 enum TranscriptMessageMetaPolicy {
+    static func showsRow(hasActions: Bool, hasTimestamp: Bool) -> Bool {
+        hasActions || hasTimestamp
+    }
+
     /// Render IDs of the last bubble-bearing reply of each settled assistant turn.
     static func terminalReplyRenderIDs(
         transcriptMessages: [TranscriptMessage],
@@ -38,14 +39,15 @@ enum TranscriptMessageMetaPolicy {
     }
 }
 
-/// The row under a message bubble: the time it was sent and a copy button.
+/// The row under a message bubble: timestamp, copy, and completed-response actions.
 /// User rows read `[time][copy]` against the trailing edge, assistant rows
-/// `[copy][time]` against the leading edge, so the button always sits at the
+/// `[copy][actions][time]` against the leading edge, so Copy always sits at the
 /// outer edge and RTL mirrors both through the semantic alignments.
 struct ChatMessageMetaRow: View {
     let isUserMessage: Bool
     let timeText: String?
     let onCopy: (() -> Void)?
+    var actionMenu: ChatMessageActionMenu? = nil
 
     var body: some View {
         HStack(spacing: 4) {
@@ -54,6 +56,16 @@ struct ChatMessageMetaRow: View {
                 copyButton
             } else {
                 copyButton
+                if let actionMenu {
+                    Menu { actionMenu } label: {
+                        Image(systemName: "ellipsis")
+                            .font(.system(size: 13, weight: .medium))
+                            .frame(width: 28, height: 28)
+                            .chatMinimumHitTarget(in: Rectangle())
+                    }
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("More")
+                }
                 time
             }
         }

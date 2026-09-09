@@ -314,10 +314,10 @@ struct ChatView: View {
     @State private var editContext: MessageActionContext?
     @State private var editDraft = ""
     @State private var showEditSheet = false
+    @State private var responseSelectionFocus = ResponseSelectionFocusScope()
     @State private var showEditDiscardConfirmation = false
     @State private var regenerateContext: MessageActionContext?
     @State private var showRegenerateDiscardConfirmation = false
-    @State private var selectableResponseText: SelectableTextPresentation?
     @State private var attachmentPreviewItem: ChatAttachmentPreviewItem?
     @State private var transcriptMediaPreviewItem: TranscriptMediaPreviewItem?
     @State private var transcriptMediaImageItem: TranscriptMediaPreviewItem?
@@ -855,12 +855,6 @@ struct ChatView: View {
             }
             .navigationDestination(item: $forkedSession) { session in
                 ChatView(session: session, server: server, onAPIError: onAPIError)
-            }
-            .fullScreenCover(item: $selectableResponseText) { selectableText in
-                SelectableTextPresentationView(
-                    selection: selectableText,
-                    onDismiss: restoreComposerFocusAfterPreviewIfNeeded
-                )
             }
             .sheet(item: $attachmentPreviewItem) { item in
                 ChatAttachmentPreviewView(
@@ -1465,10 +1459,6 @@ struct ChatView: View {
             onToggleListening: { context in
                 viewModel.toggleListening(to: context)
             },
-            onSelectText: { context in
-                prepareForTemporaryComposerFocusHandoff()
-                selectableResponseText = SelectableTextPresentation(context: context)
-            },
             onRegenerate: beginRegenerateResponse,
             onEdit: beginEditMessage,
             onFork: { context in
@@ -1494,6 +1484,11 @@ struct ChatView: View {
         .onChange(of: viewModel.latestRunOutcome) {
             handleLatestRunOutcomeChange(viewModel.latestRunOutcome)
         }
+        .environment(\.responseSelectionFocusScope, responseSelectionFocus)
+        .environment(\.responseSelectionWillBegin, {
+            composerIsFocused = false
+            shouldRestoreComposerFocusAfterPreview = false
+        })
         .environment(\.composerChipCatalog, viewModel.composerChipCatalog)
         .environment(\.openURL, OpenURLAction(handler: handleTranscriptLink))
         .environment(\.chatWorkspaceRoot, session.workspace)
@@ -2830,10 +2825,11 @@ struct ChatView: View {
     }
 
     private func handleTranscriptFocusInteraction() {
+        guard !responseSelectionFocus.isActive else { return }
         if ComposerFocusPolicy.keepsFocusDuringTranscriptInteraction(
             isMacCatalyst: PlatformCapabilities.isMacCatalyst
         ) {
-            requestComposerFocusIfPossible()
+            requestComposerFocusIfPossible(unlessSelectingTranscript: true)
         } else {
             dismissKeyboard()
         }
@@ -2845,12 +2841,12 @@ struct ChatView: View {
         requestComposerFocusIfPossible()
     }
 
-    private func requestComposerFocusIfPossible() {
+    private func requestComposerFocusIfPossible(unlessSelectingTranscript: Bool = false) {
         guard canFocusComposer else { return }
 
         Task { @MainActor in
             await Task.yield()
-            guard canFocusComposer else { return }
+            guard canFocusComposer, !unlessSelectingTranscript || !responseSelectionFocus.isActive else { return }
             composerIsFocused = true
         }
     }

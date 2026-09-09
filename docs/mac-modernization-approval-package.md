@@ -16,9 +16,10 @@ what was verified and what remains uncertain.
 
 ## Exact starting revisions
 
-Protected branches remain unchanged: master is
-`aa0e10a9e9c145c0d5c86e010b449bd03dc105d5` (published Mac 1.1.0), and dev is
-`883236f0c04c0af8bc1429ec0e11ce7ce300d3ae`.
+Before execution, master was
+`aa0e10a9e9c145c0d5c86e010b449bd03dc105d5` (published Mac 1.1.0), and dev was
+`883236f0c04c0af8bc1429ec0e11ce7ce300d3ae`. PR #6 has since advanced dev as
+recorded below; master has not been promoted.
 
 | Order | PR / purpose | Reviewed feature head |
 | --- | --- | --- |
@@ -32,12 +33,34 @@ Protected branches remain unchanged: master is
 | Feature 5 | [#18 Git diff preparation](https://github.com/anthonyarmijo/hermex-mac/pull/18) | `3316a0caeff294cf31af4bd80f6c6d1693325433` |
 | Feature 6 | [#20 Catalyst experiment evidence](https://github.com/anthonyarmijo/hermex-mac/pull/20) | `5ae54927afefa9ad6b14f185b2d6f4bac4bee7c5` |
 | Feature 7 | [#24 integrated validation and release package](https://github.com/anthonyarmijo/hermex-mac/pull/24) | `2a0bb38504c01278937d48b3c76e972fcfc444b4` |
-| Feature 8 | Markdown image correction and normal-app validation (#25) | `issue/25-bounded-markdown-images`; exact final head is recorded in its PR body |
+| Feature 8 | [#26 Markdown image correction and normal-app validation](https://github.com/anthonyarmijo/hermex-mac/pull/26) | `9ecf0189213224d8aa413f94acc4281396bcb60a` |
+| Feature 9 | Direct chat text selection (#28) | `issue/28-chat-text-selection`; exact final head is recorded in its PR body |
 
 The final row avoids putting a commit's own hash inside its content. Verify the
 PR's current head against the recorded SHA before executing this sequence.
 All earlier PR checks are green at these heads. The final PR records its own
 CI outcome. Draft UI PRs remain draft until the applicable checks below pass.
+
+## Selected sequence and latest candidate
+
+The maintainer approved the **1.2.0-only** sequence, conditional on the remaining
+manual checks passing, and subsequently requested the text-selection fix (#28).
+PR #6 is already merged into dev at `9fd0b32d5a0e73f9456fe1f67553a5a4c6353c53`;
+PR #9 is retargeted to dev. No 1.2.0 tag or publication has occurred.
+The older two-release alternative below is retained for context, not as an
+additional task or a new approval request. Existing GitHub environment gates apply.
+
+The refreshed **1.2.0 build 2** candidate is for comparison, not promotion.
+Repeated long-history validation reproduced a layout hang in both the preserved
+candidate and the selection candidate. [Issue #29](https://github.com/anthonyarmijo/hermex-mac/issues/29)
+blocks release until corrected and revalidated. Consolidate the final equipment
+checks against that eventual corrected candidate.
+Build 1 remains preserved but does not contain direct transcript drag selection.
+The old selection validation covered the separate Select Text window only;
+[the new selection report](performance/TEXT_SELECTION_VALIDATION_2026-09-08.md)
+records direct dragging in the chat. [The upstream audit](upstream-audit-2026-09-08.md)
+separates stable client integration, deferred development changes, backend
+checkouts, runtime observations and compatibility pins. No server upgrade is included.
 
 ## Release choice after the baseline hang
 
@@ -132,9 +155,10 @@ unchanged until its complete contract gate is satisfied.
 
 ## Evidence and remaining decisions
 
-Latest full signed Mac suite: 2,370 total, five expected skips, zero failures.
-The integrated full iPhone suite had 2,365 total with five expected skips and zero
-failures; the subsequent shared image correction passed 26 focused iPhone tests. The explicit live test decoded 27 production
+Latest selection Mac suite: 2,383 total, 2,378 passed, five expected skips, zero
+failures. The full iPhone suite had 2,380 total, 2,375 passed, five expected skips
+and zero failures. Both used signed, isolated test hosts. These green suites do
+not supersede the native long-history release blocker. The earlier explicit live test decoded 27 production
 read responses. Eleven maintenance checks pass. Release notes validate and the
 signed Mac candidate passes strict signature verification.
 

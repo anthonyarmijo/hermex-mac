@@ -81,7 +81,9 @@ struct MessageBubbleView: View {
                     Spacer(minLength: userBubbleLeadingGutter)
                     VStack(alignment: .trailing, spacing: 8) {
                         if hasVisibleUserBubbleText {
-                            userBubble
+                            ResponseTextSelection(identity: selectionIdentity) {
+                                userBubble
+                            }
                         }
                         linkPreview
                     }
@@ -103,22 +105,16 @@ struct MessageBubbleView: View {
                 assistantTurnHeader
             }
 
-            if segments.containsTranscriptMedia {
-                TranscriptMediaContentView(
-                    segments: segments,
-                    cacheNamespace: transcriptMediaCacheNamespace,
-                    loadMediaImage: loadTranscriptMediaImage,
-                    loadMediaData: loadTranscriptMediaData,
-                    onPreviewMedia: onPreviewTranscriptMedia,
-                    isStreaming: isStreaming
-                )
+            if isStreaming {
+                assistantContent(segments: segments)
             } else {
-                MarkdownRenderer(content: messageText, isStreaming: isStreaming)
+                ResponseTextSelection(identity: selectionIdentity) {
+                    assistantContent(segments: segments)
+                }
             }
 
             linkPreview
         }
-        .chatMessageContextMenu(contextMenu)
         .frame(maxWidth: .infinity, alignment: .leading)
         // While this row is the active streaming message, animate its height
         // growth at the same curve as the bottom-follow scroll so the streaming
@@ -127,6 +123,26 @@ struct MessageBubbleView: View {
             isStreaming ? ChatMotion.streamingFollow(reduceMotion: reduceMotion) : nil,
             value: messageText
         )
+    }
+
+    @ViewBuilder
+    private func assistantContent(segments: [TranscriptMediaSegment]) -> some View {
+        if segments.containsTranscriptMedia {
+            TranscriptMediaContentView(
+                segments: segments,
+                cacheNamespace: transcriptMediaCacheNamespace,
+                loadMediaImage: loadTranscriptMediaImage,
+                loadMediaData: loadTranscriptMediaData,
+                onPreviewMedia: onPreviewTranscriptMedia,
+                isStreaming: isStreaming
+            )
+        } else {
+            MarkdownRenderer(content: messageText, isStreaming: isStreaming)
+        }
+    }
+
+    private var selectionIdentity: [String] {
+        [transcriptMediaCacheNamespace, message.messageId ?? "", String(describing: message.timestamp), messageText]
     }
 
     // MARK: - Assistant turn header (issue #258)
@@ -229,10 +245,12 @@ struct MessageBubbleView: View {
     private var userBubble: some View {
         let text = userBubbleText
         let chips = userBubbleChips(in: text)
+        let selection = ComposerChipTextLine.selectionSource(text, tokens: chips)
 
         return ComposerChipTextLine.text(text, tokens: chips, style: chipStyle)
             .font(.body)
-            .textSelection(.enabled)
+            .responseSelectableText(selection.text, separator: "", excluding: selection.excludedOffsets)
+            .responseTextSelectionPolicy()
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
             .background(userBubbleBackground, in: RoundedRectangle(cornerRadius: 20, style: .continuous))

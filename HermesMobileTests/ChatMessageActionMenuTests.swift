@@ -2,10 +2,16 @@ import XCTest
 @testable import HermesMobile
 
 final class ChatMessageActionMenuTests: XCTestCase {
+    func testActionRowsRemainAvailableWithoutSettledTurnTimestamp() {
+        XCTAssertTrue(TranscriptMessageMetaPolicy.showsRow(hasActions: true, hasTimestamp: false))
+        XCTAssertTrue(TranscriptMessageMetaPolicy.showsRow(hasActions: false, hasTimestamp: true))
+        XCTAssertFalse(TranscriptMessageMetaPolicy.showsRow(hasActions: false, hasTimestamp: false))
+    }
+
     func testAssistantMenuListsAssistantActionsInOrder() throws {
         let menu = try makeMenu(role: "assistant")
 
-        XCTAssertEqual(menu.items.map(\.kind), [.listen, .selectText, .regenerate, .fork, .copy])
+        XCTAssertEqual(menu.items.map(\.kind), [.listen, .regenerate, .fork])
         XCTAssertTrue(menu.items.allSatisfy(\.isEnabled))
     }
 
@@ -22,8 +28,6 @@ final class ChatMessageActionMenuTests: XCTestCase {
         XCTAssertEqual(enabledByKind[.regenerate], false)
         XCTAssertEqual(enabledByKind[.fork], false)
         XCTAssertEqual(enabledByKind[.listen], true)
-        XCTAssertEqual(enabledByKind[.selectText], true)
-        XCTAssertEqual(enabledByKind[.copy], true)
 
         let uiMenu = menu.uiMenu()
         let disabledTitles = uiMenu.children.compactMap { $0 as? UIAction }
@@ -40,6 +44,16 @@ final class ChatMessageActionMenuTests: XCTestCase {
         XCTAssertEqual(listening.items.first?.title, "Stop Listening")
     }
 
+    func testCachedResponseRetainsListenButDisablesServerMutations() throws {
+        let menu = try makeMenu(role: "assistant", isViewingCachedData: true)
+        XCTAssertEqual(menu.items.filter(\.isEnabled).map(\.kind), [.listen])
+    }
+
+    func testPendingResponseMutationsAreDisabled() throws {
+        let menu = try makeMenu(role: "assistant", isMutating: true)
+        XCTAssertEqual(menu.items.filter(\.isEnabled).map(\.kind), [.listen])
+    }
+
     func testPerformRoutesToTheMatchingCallback() throws {
         var copied: MessageActionContext?
         let menu = try makeMenu(role: "user", onCopy: { copied = $0 })
@@ -54,6 +68,8 @@ final class ChatMessageActionMenuTests: XCTestCase {
         role: String,
         listeningMessageID: String? = nil,
         hasActiveStream: Bool = false,
+        isViewingCachedData: Bool = false,
+        isMutating: Bool = false,
         onCopy: @escaping (MessageActionContext) -> Void = { _ in }
     ) throws -> ChatMessageActionMenu {
         let message = ChatMessage(
@@ -68,13 +84,12 @@ final class ChatMessageActionMenuTests: XCTestCase {
         return ChatMessageActionMenu(
             context: context,
             listeningMessageID: listeningMessageID,
-            isViewingCachedData: false,
+            isViewingCachedData: isViewingCachedData,
             hasActiveStream: hasActiveStream,
-            isRegeneratingMessage: false,
+            isRegeneratingMessage: isMutating,
             isEditingMessage: false,
-            isForkingMessage: false,
+            isForkingMessage: isMutating,
             onToggleListening: { _ in },
-            onSelectText: { _ in },
             onRegenerate: { _ in },
             onEdit: { _ in },
             onFork: { _ in },
